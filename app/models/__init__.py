@@ -6,6 +6,7 @@ from app.models.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.invite import InviteKey
 from app.models.join_request import JoinRequest
 from app.models.member import Member
+from app.models.peer_review import PeerReview
 from app.models.registration import Registration
 from app.models.score_event import ScoreEvent
 from app.models.session_sign import SessionSign
@@ -19,6 +20,7 @@ __all__ = [
     "InviteKey",
     "JoinRequest",
     "Member",
+    "PeerReview",
     "Registration",
     "ScoreEvent",
     "SessionSign",
