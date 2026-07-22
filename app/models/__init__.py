@@ -2,6 +2,7 @@
 
 from app.models.branch import Branch
 from app.models.employee import Employee
+from app.models.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.invite import InviteKey
 from app.models.join_request import JoinRequest
 from app.models.member import Member
@@ -12,6 +13,9 @@ from app.models.session_sign import SessionSign
 __all__ = [
     "Branch",
     "Employee",
+    "EnvItem",
+    "EnvTaskLog",
+    "SupplyOrder",
     "InviteKey",
     "JoinRequest",
     "Member",
