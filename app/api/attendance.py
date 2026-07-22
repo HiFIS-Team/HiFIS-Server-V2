@@ -17,6 +17,7 @@ from app.enums import AttendanceSource, LeaveStatus, LeaveType, Role
 from app.models.attendance import Attendance, LeaveRequest
 from app.models.employee import Employee
 from app.schemas.attendance import AttendanceOut, LeaveRequestCreate, LeaveRequestOut
+from app.services.notifications import notify
 
 router = APIRouter(tags=["attendance"])
 
@@ -127,6 +128,15 @@ async def _decide_leave(request_id: str, status: LeaveStatus, db: AsyncSession) 
     if leave.status != LeaveStatus.PENDING:
         raise HTTPException(400, detail={"code": "ALREADY_HANDLED", "message": "이미 처리된 신청입니다"})
     leave.status = status
+    verb = "승인" if status == LeaveStatus.APPROVED else "반려"
+    await notify(
+        db,
+        employee_id=leave.employee_id,
+        type="LEAVE",
+        title=f"휴가 신청이 {verb}되었습니다",
+        body=f"{leave.start_date} ~ {leave.end_date}",
+        link="/attendance",
+    )
     await db.commit()
     await db.refresh(leave)
     return leave

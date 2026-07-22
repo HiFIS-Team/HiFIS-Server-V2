@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # 계정관리 비번 암호화 마스터 키 (§9.6) — AES-256, 64 hex(32 byte). openssl rand -hex 32
     account_master_key: str = "00" * 32
 
+    # 웹푸시 VAPID (§9.4) — 비면 푸시 발송 스킵(앱 내 알림은 그대로 저장). vapid --gen 으로 발급
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:admin@hifis.local"
+
     # 초기 부트스트랩 시드 (app.seed) — 첫 지점·관리자
     seed_branch_name: str = "본사"
     seed_admin_name: str = "관리자"

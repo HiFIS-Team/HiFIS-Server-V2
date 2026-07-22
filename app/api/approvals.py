@@ -15,6 +15,7 @@ from app.enums import ApprovalStatus, ApprovalStepStatus
 from app.models.approval import Approval
 from app.models.employee import Employee
 from app.schemas.approval import ApprovalAction, ApprovalCreate, ApprovalOut, CommentCreate
+from app.services.notifications import notify
 
 router = APIRouter(prefix="/approvals", tags=["approvals"], dependencies=[Depends(get_current_user)])
 
@@ -79,6 +80,15 @@ async def create_approval(
         comments=[],
     )
     db.add(approval)
+    await db.flush()  # approval.id 확보(알림 링크용)
+    await notify(
+        db,
+        employee_id=payload.approver_ids[0],
+        type="APPROVAL",
+        title="결재 요청이 도착했습니다",
+        body=payload.title,
+        link=f"/approvals/{approval.id}",
+    )
     await db.commit()
     await db.refresh(approval)
     return approval
@@ -99,16 +109,23 @@ async def _act(approval_id: str, decision: ApprovalStepStatus, comment: str | No
     now_iso = datetime.now(timezone.utc).isoformat()
     approval.steps = _mark_step(approval.steps, current.id, decision, comment, now_iso)
 
+    link = f"/approvals/{approval.id}"
     if decision == ApprovalStepStatus.REJECTED:
         approval.status = ApprovalStatus.REJECTED
         approval.current_approver_id = None
+        await notify(db, employee_id=approval.requester_id, type="APPROVAL",
+                     title="결재가 반려되었습니다", body=approval.title, link=link)
     else:
         index = approval.approver_ids.index(current.id)
         if index + 1 < len(approval.approver_ids):
             approval.current_approver_id = approval.approver_ids[index + 1]  # 다음 결재자
+            await notify(db, employee_id=approval.current_approver_id, type="APPROVAL",
+                         title="결재 요청이 도착했습니다", body=approval.title, link=link)
         else:
             approval.status = ApprovalStatus.APPROVED  # 마지막 → 최종 승인
             approval.current_approver_id = None
+            await notify(db, employee_id=approval.requester_id, type="APPROVAL",
+                         title="결재가 최종 승인되었습니다", body=approval.title, link=link)
     await db.commit()
     await db.refresh(approval)
     return approval

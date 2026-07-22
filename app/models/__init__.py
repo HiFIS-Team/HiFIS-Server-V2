@@ -15,6 +15,7 @@ from app.models.kindness import KindnessSurvey
 from app.models.meeting import Meeting
 from app.models.member import Member
 from app.models.notice import Notice
+from app.models.notification import Notification, PushSubscription
 from app.models.payslip import Payslip
 from app.models.peer_review import PeerReview
 from app.models.project import Project
@@ -46,6 +47,8 @@ __all__ = [
     "Meeting",
     "Member",
     "Notice",
+    "Notification",
+    "PushSubscription",
     "Payslip",
     "PeerReview",
     "Project",
