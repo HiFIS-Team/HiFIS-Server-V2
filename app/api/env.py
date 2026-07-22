@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
@@ -33,9 +33,13 @@ router = APIRouter(tags=["env"])
 # ---------- EnvItem (항목·배점) ----------
 @router.get("/env-items", response_model=list[EnvItemOut], dependencies=[Depends(get_current_user)])
 async def list_env_items(
-    db: AsyncSession = Depends(get_db), branch_id: str | None = Query(None, alias="branchId")
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
+    branch_id: str | None = Query(None, alias="branchId"),
 ) -> list[EnvItem]:
     stmt = select(EnvItem)
+    if scope:
+        stmt = stmt.where(EnvItem.branch_id == scope)
     if branch_id:
         stmt = stmt.where(EnvItem.branch_id == branch_id)
     result = await db.execute(stmt.order_by(EnvItem.points.desc(), EnvItem.name))
@@ -107,10 +111,13 @@ async def create_env_log(
 @router.get("/env-logs", response_model=list[EnvTaskLogOut], dependencies=[Depends(get_current_user)])
 async def list_env_logs(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
     employee_id: str | None = Query(None, alias="employeeId"),
 ) -> list[EnvTaskLog]:
     stmt = select(EnvTaskLog)
+    if scope:
+        stmt = stmt.where(EnvTaskLog.branch_id == scope)
     if branch_id:
         stmt = stmt.where(EnvTaskLog.branch_id == branch_id)
     if employee_id:
@@ -165,10 +172,13 @@ async def create_supply_order(
 @router.get("/supply-orders", response_model=list[SupplyOrderOut], dependencies=[Depends(get_current_user)])
 async def list_supply_orders(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
     month: str | None = Query(None),
 ) -> list[SupplyOrder]:
     stmt = select(SupplyOrder)
+    if scope:
+        stmt = stmt.where(SupplyOrder.branch_id == scope)
     if branch_id:
         stmt = stmt.where(SupplyOrder.branch_id == branch_id)
     if month:

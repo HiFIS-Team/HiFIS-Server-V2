@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
 from app.models.employee import Employee
@@ -22,11 +22,14 @@ router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_
 @router.get("", response_model=list[ScoreEventOut])
 async def list_scores(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
 ) -> list[ScoreEvent]:
     stmt = select(ScoreEvent)
+    if scope:
+        stmt = stmt.where(ScoreEvent.branch_id == scope)
     if employee_id:
         stmt = stmt.where(ScoreEvent.employee_id == employee_id)
     if category:
@@ -40,6 +43,7 @@ async def list_scores(
 @router.get("/ranking", response_model=list[RankingItem])
 async def ranking(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
     branch_id: str | None = Query(None, alias="branchId"),
@@ -48,6 +52,8 @@ async def ranking(
     stmt = select(Employee.id, Employee.name, total).join(
         ScoreEvent, ScoreEvent.employee_id == Employee.id
     )
+    if scope:
+        stmt = stmt.where(ScoreEvent.branch_id == scope)
     if category:
         stmt = stmt.where(ScoreEvent.category == category)
     if period:

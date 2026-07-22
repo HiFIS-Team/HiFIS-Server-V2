@@ -33,3 +33,13 @@ def require_role(*roles: Role) -> Callable[..., Coroutine[Any, Any, Employee]]:
         return user
 
     return dependency
+
+
+async def branch_scope(current: Employee = Depends(get_current_user)) -> str | None:
+    """목록 지점 스코프 (§0 멀티테넌시).
+
+    MEMBER 는 본인 소속 지점으로 제한(branch_id 반환), MANAGER/ADMIN 은 전체(None).
+    """
+    if current.role == Role.MEMBER:
+        return current.branch_id
+    return None

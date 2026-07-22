@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
 from app.enums import ScoreCategory
 from app.models.employee import Employee
@@ -73,9 +73,14 @@ async def receive_kindness_survey(
 @router.get("/kindness-surveys", response_model=list[KindnessSurveyOut], dependencies=[Depends(get_current_user)])
 async def list_kindness_surveys(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     praised_employee_id: str | None = Query(None, alias="praisedEmployeeId"),
 ) -> list[KindnessSurvey]:
     stmt = select(KindnessSurvey)
+    if scope:
+        stmt = stmt.join(Employee, Employee.id == KindnessSurvey.praised_employee_id).where(
+            Employee.branch_id == scope
+        )
     if praised_employee_id:
         stmt = stmt.where(KindnessSurvey.praised_employee_id == praised_employee_id)
     result = await db.execute(stmt.order_by(KindnessSurvey.submitted_at.desc()))

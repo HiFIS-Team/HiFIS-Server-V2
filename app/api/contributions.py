@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
 from app.enums import ContribType, Role, ScoreCategory
 from app.models.contribution import ContributionGrant
@@ -69,9 +69,14 @@ async def create_contribution(
 @router.get("", response_model=list[ContributionGrantOut], dependencies=[Depends(get_current_user)])
 async def list_contributions(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
 ) -> list[ContributionGrant]:
     stmt = select(ContributionGrant)
+    if scope:
+        stmt = stmt.join(Employee, Employee.id == ContributionGrant.employee_id).where(
+            Employee.branch_id == scope
+        )
     if employee_id:
         stmt = stmt.where(ContributionGrant.employee_id == employee_id)
     result = await db.execute(stmt.order_by(ContributionGrant.created_at.desc()))

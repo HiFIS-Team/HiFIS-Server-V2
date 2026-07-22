@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
 from app.models.employee import Employee
@@ -138,10 +138,15 @@ async def aggregate_peer_reviews(
 @router.get("", response_model=list[PeerReviewOut], dependencies=[Depends(get_current_user)])
 async def list_peer_reviews(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     reviewee_id: str | None = Query(None, alias="revieweeId"),
     period: str | None = Query(None),
 ) -> list[PeerReviewOut]:
     stmt = select(PeerReview)
+    if scope:
+        stmt = stmt.join(Employee, Employee.id == PeerReview.reviewee_id).where(
+            Employee.branch_id == scope
+        )
     if reviewee_id:
         stmt = stmt.where(PeerReview.reviewee_id == reviewee_id)
     if period:

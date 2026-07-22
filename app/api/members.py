@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user
+from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
 from app.models.branch import Branch
 from app.models.employee import Employee
@@ -38,11 +38,14 @@ def _not_found() -> HTTPException:
 @router.get("", response_model=list[MemberOut])
 async def list_members(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
     owner_trainer_id: str | None = Query(None, alias="ownerTrainerId"),
     q: str | None = Query(None),
 ) -> list[Member]:
     stmt = select(Member)
+    if scope:
+        stmt = stmt.where(Member.branch_id == scope)
     if branch_id:
         stmt = stmt.where(Member.branch_id == branch_id)
     if owner_trainer_id:

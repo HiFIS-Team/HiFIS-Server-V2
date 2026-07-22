@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.periods import period_range
 from app.core.storage import save_signature
 from app.enums import RegistrationStatus, Role, ScoreCategory
@@ -80,11 +80,16 @@ async def create_session_sign(
 @router.get("", response_model=list[SessionSignOut], dependencies=[Depends(get_current_user)])
 async def list_session_signs(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
     trainer_id: str | None = Query(None, alias="trainerId"),
     member_id: str | None = Query(None, alias="memberId"),
     period: str | None = Query(None),
 ) -> list[SessionSign]:
     stmt = select(SessionSign)
+    if scope:
+        stmt = stmt.join(Employee, Employee.id == SessionSign.performed_by_trainer_id).where(
+            Employee.branch_id == scope
+        )
     if trainer_id:
         stmt = stmt.where(SessionSign.performed_by_trainer_id == trainer_id)
     if member_id:
