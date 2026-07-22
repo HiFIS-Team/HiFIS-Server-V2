@@ -10,10 +10,12 @@ from app.models.kindness import KindnessSurvey
 from app.models.member import Member
 from app.models.payslip import Payslip
 from app.models.peer_review import PeerReview
+from app.models.project import Project
 from app.models.rank_policy import RankPolicy
 from app.models.registration import Registration
 from app.models.score_event import ScoreEvent
 from app.models.session_sign import SessionSign
+from app.models.todo import Todo
 
 __all__ = [
     "Branch",
@@ -28,8 +30,10 @@ __all__ = [
     "Member",
     "Payslip",
     "PeerReview",
+    "Project",
     "RankPolicy",
     "Registration",
     "ScoreEvent",
     "SessionSign",
+    "Todo",
 ]

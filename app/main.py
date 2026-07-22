@@ -19,10 +19,12 @@ from app.api import (
     members,
     payslips,
     peer_reviews,
+    projects,
     rank_policies,
     registrations,
     scores,
     session_signs,
+    todos,
 )
 from app.core.config import settings
 from app.db.session import engine
@@ -66,6 +68,8 @@ app.include_router(contributions.router)
 app.include_router(kindness.router)
 app.include_router(rank_policies.router)
 app.include_router(payslips.router)
+app.include_router(projects.router)
+app.include_router(todos.router)
 
 # 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
 app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")

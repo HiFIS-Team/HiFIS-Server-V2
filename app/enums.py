@@ -59,6 +59,13 @@ class DeductionMethod(StrEnum):
     INSURANCE = "INSURANCE"  # 4대보험
 
 
+class ProjectStatus(StrEnum):
+    WAITING = "WAITING"          # 대기 (progress 0)
+    IN_PROGRESS = "IN_PROGRESS"  # 진행중
+    DONE = "DONE"                # 완료 (progress ≥ 100)
+    MISSED = "MISSED"            # 누락 (마감 지남 + 미완료)
+
+
 class ContribType(StrEnum):
     IDEA = "IDEA"              # 아이디어 = 5
     GOAL = "GOAL"              # 목표달성 = 10
