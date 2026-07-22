@@ -42,3 +42,13 @@ class JoinRequestStatus(StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class RegistrationType(StrEnum):
+    NEW = "NEW"          # 신규
+    RENEWAL = "RENEWAL"  # 재등록
+
+
+class RegistrationStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"  # usedSessions >= totalSessions
