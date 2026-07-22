@@ -9,9 +9,26 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 UPLOAD_ROOT = "uploads"
+_CHUNK = 1024 * 1024  # 1MB
+
+
+async def save_upload(upload: UploadFile) -> tuple[str, str, int]:
+    """멀티파트 파일을 청크 스트리밍으로 디스크에 저장. (serving url, ext, size_bytes) 반환."""
+    filename = upload.filename or "file"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    now = datetime.now(timezone.utc)
+    rel_dir = f"{UPLOAD_ROOT}/documents/{now:%Y}/{now:%m}"
+    os.makedirs(rel_dir, exist_ok=True)
+    rel_path = f"{rel_dir}/{uuid.uuid4().hex}.{ext}"
+    size = 0
+    with open(rel_path, "wb") as out:
+        while chunk := await upload.read(_CHUNK):
+            size += len(chunk)
+            out.write(chunk)
+    return f"/{rel_path}", ext, size
 
 
 def save_signature(signature_base64: str) -> str:

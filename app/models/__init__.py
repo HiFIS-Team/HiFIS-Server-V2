@@ -5,6 +5,7 @@ from app.models.approval import Approval
 from app.models.attendance import Attendance, LeaveRequest
 from app.models.branch import Branch
 from app.models.contribution import ContributionGrant
+from app.models.document import Document, Folder
 from app.models.employee import Employee
 from app.models.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.event import Event
@@ -31,6 +32,8 @@ __all__ = [
     "LeaveRequest",
     "Branch",
     "ContributionGrant",
+    "Document",
+    "Folder",
     "Employee",
     "EnvItem",
     "EnvTaskLog",
