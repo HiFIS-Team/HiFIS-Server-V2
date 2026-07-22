@@ -54,6 +54,13 @@ class RegistrationStatus(StrEnum):
     EXPIRED = "EXPIRED"  # usedSessions >= totalSessions
 
 
+class ContribType(StrEnum):
+    IDEA = "IDEA"              # 아이디어 = 5
+    GOAL = "GOAL"              # 목표달성 = 10
+    EXTRA_WORK = "EXTRA_WORK"  # 추가근무 = hours × 3
+    SALES = "SALES"            # 매출성과 = 자동(부여 대상 아님)
+
+
 class ScoreCategory(StrEnum):
     ENV = "ENV"            # 환경정비
     PEER = "PEER"          # 동료평가
