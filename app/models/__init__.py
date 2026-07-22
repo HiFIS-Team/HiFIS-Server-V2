@@ -8,7 +8,9 @@ from app.models.invite import InviteKey
 from app.models.join_request import JoinRequest
 from app.models.kindness import KindnessSurvey
 from app.models.member import Member
+from app.models.payslip import Payslip
 from app.models.peer_review import PeerReview
+from app.models.rank_policy import RankPolicy
 from app.models.registration import Registration
 from app.models.score_event import ScoreEvent
 from app.models.session_sign import SessionSign
@@ -24,7 +26,9 @@ __all__ = [
     "JoinRequest",
     "KindnessSurvey",
     "Member",
+    "Payslip",
     "PeerReview",
+    "RankPolicy",
     "Registration",
     "ScoreEvent",
     "SessionSign",

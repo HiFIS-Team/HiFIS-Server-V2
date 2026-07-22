@@ -54,6 +54,11 @@ class RegistrationStatus(StrEnum):
     EXPIRED = "EXPIRED"  # usedSessions >= totalSessions
 
 
+class DeductionMethod(StrEnum):
+    FREELANCE = "FREELANCE"  # 사업소득 3.3%
+    INSURANCE = "INSURANCE"  # 4대보험
+
+
 class ContribType(StrEnum):
     IDEA = "IDEA"              # 아이디어 = 5
     GOAL = "GOAL"              # 목표달성 = 10

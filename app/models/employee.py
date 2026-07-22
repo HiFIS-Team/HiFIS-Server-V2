@@ -9,7 +9,7 @@ from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
-from app.enums import EmployeeStatus, Rank, Role, WorkStatus
+from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
 
 
 class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -48,3 +48,11 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 급여 공제 방식 (§5) — 직원별 설정
+    deduction_method: Mapped[DeductionMethod] = mapped_column(
+        SAEnum(DeductionMethod, native_enum=False, length=20),
+        nullable=False,
+        default=DeductionMethod.FREELANCE,
+        server_default=DeductionMethod.FREELANCE.value,
+    )

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from app.enums import EmployeeStatus, Rank, Role, WorkStatus
+from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
 from app.schemas.base import CamelModel
 
 
@@ -25,6 +25,7 @@ class EmployeeUpdate(CamelModel):
     team: str | None = None
     branch_id: str | None = None
     phone: str | None = None
+    deduction_method: DeductionMethod | None = None  # 급여 공제 방식 (§5)
 
 
 class EmployeeMeUpdate(CamelModel):
