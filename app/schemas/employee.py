@@ -46,7 +46,7 @@ class EmployeeOut(CamelModel):
     email: str
     phone: str | None = None
     branch_id: str
-    rank: Rank | None = None
+    rank: Rank
     role: Role
     team: str | None = None
     status: EmployeeStatus

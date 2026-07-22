@@ -19,6 +19,6 @@ class JoinRequestOut(CamelModel):
 
 class JoinRequestApprove(CamelModel):
     branch_id: str
+    rank: Rank  # 승인(채용) 시 직급 확정
     role: Role = Role.MEMBER
     team: str | None = None
-    rank: Rank | None = None

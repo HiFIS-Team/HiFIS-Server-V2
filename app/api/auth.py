@@ -54,6 +54,7 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
             password_hash=hash_password(payload.password),
             branch_id=key.branch_id,
             role=key.role,
+            rank=key.rank,
             team=key.team,
         )
         key.status = InviteStatus.USED
