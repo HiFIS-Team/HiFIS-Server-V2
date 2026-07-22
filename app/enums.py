@@ -91,6 +91,18 @@ class LeaveStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class ApprovalStatus(StrEnum):
+    IN_PROGRESS = "IN_PROGRESS"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class ApprovalStepStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class ContribType(StrEnum):
     IDEA = "IDEA"              # 아이디어 = 5
     GOAL = "GOAL"              # 목표달성 = 10
