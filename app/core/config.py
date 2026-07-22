@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
 
+    # 외부 웹훅 (네이버폼 등 회원 친절도 설문 수신) 시크릿 (§4.5)
+    kindness_webhook_secret: str = "change-me-webhook-secret"
+
     # 초기 부트스트랩 시드 (app.seed) — 첫 지점·관리자
     seed_branch_name: str = "본사"
     seed_admin_name: str = "관리자"

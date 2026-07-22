@@ -17,7 +17,7 @@ async def accrue_score(
     branch_id: str,
     category: ScoreCategory,
     points: int,
-    created_by_id: str,
+    created_by_id: str | None = None,  # 시스템 발생(웹훅/스케줄러)이면 None
     source_ref_id: str | None = None,
     reason: str | None = None,
     period: str | None = None,

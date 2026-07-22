@@ -6,6 +6,7 @@ from app.models.employee import Employee
 from app.models.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.invite import InviteKey
 from app.models.join_request import JoinRequest
+from app.models.kindness import KindnessSurvey
 from app.models.member import Member
 from app.models.peer_review import PeerReview
 from app.models.registration import Registration
@@ -21,6 +22,7 @@ __all__ = [
     "SupplyOrder",
     "InviteKey",
     "JoinRequest",
+    "KindnessSurvey",
     "Member",
     "PeerReview",
     "Registration",

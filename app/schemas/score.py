@@ -23,7 +23,7 @@ class ScoreEventOut(CamelModel):
     reason: str | None = None
     source_ref_id: str | None = None
     period: str
-    created_by_id: str
+    created_by_id: str | None = None
     created_at: datetime
 
 
