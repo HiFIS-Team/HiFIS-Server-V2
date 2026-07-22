@@ -1,0 +1,40 @@
+[project]
+name = "hifis-server"
+version = "0.1.0"
+description = "HiFIS 직원 관리 플랫폼 백엔드 (FastAPI · 홈서버 self-host)"
+requires-python = ">=3.12"
+
+# CLAUDE.md §8 스택. 초기 부팅에 필요한 웹/설정 + Phase 1(조직·인증) 뼈대까지.
+# 이후 단계에서 추가: apscheduler, redis, pywebpush, cryptography, weasyprint, pillow, slowapi
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "gunicorn>=23.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "python-jose[cryptography]>=3.3",
+    "passlib[bcrypt]>=1.7",
+    "python-multipart>=0.0.12",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

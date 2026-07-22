@@ -1,0 +1,6 @@
+# 리버스 프록시 + 자동 HTTPS (CLAUDE.md §10).
+# DOMAIN 미설정 시 localhost 로 뜨고(내부 CA), 실도메인 지정 시 Let's Encrypt 자동 발급.
+# ⚠️ 기존 cloudflared / hifis.app 설정은 건드리지 말 것 — 새 서브도메인을 DOMAIN 으로 지정.
+{$DOMAIN:localhost} {
+	reverse_proxy api:8000
+}

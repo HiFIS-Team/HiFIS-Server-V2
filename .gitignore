@@ -147,6 +147,12 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# HiFIS — 로컬 업로드 저장소 (§9.2, 백업 대상 · 커밋 금지)
+uploads/
+
+# HiFIS — Claude 작업 규칙/설계 문서 (깃허브 미공개)
+.claude/
+
 # Environments
 .env
 .envrc
