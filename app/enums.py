@@ -117,3 +117,9 @@ class ScoreCategory(StrEnum):
     CLASS = "CLASS"        # 수업 개수
     CONTRIB = "CONTRIB"    # 센터 기여도
     OPERATOR = "OPERATOR"  # 운영자 직접 부여/감점
+
+
+class ReactionTargetType(StrEnum):
+    NOTICE = "NOTICE"    # 공지
+    MEETING = "MEETING"  # 회의록
+    MESSAGE = "MESSAGE"  # 사내톡 메시지 (§6.11, 추후)

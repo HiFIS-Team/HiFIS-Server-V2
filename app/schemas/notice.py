@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.schemas.base import CamelModel
+from app.schemas.reaction import ReactionAgg
 
 
 class NoticeCreate(CamelModel):
@@ -26,4 +27,4 @@ class NoticeOut(CamelModel):
     pinned: bool
     author_id: str
     created_at: datetime
-    reactions: list = Field(default_factory=list)  # TODO(§6.12): 이모지 반응 집계 연결
+    reactions: list[ReactionAgg] = Field(default_factory=list)  # §6.12 이모지 반응 집계

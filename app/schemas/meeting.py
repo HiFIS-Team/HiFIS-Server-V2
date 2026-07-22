@@ -6,6 +6,7 @@ from pydantic import Field
 
 from app.enums import MeetingScope
 from app.schemas.base import CamelModel
+from app.schemas.reaction import ReactionAgg
 
 
 class MeetingCreate(CamelModel):
@@ -36,3 +37,4 @@ class MeetingOut(CamelModel):
     author_id: str
     meeting_at: datetime
     created_at: datetime
+    reactions: list[ReactionAgg] = Field(default_factory=list)  # §6.12 이모지 반응 집계

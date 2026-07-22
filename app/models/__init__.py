@@ -19,6 +19,7 @@ from app.models.payslip import Payslip
 from app.models.peer_review import PeerReview
 from app.models.project import Project
 from app.models.rank_policy import RankPolicy
+from app.models.reaction import Reaction
 from app.models.registration import Registration
 from app.models.score_event import ScoreEvent
 from app.models.session_sign import SessionSign
@@ -49,6 +50,7 @@ __all__ = [
     "PeerReview",
     "Project",
     "RankPolicy",
+    "Reaction",
     "Registration",
     "ScoreEvent",
     "SessionSign",

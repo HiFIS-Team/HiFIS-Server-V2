@@ -1,22 +1,34 @@
 """Meeting 라우터 — CLAUDE.md §6.3. 작성=인증, 수정/삭제=작성자/관리자."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.enums import MeetingScope, Role
+from app.enums import MeetingScope, ReactionTargetType, Role
 from app.models.employee import Employee
 from app.models.meeting import Meeting
 from app.models.project import Project
+from app.models.reaction import Reaction
 from app.schemas.meeting import MeetingCreate, MeetingOut, MeetingUpdate
+from app.services.reactions import aggregate_for
 
 router = APIRouter(prefix="/meetings", tags=["meetings"], dependencies=[Depends(get_current_user)])
 
 
 def _not_found() -> HTTPException:
     return HTTPException(404, detail={"code": "MEETING_NOT_FOUND", "message": "회의록을 찾을 수 없습니다"})
+
+
+async def _to_out(db: AsyncSession, meetings: list[Meeting]) -> list[MeetingOut]:
+    agg = await aggregate_for(db, ReactionTargetType.MEETING, [m.id for m in meetings])
+    out = []
+    for m in meetings:
+        model = MeetingOut.model_validate(m)
+        model.reactions = agg[m.id]
+        out.append(model)
+    return out
 
 
 async def _get_owned(meeting_id: str, current: Employee, db: AsyncSession) -> Meeting:
@@ -34,7 +46,7 @@ async def list_meetings(
     scope: MeetingScope | None = Query(None),
     q: str | None = Query(None),
     sort: str | None = Query(None),
-) -> list[Meeting]:
+) -> list[MeetingOut]:
     stmt = select(Meeting)
     if scope:
         stmt = stmt.where(Meeting.scope == scope)
@@ -42,7 +54,7 @@ async def list_meetings(
         stmt = stmt.where(Meeting.title.ilike(f"%{q}%"))
     order = Meeting.meeting_at.asc() if sort == "meetingAt" else Meeting.meeting_at.desc()
     result = await db.execute(stmt.order_by(order))
-    return list(result.scalars().all())
+    return await _to_out(db, list(result.scalars().all()))
 
 
 @router.post("", response_model=MeetingOut, status_code=201)
@@ -50,7 +62,7 @@ async def create_meeting(
     payload: MeetingCreate,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Meeting:
+) -> MeetingOut:
     if payload.project_id is not None and await db.get(Project, payload.project_id) is None:
         raise HTTPException(400, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트가 존재하지 않습니다"})
     meeting = Meeting(
@@ -65,15 +77,15 @@ async def create_meeting(
     db.add(meeting)
     await db.commit()
     await db.refresh(meeting)
-    return meeting
+    return (await _to_out(db, [meeting]))[0]
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)
-async def get_meeting(meeting_id: str, db: AsyncSession = Depends(get_db)) -> Meeting:
+async def get_meeting(meeting_id: str, db: AsyncSession = Depends(get_db)) -> MeetingOut:
     meeting = await db.get(Meeting, meeting_id)
     if meeting is None:
         raise _not_found()
-    return meeting
+    return (await _to_out(db, [meeting]))[0]
 
 
 @router.patch("/{meeting_id}", response_model=MeetingOut)
@@ -82,13 +94,13 @@ async def update_meeting(
     payload: MeetingUpdate,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Meeting:
+) -> MeetingOut:
     meeting = await _get_owned(meeting_id, current, db)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(meeting, key, value)
     await db.commit()
     await db.refresh(meeting)
-    return meeting
+    return (await _to_out(db, [meeting]))[0]
 
 
 @router.delete("/{meeting_id}", status_code=204)
@@ -98,6 +110,12 @@ async def delete_meeting(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     meeting = await _get_owned(meeting_id, current, db)
+    await db.execute(
+        delete(Reaction).where(
+            Reaction.target_type == ReactionTargetType.MEETING,
+            Reaction.target_id == meeting_id,
+        )
+    )
     await db.delete(meeting)
     await db.commit()
     return None

@@ -28,6 +28,7 @@ from app.api import (
     peer_reviews,
     projects,
     rank_policies,
+    reactions,
     registrations,
     scores,
     session_signs,
@@ -84,6 +85,7 @@ app.include_router(attendance.router)
 app.include_router(approvals.router)
 app.include_router(accounts.router)
 app.include_router(documents.router)
+app.include_router(reactions.router)
 
 # 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
 app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")
