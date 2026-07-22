@@ -52,3 +52,12 @@ class RegistrationType(StrEnum):
 class RegistrationStatus(StrEnum):
     ACTIVE = "ACTIVE"
     EXPIRED = "EXPIRED"  # usedSessions >= totalSessions
+
+
+class ScoreCategory(StrEnum):
+    ENV = "ENV"            # 환경정비
+    PEER = "PEER"          # 동료평가
+    KINDNESS = "KINDNESS"  # 회원 친절도
+    CLASS = "CLASS"        # 수업 개수
+    CONTRIB = "CONTRIB"    # 센터 기여도
+    OPERATOR = "OPERATOR"  # 운영자 직접 부여/감점

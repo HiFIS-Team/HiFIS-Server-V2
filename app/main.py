@@ -4,9 +4,20 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api import auth, branches, employees, invite_keys, join_requests, members, registrations
+from app.api import (
+    auth,
+    branches,
+    employees,
+    invite_keys,
+    join_requests,
+    members,
+    registrations,
+    scores,
+    session_signs,
+)
 from app.core.config import settings
 from app.db.session import engine
 
@@ -39,6 +50,11 @@ app.include_router(invite_keys.router)
 app.include_router(join_requests.router)
 app.include_router(members.router)
 app.include_router(registrations.router)
+app.include_router(session_signs.router)
+app.include_router(scores.router)
+
+# 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
+app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")
 
 
 @app.get("/health", tags=["meta"])

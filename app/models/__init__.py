@@ -6,5 +6,16 @@ from app.models.invite import InviteKey
 from app.models.join_request import JoinRequest
 from app.models.member import Member
 from app.models.registration import Registration
+from app.models.score_event import ScoreEvent
+from app.models.session_sign import SessionSign
 
-__all__ = ["Branch", "Employee", "InviteKey", "JoinRequest", "Member", "Registration"]
+__all__ = [
+    "Branch",
+    "Employee",
+    "InviteKey",
+    "JoinRequest",
+    "Member",
+    "Registration",
+    "ScoreEvent",
+    "SessionSign",
+]

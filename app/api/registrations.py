@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import RegistrationStatus, RegistrationType
 from app.models.employee import Employee
@@ -17,17 +18,6 @@ from app.schemas.registration import RegistrationCreate, RegistrationOut
 router = APIRouter(
     prefix="/registrations", tags=["registrations"], dependencies=[Depends(get_current_user)]
 )
-
-
-def _period_range(period: str) -> tuple[datetime, datetime]:
-    """"2026-07" → [해당 월 시작, 다음 월 시작)."""
-    try:
-        year, month = (int(x) for x in period.split("-"))
-        start = datetime(year, month, 1, tzinfo=timezone.utc)
-    except (ValueError, TypeError):
-        raise HTTPException(400, detail={"code": "INVALID_PERIOD", "message": "period 형식은 YYYY-MM 입니다"})
-    end = datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
-    return start, end
 
 
 @router.get("", response_model=list[RegistrationOut])
@@ -43,7 +33,7 @@ async def list_registrations(
     if reg_type:
         stmt = stmt.where(Registration.type == reg_type)
     if period:
-        start, end = _period_range(period)
+        start, end = period_range(period)
         stmt = stmt.where(Registration.purchased_at >= start, Registration.purchased_at < end)
     result = await db.execute(stmt.order_by(Registration.purchased_at.desc()))
     return list(result.scalars().all())
