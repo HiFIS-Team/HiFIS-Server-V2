@@ -1,5 +1,6 @@
 """모델 등록 지점 — Alembic autogenerate 가 metadata 를 인식하도록 여기서 import."""
 
+from app.models.account import Account, AccountAccessLog
 from app.models.approval import Approval
 from app.models.attendance import Attendance, LeaveRequest
 from app.models.branch import Branch
@@ -23,6 +24,8 @@ from app.models.session_sign import SessionSign
 from app.models.todo import Todo
 
 __all__ = [
+    "Account",
+    "AccountAccessLog",
     "Approval",
     "Attendance",
     "LeaveRequest",
