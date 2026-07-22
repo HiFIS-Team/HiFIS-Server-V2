@@ -43,9 +43,9 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      # 개발용 코드 마운트 (핫리로드). 배포 시엔 이 줄과 command 를 걷어내면
-      # 이미지에 구운 gunicorn(Dockerfile CMD)으로 실행된다.
-      - ./app:/app/app
+      # 개발용 전체 마운트 (핫리로드 + 컨테이너 안에서 alembic 실행 가능).
+      # 배포 시엔 이 줄과 command 를 걷어내면 이미지에 구운 gunicorn(Dockerfile CMD)으로 실행된다.
+      - .:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   caddy:

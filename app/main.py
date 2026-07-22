@@ -1,21 +1,21 @@
-"""HiFIS FastAPI 진입점 — 앱 생성 · CORS · 헬스체크 (CLAUDE.md §8).
-
-도메인 라우터(auth, employees, members, scores ...)는 Phase 1 부터 이 파일에
-`app.include_router(...)` 로 등록한다.
-"""
+"""HiFIS FastAPI 진입점 — 앱 생성 · CORS · 라우터 등록 (CLAUDE.md §8)."""
 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
+from app.api import branches
 from app.core.config import settings
+from app.db.session import engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup / shutdown 훅. DB 엔진·스케줄러 연결은 이후 Phase 에서 여기에 연결.
+    # startup / shutdown 훅. 스케줄러 등은 이후 Phase 에서 여기에 연결.
     yield
+    await engine.dispose()
 
 
 app = FastAPI(
@@ -32,10 +32,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(branches.router)
+
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception:
+        db_status = "down"
+    return {"status": "ok", "db": db_status}
 
 
 @app.get("/", tags=["meta"])
