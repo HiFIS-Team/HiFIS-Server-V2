@@ -66,6 +66,12 @@ class ProjectStatus(StrEnum):
     MISSED = "MISSED"            # 누락 (마감 지남 + 미완료)
 
 
+class MeetingScope(StrEnum):
+    COMPANY = "COMPANY"
+    PROJECT = "PROJECT"
+    PEOPLE = "PEOPLE"
+
+
 class ContribType(StrEnum):
     IDEA = "IDEA"              # 아이디어 = 5
     GOAL = "GOAL"              # 목표달성 = 10

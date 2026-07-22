@@ -4,10 +4,13 @@ from app.models.branch import Branch
 from app.models.contribution import ContributionGrant
 from app.models.employee import Employee
 from app.models.env import EnvItem, EnvTaskLog, SupplyOrder
+from app.models.event import Event
 from app.models.invite import InviteKey
 from app.models.join_request import JoinRequest
 from app.models.kindness import KindnessSurvey
+from app.models.meeting import Meeting
 from app.models.member import Member
+from app.models.notice import Notice
 from app.models.payslip import Payslip
 from app.models.peer_review import PeerReview
 from app.models.project import Project
@@ -24,10 +27,13 @@ __all__ = [
     "EnvItem",
     "EnvTaskLog",
     "SupplyOrder",
+    "Event",
     "InviteKey",
     "JoinRequest",
     "KindnessSurvey",
+    "Meeting",
     "Member",
+    "Notice",
     "Payslip",
     "PeerReview",
     "Project",
