@@ -14,6 +14,7 @@ from app.api import (
     auth,
     branches,
     contributions,
+    dashboard,
     documents,
     employees,
     env,
@@ -31,6 +32,7 @@ from app.api import (
     reactions,
     registrations,
     scores,
+    search,
     session_signs,
     todos,
 )
@@ -86,6 +88,8 @@ app.include_router(approvals.router)
 app.include_router(accounts.router)
 app.include_router(documents.router)
 app.include_router(reactions.router)
+app.include_router(search.router)
+app.include_router(dashboard.router)
 
 # 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
 app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")
