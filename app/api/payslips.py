@@ -4,17 +4,16 @@ POST /generate [ADMIN]: 지점·월 대상 산출(재생성=교체). GET /me [SE
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
-from app.core.periods import period_range
 from app.db.session import get_db
-from app.enums import EmployeeStatus, Role
+from app.enums import Role
 from app.models.employee import Employee
 from app.models.payslip import Payslip
 from app.schemas.payslip import PayslipGenerateRequest, PayslipOut
-from app.services.payroll import build_payslip_data, get_rank_policy
+from app.services.payroll import generate_branch_payslips
 
 router = APIRouter(prefix="/payslips", tags=["payslips"])
 
@@ -23,34 +22,7 @@ router = APIRouter(prefix="/payslips", tags=["payslips"])
 async def generate_payslips(
     payload: PayslipGenerateRequest, db: AsyncSession = Depends(get_db)
 ) -> list[Payslip]:
-    start, _ = period_range(payload.year_month)
-    employees = (
-        await db.execute(
-            select(Employee).where(
-                Employee.branch_id == payload.branch_id,
-                Employee.status == EmployeeStatus.ACTIVE,
-                Employee.deleted_at.is_(None),
-            )
-        )
-    ).scalars().all()
-    if employees:
-        await db.execute(
-            delete(Payslip).where(
-                Payslip.year_month == payload.year_month,
-                Payslip.employee_id.in_([e.id for e in employees]),
-            )
-        )
-
-    generated: list[Payslip] = []
-    for employee in employees:
-        policy = await get_rank_policy(db, employee.rank, employee.branch_id, start)
-        if policy is None:
-            continue  # 요율 정책 없는 직급은 건너뜀
-        data = await build_payslip_data(db, employee, payload.year_month, policy)
-        payslip = Payslip(employee_id=employee.id, year_month=payload.year_month, **data)
-        db.add(payslip)
-        generated.append(payslip)
-
+    generated = await generate_branch_payslips(db, payload.branch_id, payload.year_month)
     await db.commit()
     for payslip in generated:
         await db.refresh(payslip)

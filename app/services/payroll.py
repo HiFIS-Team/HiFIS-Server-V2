@@ -7,21 +7,32 @@ gross = 기본급 + Σ(신규매출)×newRate + Σ(재등록매출)×renewalRate
 
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import period_range
-from app.enums import DeductionMethod, RegistrationType
+from app.enums import DeductionMethod, EmployeeStatus, RegistrationType, ScoreCategory
 from app.models.employee import Employee
 from app.models.member import Member
+from app.models.payslip import Payslip
 from app.models.rank_policy import RankPolicy
 from app.models.registration import Registration
+from app.models.score_event import ScoreEvent
 from app.models.session_sign import SessionSign
+from app.services.scoring import accrue_score
 
 FREELANCE_RATE = 0.033
 # 4대보험 근로자 부담분 근사치 (건강보험 기준 장기요양 별도)
 INSURANCE_RATES = (("국민연금", 0.045), ("건강보험", 0.03545), ("고용보험", 0.009))
 LONGTERM_CARE_RATE = 0.1295  # 장기요양 = 건강보험료 × 12.95%
+
+# 매출성과(SALES) 자동 기여도: 개인 총매출 ÷ 10 × 2.5 (§4.4)
+SALES_DIVISOR = 10
+SALES_MULTIPLIER = 2.5
+
+
+def sales_points(total_sales: int) -> int:
+    return round(total_sales / SALES_DIVISOR * SALES_MULTIPLIER)
 
 
 def _deductions(gross: int, method: DeductionMethod) -> list[dict]:
@@ -120,3 +131,61 @@ async def build_payslip_data(
             "session_signs": session_signs,
         },
     }
+
+
+async def generate_branch_payslips(
+    db: AsyncSession, branch_id: str, year_month: str
+) -> list[Payslip]:
+    """지점·월 급여 마감 — 명세서 생성(교체) + SALES 자동 기여도 적립. commit 은 호출자."""
+    start, _ = period_range(year_month)
+    employees = (
+        await db.execute(
+            select(Employee).where(
+                Employee.branch_id == branch_id,
+                Employee.status == EmployeeStatus.ACTIVE,
+                Employee.deleted_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    if not employees:
+        return []
+
+    employee_ids = [employee.id for employee in employees]
+    sales_ref = f"sales:{year_month}"
+    # 재생성 = 기존 명세서 + 자동 SALES 점수 교체 (멱등)
+    await db.execute(
+        delete(Payslip).where(
+            Payslip.year_month == year_month, Payslip.employee_id.in_(employee_ids)
+        )
+    )
+    await db.execute(
+        delete(ScoreEvent).where(
+            ScoreEvent.source_ref_id == sales_ref, ScoreEvent.employee_id.in_(employee_ids)
+        )
+    )
+
+    generated: list[Payslip] = []
+    for employee in employees:
+        policy = await get_rank_policy(db, employee.rank, employee.branch_id, start)
+        if policy is None:
+            continue  # 요율 정책 없는 직급은 건너뜀
+        data = await build_payslip_data(db, employee, year_month, policy)
+        payslip = Payslip(employee_id=employee.id, year_month=year_month, **data)
+        db.add(payslip)
+        generated.append(payslip)
+
+        sales_total = sum(item["amount"] for item in data["basis"]["new_sales"]) + sum(
+            item["amount"] for item in data["basis"]["renewal_sales"]
+        )
+        if sales_total > 0:
+            await accrue_score(
+                db,
+                employee_id=employee.id,
+                branch_id=employee.branch_id,
+                category=ScoreCategory.CONTRIB,
+                points=sales_points(sales_total),
+                source_ref_id=sales_ref,
+                period=year_month,
+                reason="매출성과(자동)",
+            )
+    return generated

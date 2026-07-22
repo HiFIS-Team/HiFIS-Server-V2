@@ -26,12 +26,14 @@ from app.api import (
 )
 from app.core.config import settings
 from app.db.session import engine
+from app.workers.scheduler import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup / shutdown 훅. 스케줄러 등은 이후 Phase 에서 여기에 연결.
+    start_scheduler()  # 월마감 등 백그라운드 잡 (§9.5)
     yield
+    stop_scheduler()
     await engine.dispose()
 
 
