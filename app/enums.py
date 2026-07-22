@@ -72,6 +72,25 @@ class MeetingScope(StrEnum):
     PEOPLE = "PEOPLE"
 
 
+class AttendanceSource(StrEnum):
+    BARCODE = "BARCODE"
+    MANUAL = "MANUAL"
+
+
+class LeaveType(StrEnum):
+    ANNUAL = "ANNUAL"  # 연차
+    HALF = "HALF"      # 반차
+    SICK = "SICK"      # 병가
+    FIELD = "FIELD"    # 외근
+    ETC = "ETC"
+
+
+class LeaveStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class ContribType(StrEnum):
     IDEA = "IDEA"              # 아이디어 = 5
     GOAL = "GOAL"              # 목표달성 = 10

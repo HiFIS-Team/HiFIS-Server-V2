@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api import (
+    attendance,
     auth,
     branches,
     contributions,
@@ -76,6 +77,7 @@ app.include_router(todos.router)
 app.include_router(notices.router)
 app.include_router(meetings.router)
 app.include_router(events.router)
+app.include_router(attendance.router)
 
 # 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
 app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")
