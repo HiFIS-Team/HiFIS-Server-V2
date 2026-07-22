@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import branches
+from app.api import auth, branches, employees
 from app.core.config import settings
 from app.db.session import engine
 
@@ -32,6 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
+app.include_router(employees.router)
 app.include_router(branches.router)
 
 

@@ -20,6 +20,15 @@ class Settings(BaseSettings):
 
     # 보안 — 실제 값은 .env 로 주입 (§9.6, §10 시크릿)
     jwt_secret: str = "change-me-in-env"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 14
+
+    # 초기 부트스트랩 시드 (app.seed) — 첫 지점·관리자
+    seed_branch_name: str = "본사"
+    seed_admin_name: str = "관리자"
+    seed_admin_email: str = "admin@hifis.local"
+    seed_admin_password: str = "admin1234"
 
     # CORS — PWA 오리진만 허용, 콤마 구분 (§9.7)
     cors_origins: str = "http://localhost:3000"

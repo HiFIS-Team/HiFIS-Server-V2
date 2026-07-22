@@ -29,8 +29,16 @@
 cp .env.example .env      # 이미 있으면 생략. JWT_SECRET·비밀번호 확인/교체
 
 # 2. 빌드 & 실행 (db + redis + api)
-docker compose up --build
+docker compose up -d --build
+
+# 3. DB 마이그레이션 적용
+docker compose exec api alembic upgrade head
+
+# 4. 초기 관리자·지점 시드 (.env 의 SEED_* 값 사용)
+docker compose exec api python -m app.seed
 ```
+
+기본 관리자: `admin@hifis.local` / `admin1234` (운영 전 반드시 교체). 로그인은 `POST /auth/login`.
 
 - API: http://localhost:8001
 - 헬스체크: http://localhost:8001/health
