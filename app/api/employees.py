@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
 from app.enums import EmployeeStatus, Role
@@ -34,18 +34,21 @@ async def _get_branch_or_400(db: AsyncSession, branch_id: str) -> Branch:
     return branch
 
 
-@router.get("", response_model=list[EmployeeOut], dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.get("", response_model=list[EmployeeOut], dependencies=[Depends(get_current_user)])
 async def list_employees(
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),  # MEMBER=본인 지점 강제 / MANAGER·ADMIN=None(전체)
     branch_id: str | None = Query(None, alias="branchId"),
     status: EmployeeStatus | None = Query(None),
     role: Role | None = Query(None),
     team: str | None = Query(None),
     q: str | None = Query(None),
 ) -> list[Employee]:
+    # 로스터 조회는 인증된 전 직원 허용(§멀티테넌시). MEMBER 는 본인 지점으로 제한.
+    effective_branch = scope or branch_id
     stmt = select(Employee).where(Employee.deleted_at.is_(None))
-    if branch_id:
-        stmt = stmt.where(Employee.branch_id == branch_id)
+    if effective_branch:
+        stmt = stmt.where(Employee.branch_id == effective_branch)
     if status:
         stmt = stmt.where(Employee.status == status)
     if role:
