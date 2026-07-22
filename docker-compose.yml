@@ -10,8 +10,10 @@ services:
     env_file: .env
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # 이 홈서버엔 다른 스택이 5432/6379/8000 을 이미 점유 중 → 겹치지 않는 포트 사용.
+    # (앱↔db 통신은 내부 네트워크라 호스트 포트와 무관)
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hifis} -d ${POSTGRES_DB:-hifis}"]
       interval: 5s
@@ -22,7 +24,7 @@ services:
     image: redis:7
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -39,7 +41,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       # 개발용 코드 마운트 (핫리로드). 배포 시엔 이 줄과 command 를 걷어내면
       # 이미지에 구운 gunicorn(Dockerfile CMD)으로 실행된다.

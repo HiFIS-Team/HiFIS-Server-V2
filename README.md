@@ -32,11 +32,13 @@ cp .env.example .env      # 이미 있으면 생략. JWT_SECRET·비밀번호 �
 docker compose up --build
 ```
 
-- API: http://localhost:8000
-- 헬스체크: http://localhost:8000/health
-- API 문서(Swagger): http://localhost:8000/docs
+- API: http://localhost:8001
+- 헬스체크: http://localhost:8001/health
+- API 문서(Swagger): http://localhost:8001/docs
 
 개발 모드에선 `./app`이 컨테이너에 마운트돼 **코드 저장 시 자동 리로드**된다.
+
+> 호스트 포트는 api `8001` / db `5434` / redis `6380` 을 쓴다 (이 서버에서 `8000·5432·6379`는 다른 스택이 사용 중이라 충돌 회피). 컨테이너 내부 포트는 그대로라 `.env`의 `DATABASE_URL`·`REDIS_URL`은 수정 불필요.
 
 ### 운영 배포 (Caddy 자동 HTTPS)
 
