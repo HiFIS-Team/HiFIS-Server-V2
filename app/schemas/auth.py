@@ -1,5 +1,7 @@
 """Auth DTO — CLAUDE.md §2.3."""
 
+from typing import Literal
+
 from app.schemas.base import CamelModel
 from app.schemas.employee import EmployeeOut
 
@@ -7,6 +9,17 @@ from app.schemas.employee import EmployeeOut
 class LoginRequest(CamelModel):
     email: str
     password: str
+
+
+class SignupRequest(CamelModel):
+    name: str
+    email: str
+    password: str
+    invite_key: str | None = None
+
+
+class SignupResponse(CamelModel):
+    result: Literal["JOINED", "PENDING"]
 
 
 class TokenResponse(CamelModel):

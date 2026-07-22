@@ -3,6 +3,8 @@
 TODO: signup + InviteKey/JoinRequest 는 다음 단계에서 추가.
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,14 +14,73 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    hash_password,
     verify_password,
 )
 from app.db.session import get_db
+from app.enums import InviteStatus, JoinRequestStatus
 from app.models.employee import Employee
-from app.schemas.auth import AccessTokenResponse, LoginRequest, RefreshRequest, TokenResponse
+from app.models.invite import InviteKey
+from app.models.join_request import JoinRequest
+from app.schemas.auth import (
+    AccessTokenResponse,
+    LoginRequest,
+    RefreshRequest,
+    SignupRequest,
+    SignupResponse,
+    TokenResponse,
+)
 from app.schemas.employee import EmployeeOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/signup", response_model=SignupResponse, status_code=201)
+async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> SignupResponse:
+    if (await db.execute(select(Employee).where(Employee.email == payload.email))).scalar_one_or_none():
+        raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
+
+    # 유효 초대키 → 즉시 가입 (JOINED)
+    if payload.invite_key:
+        key = (
+            await db.execute(select(InviteKey).where(InviteKey.code == payload.invite_key))
+        ).scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        if key is None or key.status != InviteStatus.UNUSED or key.expires_at <= now:
+            raise HTTPException(400, detail={"code": "INVALID_INVITE_KEY", "message": "유효하지 않은 초대키입니다"})
+        employee = Employee(
+            name=payload.name,
+            email=payload.email,
+            password_hash=hash_password(payload.password),
+            branch_id=key.branch_id,
+            role=key.role,
+            team=key.team,
+        )
+        key.status = InviteStatus.USED
+        db.add(employee)
+        await db.commit()
+        return SignupResponse(result="JOINED")
+
+    # 초대키 없음 → 승인 대기 (PENDING)
+    pending = (
+        await db.execute(
+            select(JoinRequest).where(
+                JoinRequest.email == payload.email,
+                JoinRequest.status == JoinRequestStatus.PENDING,
+            )
+        )
+    ).scalar_one_or_none()
+    if pending:
+        raise HTTPException(409, detail={"code": "JOIN_REQUEST_PENDING", "message": "이미 승인 대기 중입니다"})
+    db.add(
+        JoinRequest(
+            name=payload.name,
+            email=payload.email,
+            password_hash=hash_password(payload.password),
+        )
+    )
+    await db.commit()
+    return SignupResponse(result="PENDING")
 
 
 @router.post("/login", response_model=TokenResponse)

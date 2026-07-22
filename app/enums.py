@@ -30,3 +30,15 @@ class WorkStatus(StrEnum):
     MEAL = "MEAL"
     OUT = "OUT"
     AWAY = "AWAY"
+
+
+class InviteStatus(StrEnum):
+    UNUSED = "UNUSED"
+    USED = "USED"
+    EXPIRED = "EXPIRED"
+
+
+class JoinRequestStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"

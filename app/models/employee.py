@@ -23,7 +23,8 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     branch_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("branches.id"), nullable=False, index=True
     )
-    rank: Mapped[Rank] = mapped_column(SAEnum(Rank, native_enum=False, length=20), nullable=False)
+    # rank(직급)은 급여 속성 — 초대 가입 시엔 미배정(null), 관리자가 이후 배정
+    rank: Mapped[Rank | None] = mapped_column(SAEnum(Rank, native_enum=False, length=20), nullable=True)
     role: Mapped[Role] = mapped_column(
         SAEnum(Role, native_enum=False, length=20), nullable=False, default=Role.MEMBER
     )

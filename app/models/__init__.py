@@ -2,5 +2,7 @@
 
 from app.models.branch import Branch
 from app.models.employee import Employee
+from app.models.invite import InviteKey
+from app.models.join_request import JoinRequest
 
-__all__ = ["Branch", "Employee"]
+__all__ = ["Branch", "Employee", "InviteKey", "JoinRequest"]

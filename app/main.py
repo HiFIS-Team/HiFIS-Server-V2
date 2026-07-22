@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import auth, branches, employees
+from app.api import auth, branches, employees, invite_keys, join_requests
 from app.core.config import settings
 from app.db.session import engine
 
@@ -35,6 +35,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(branches.router)
+app.include_router(invite_keys.router)
+app.include_router(join_requests.router)
 
 
 @app.get("/health", tags=["meta"])
