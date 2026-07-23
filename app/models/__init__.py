@@ -2,6 +2,7 @@
 
 from app.models.platform.account import Account, AccountAccessLog
 from app.models.collab.approval import Approval
+from app.models.collab.chat import ChatRoom, ChatRoomMember, Message
 from app.models.org.attendance import Attendance, LeaveRequest
 from app.models.org.branch import Branch
 from app.models.scoring.contribution import ContributionGrant
@@ -30,6 +31,9 @@ __all__ = [
     "Account",
     "AccountAccessLog",
     "Approval",
+    "ChatRoom",
+    "ChatRoomMember",
+    "Message",
     "Attendance",
     "LeaveRequest",
     "Branch",

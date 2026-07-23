@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.api.collab import (
     approvals,
+    chat,
     events,
     meetings,
     notices,
@@ -25,6 +26,7 @@ from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler
+from app.ws.chat import router as ws_chat_router
 
 
 @asynccontextmanager
@@ -78,6 +80,8 @@ app.include_router(events.router)
 app.include_router(approvals.router)
 app.include_router(reactions.router)
 app.include_router(notifications.router)
+app.include_router(chat.router)
+app.include_router(ws_chat_router)  # WS /ws/chat
 # platform — 문서·계정·검색·대시보드
 app.include_router(accounts.router)
 app.include_router(documents.router)
