@@ -6,7 +6,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,12 @@ from app.db.session import get_db
 from app.enums import AttendanceSource, LeaveStatus, LeaveType, Role
 from app.models.org.attendance import Attendance, LeaveRequest
 from app.models.org.employee import Employee
-from app.schemas.org.attendance import AttendanceOut, LeaveRequestCreate, LeaveRequestOut
+from app.schemas.org.attendance import (
+    AttendanceOut,
+    AttendanceScanRequest,
+    LeaveRequestCreate,
+    LeaveRequestOut,
+)
 from app.services.notifications import notify
 
 router = APIRouter(tags=["attendance"])
@@ -25,21 +30,37 @@ router = APIRouter(tags=["attendance"])
 # ---------- 근태 ----------
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
-    current: Employee = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    payload: AttendanceScanRequest | None = Body(default=None),
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Attendance:
+    # 바코드 있으면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
+    if payload is not None and payload.barcode:
+        target = await db.scalar(
+            select(Employee).where(
+                Employee.barcode == payload.barcode, Employee.deleted_at.is_(None)
+            )
+        )
+        if target is None:
+            raise HTTPException(404, detail={"code": "BARCODE_NOT_FOUND", "message": "등록되지 않은 바코드입니다"})
+        if current.role != Role.ADMIN and target.branch_id != current.branch_id:
+            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 스캔할 수 없습니다"})
+    else:
+        target = current
+
     now = datetime.now(timezone.utc)
     today = now.date()
     record = (
         await db.execute(
             select(Attendance).where(
-                Attendance.employee_id == current.id, Attendance.date == today
+                Attendance.employee_id == target.id, Attendance.date == today
             )
         )
     ).scalar_one_or_none()
 
     if record is None:  # 첫 스캔 = 출근
         record = Attendance(
-            employee_id=current.id, date=today, check_in=now, source=AttendanceSource.BARCODE
+            employee_id=target.id, date=today, check_in=now, source=AttendanceSource.BARCODE
         )
         db.add(record)
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)

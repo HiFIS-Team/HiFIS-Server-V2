@@ -19,6 +19,8 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 출근 스캐너용 고유 바코드(사번/뱃지) — 모든 생성 경로에서 자동발급 (§6.9)
+    barcode: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
 
     branch_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("branches.id"), nullable=False, index=True

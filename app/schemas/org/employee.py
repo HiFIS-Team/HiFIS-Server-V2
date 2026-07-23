@@ -16,6 +16,7 @@ class EmployeeCreate(CamelModel):
     team: str | None = None
     phone: str | None = None
     avatar_color: str | None = None
+    barcode: str | None = None  # 미지정 시 서버 자동발급 (사번 직접 지정 가능)
 
 
 class EmployeeUpdate(CamelModel):
@@ -46,6 +47,7 @@ class EmployeeOut(CamelModel):
     name: str
     email: str
     phone: str | None = None
+    barcode: str | None = None  # PWA 가 이 값을 바코드/QR 로 렌더 → 지점 스캐너로 스캔
     branch_id: str
     rank: Rank
     role: Role

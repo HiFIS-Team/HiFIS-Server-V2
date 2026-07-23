@@ -28,6 +28,7 @@ from app.schemas.org.auth import (
     TokenResponse,
 )
 from app.schemas.org.employee import EmployeeOut
+from app.services.barcode import unique_barcode
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -53,6 +54,7 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
             role=key.role,
             rank=key.rank,
             team=key.team,
+            barcode=await unique_barcode(db),
         )
         key.status = InviteStatus.USED
         db.add(employee)

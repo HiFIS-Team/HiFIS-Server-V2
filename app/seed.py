@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.enums import Rank, Role
 from app.models.org.branch import Branch
 from app.models.org.employee import Employee
+from app.services.barcode import unique_barcode
 
 
 async def seed() -> None:
@@ -40,6 +41,7 @@ async def seed() -> None:
                 branch_id=branch.id,
                 rank=Rank.STORE_MANAGER,
                 role=Role.ADMIN,
+                barcode=await unique_barcode(db),
             )
             db.add(admin)
             print(f"[seed] 관리자 생성: {admin.email}")
