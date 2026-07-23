@@ -120,6 +120,8 @@ async def award_project(
     db: AsyncSession = Depends(get_db),
 ) -> ProjectAwardOut:
     """담당자에게 프로젝트 달성 점수 부여(기본 10, -100 ~ +100) + 코멘트. 재부여 시 갱신."""
+    if not payload.comment.strip():
+        raise HTTPException(400, detail={"code": "REASON_REQUIRED", "message": "점수 부여 사유는 필수입니다"})
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})

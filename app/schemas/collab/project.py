@@ -45,7 +45,7 @@ class ProjectAwardCreate(CamelModel):
     employee_id: str
     # 기본 10, 어드민 평가로 -100 ~ +100 (음수 = 본인 점수에서 차감)
     points: int = Field(default=10, ge=-100, le=100)
-    comment: str | None = None
+    comment: str  # 점수 부여 사유 필수
 
 
 class ProjectAwardOut(CamelModel):
