@@ -26,8 +26,8 @@ STAR_KEYS = ("competency", "collaboration", "contribution", "attitude", "leaders
 
 
 def _compute_total(scores: PeerScores, is_self: bool) -> int:
-    avg = sum(getattr(scores, key) for key in STAR_KEYS) / len(STAR_KEYS)
-    return round(avg * (1 if is_self else 4))  # 상대 최대 20 / 자기 최대 5
+    total = sum(getattr(scores, key) for key in STAR_KEYS)  # 별점 합 (5~25)
+    return total * (1 if is_self else 4)  # 별×4(상대)/별×1(자기) → 전체 최대 100/25
 
 
 def _to_out(review: PeerReview) -> PeerReviewOut:
