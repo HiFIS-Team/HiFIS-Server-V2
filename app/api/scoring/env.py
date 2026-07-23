@@ -30,6 +30,39 @@ from app.services.scoring import accrue_score
 router = APIRouter(tags=["env"])
 
 
+# 기본 환경정비 항목 (스펙 §2a 배점표). 지점마다 없으면 자동 생성되는 고정 항목 —
+# editable=False 로 보호(수정/삭제 불가). 항목을 바꾸려면 이 상수를 고칠 것.
+BASE_ENV_ITEMS: list[tuple[str, int]] = [
+    ("세탁", 1),
+    ("건조기", 1),
+    ("빨래 수거", 1),
+    ("빨래 정리", 3),
+    ("쓰레기통 비우기", 1),
+    ("비품 관리", 1),
+    ("구역 청소", 3),
+    ("복도 청소", 3),
+    ("베란다 청소", 3),
+    ("남탈 청소", 5),
+    ("여탈 청소", 5),
+    ("기타", 1),
+]
+
+
+async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
+    """지점에 환경정비 항목이 하나도 없으면 기본 12항목을 심는다 (멱등).
+
+    DB 초기화/부분 삭제 후에도 첫 조회 때 자동 복구 → 수동 재시드 불필요.
+    """
+    existing = await db.execute(select(EnvItem.id).where(EnvItem.branch_id == branch_id).limit(1))
+    if existing.first() is not None:
+        return
+    if await db.get(Branch, branch_id) is None:  # 실재하는 지점만
+        return
+    for name, points in BASE_ENV_ITEMS:
+        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=False))
+    await db.commit()
+
+
 # ---------- EnvItem (항목·배점) ----------
 @router.get("/env-items", response_model=list[EnvItemOut], dependencies=[Depends(get_current_user)])
 async def list_env_items(
@@ -37,6 +70,14 @@ async def list_env_items(
     scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
 ) -> list[EnvItem]:
+    # 기본 항목 자동 보충: 특정 지점이 대상이면 그 지점, 아니면(ADMIN 전체 조회) 모든 지점
+    target = branch_id or scope
+    if target:
+        await _ensure_base_items(db, target)
+    else:
+        for (bid,) in (await db.execute(select(Branch.id))).all():
+            await _ensure_base_items(db, bid)
+
     stmt = select(EnvItem)
     if scope:
         stmt = stmt.where(EnvItem.branch_id == scope)
@@ -66,6 +107,8 @@ async def update_env_item(
     item = await db.get(EnvItem, item_id)
     if item is None:
         raise HTTPException(404, detail={"code": "ENV_ITEM_NOT_FOUND", "message": "환경정비 항목을 찾을 수 없습니다"})
+    if not item.editable:  # 기본 고정 항목은 수정 불가 (삭제는 엔드포인트 자체가 없음)
+        raise HTTPException(403, detail={"code": "ENV_ITEM_LOCKED", "message": "기본 항목은 수정할 수 없습니다"})
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, key, value)
     await db.commit()
