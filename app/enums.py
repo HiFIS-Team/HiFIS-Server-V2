@@ -118,7 +118,7 @@ class ScoreCategory(StrEnum):
     KINDNESS = "KINDNESS"  # 회원 친절도
     CLASS = "CLASS"        # 수업 개수
     CONTRIB = "CONTRIB"    # 센터 기여도
-    PROJECT = "PROJECT"    # 프로젝트 달성 (기본 10 + 어드민 평가, 최대 100)
+    PROJECT = "PROJECT"    # 프로젝트 달성 (기본 10, 어드민 평가 -100 ~ +100)
     OPERATOR = "OPERATOR"  # 운영자 직접 부여/감점
 
 
