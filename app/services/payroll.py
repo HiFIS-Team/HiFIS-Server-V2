@@ -26,13 +26,15 @@ FREELANCE_RATE = 0.033
 INSURANCE_RATES = (("국민연금", 0.045), ("건강보험", 0.03545), ("고용보험", 0.009))
 LONGTERM_CARE_RATE = 0.1295  # 장기요양 = 건강보험료 × 12.95%
 
-# 매출성과(SALES) 자동 기여도: 개인 총매출 ÷ 10 × 2.5 (§4.4)
-SALES_DIVISOR = 10
-SALES_MULTIPLIER = 2.5
+# 매출성과(SALES) 자동 기여도 — 최종 점수표:
+# 100,000원당 10점(= 매출 ÷ 10,000 이 기본점수) × 0.25. 월 총 PT매출(신규+재등록) 기준.
+# 예) 월 총매출 1,000,000원 → 100 × 0.25 = 25점.
+SALES_WON_PER_POINT = 10_000  # 10,000원 = 기본 1점 (100,000원 = 10점)
+SALES_MULTIPLIER = 0.25
 
 
 def sales_points(total_sales: int) -> int:
-    return round(total_sales / SALES_DIVISOR * SALES_MULTIPLIER)
+    return round(total_sales / SALES_WON_PER_POINT * SALES_MULTIPLIER)
 
 
 def _deductions(gross: int, method: DeductionMethod) -> list[dict]:
