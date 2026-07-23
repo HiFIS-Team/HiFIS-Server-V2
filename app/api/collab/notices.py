@@ -41,7 +41,7 @@ async def list_notices(db: AsyncSession = Depends(get_db)) -> list[NoticeOut]:
 @router.post("", response_model=NoticeOut, status_code=201)
 async def create_notice(
     payload: NoticeCreate,
-    current: Employee = Depends(require_role(Role.ADMIN, Role.MANAGER)),
+    current: Employee = Depends(get_current_user),  # 작성=전 직원(공지로 서로 요청·알림). 수정/삭제만 ADMIN·MANAGER
     db: AsyncSession = Depends(get_db),
 ) -> NoticeOut:
     notice = Notice(title=payload.title, body=payload.body, pinned=payload.pinned, author_id=current.id)
