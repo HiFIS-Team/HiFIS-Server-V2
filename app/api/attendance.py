@@ -150,3 +150,23 @@ async def approve_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> 
 @router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
 async def reject_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> LeaveRequest:
     return await _decide_leave(request_id, LeaveStatus.REJECTED, db)
+
+
+@router.post("/leaves/{request_id}/cancel", response_model=LeaveRequestOut)
+async def cancel_leave(
+    request_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LeaveRequest:
+    """신청자 본인이 대기중(PENDING) 휴가를 취소 → CANCELLED (이력 보존)."""
+    leave = await db.get(LeaveRequest, request_id)
+    if leave is None:
+        raise HTTPException(404, detail={"code": "LEAVE_NOT_FOUND", "message": "휴가 신청을 찾을 수 없습니다"})
+    if leave.employee_id != current.id:
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 신청만 취소할 수 있습니다"})
+    if leave.status != LeaveStatus.PENDING:
+        raise HTTPException(400, detail={"code": "NOT_CANCELLABLE", "message": "대기중 신청만 취소할 수 있습니다"})
+    leave.status = LeaveStatus.CANCELLED
+    await db.commit()
+    await db.refresh(leave)
+    return leave

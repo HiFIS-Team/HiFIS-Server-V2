@@ -151,6 +151,31 @@ async def reject_approval(
     return await _act(approval_id, ApprovalStepStatus.REJECTED, payload.comment, current, db)
 
 
+@router.post("/{approval_id}/withdraw", response_model=ApprovalOut)
+async def withdraw_approval(
+    approval_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Approval:
+    """신청자 본인이 진행중(IN_PROGRESS) 결재를 회수 → WITHDRAWN (결재선 이력 보존)."""
+    approval = await _get_or_404(approval_id, db)
+    if approval.requester_id != current.id:
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "신청자만 회수할 수 있습니다"})
+    if approval.status != ApprovalStatus.IN_PROGRESS:
+        raise HTTPException(400, detail={"code": "ALREADY_DONE", "message": "이미 종결된 결재입니다"})
+
+    pending_approver = approval.current_approver_id  # 회수 알릴 대상(현재 차례였던 사람)
+    approval.status = ApprovalStatus.WITHDRAWN
+    approval.current_approver_id = None
+    if pending_approver:
+        await notify(db, employee_id=pending_approver, type="APPROVAL",
+                     title="결재 요청이 회수되었습니다", body=approval.title,
+                     link=f"/approvals/{approval.id}")
+    await db.commit()
+    await db.refresh(approval)
+    return approval
+
+
 @router.post("/{approval_id}/comments", response_model=ApprovalOut)
 async def add_comment(
     approval_id: str,

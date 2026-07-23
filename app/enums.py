@@ -89,12 +89,14 @@ class LeaveStatus(StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"  # 신청자 본인이 대기중 취소
 
 
 class ApprovalStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    WITHDRAWN = "WITHDRAWN"  # 신청자 본인이 진행중 회수(이력 보존)
 
 
 class ApprovalStepStatus(StrEnum):
