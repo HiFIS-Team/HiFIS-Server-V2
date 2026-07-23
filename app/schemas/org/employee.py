@@ -47,6 +47,7 @@ class EmployeeOut(CamelModel):
     name: str
     email: str
     phone: str | None = None
+    emp_no: str | None = None  # 사번(사람이 읽는 식별자) {입사연도}-{순번}
     barcode: str | None = None  # PWA 가 이 값을 바코드/QR 로 렌더 → 지점 스캐너로 스캔
     branch_id: str
     rank: Rank

@@ -25,7 +25,7 @@ from app.schemas.org.employee import (
     EmployeeUpdate,
     PasswordChange,
 )
-from app.services.barcode import unique_barcode
+from app.services.barcode import unique_barcode, unique_emp_no
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -186,6 +186,7 @@ async def create_employee(payload: EmployeeCreate, db: AsyncSession = Depends(ge
         phone=payload.phone,
         avatar_color=payload.avatar_color or "#6366f1",
         barcode=barcode,
+        emp_no=await unique_emp_no(db),
     )
     db.add(employee)
     await db.commit()
