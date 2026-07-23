@@ -25,7 +25,7 @@ from app.schemas.org.employee import (
     EmployeeUpdate,
     PasswordChange,
 )
-from app.services.barcode import unique_barcode, unique_emp_no
+from app.services.employee_codes import unique_emp_no
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -141,7 +141,7 @@ async def withdraw_me(
     user.phone = None
     user.avatar_url = None
     user.status_message = None
-    user.barcode = None  # 바코드 해방(스캔 불가)
+    # emp_no 는 유지(비PII 식별자). deleted_at 세팅으로 스캔은 자동 제외됨
     user.status = EmployeeStatus.RESIGNED
     user.deleted_at = datetime.now(timezone.utc)
     await db.commit()
@@ -169,12 +169,6 @@ async def create_employee(payload: EmployeeCreate, db: AsyncSession = Depends(ge
     if exists.scalar_one_or_none() is not None:
         raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
     await _get_branch_or_400(db, payload.branch_id)
-    if payload.barcode:  # 사번 직접 지정 → 중복 검사
-        if await db.scalar(select(Employee.id).where(Employee.barcode == payload.barcode)):
-            raise HTTPException(409, detail={"code": "BARCODE_TAKEN", "message": "이미 사용 중인 바코드입니다"})
-        barcode = payload.barcode
-    else:
-        barcode = await unique_barcode(db)
     employee = Employee(
         name=payload.name,
         email=payload.email,
@@ -185,7 +179,6 @@ async def create_employee(payload: EmployeeCreate, db: AsyncSession = Depends(ge
         team=payload.team,
         phone=payload.phone,
         avatar_color=payload.avatar_color or "#6366f1",
-        barcode=barcode,
         emp_no=await unique_emp_no(db),
     )
     db.add(employee)

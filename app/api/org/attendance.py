@@ -7,7 +7,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
@@ -34,15 +34,17 @@ async def scan_attendance(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Attendance:
-    # 바코드 있으면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
-    if payload is not None and payload.barcode:
+    # 사번(emp_no) 스캔이면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
+    if payload is not None and payload.code:
+        normalized = payload.code.strip().replace("-", "")  # 하이픈 유무 모두 허용
         target = await db.scalar(
             select(Employee).where(
-                Employee.barcode == payload.barcode, Employee.deleted_at.is_(None)
+                func.replace(Employee.emp_no, "-", "") == normalized,
+                Employee.deleted_at.is_(None),
             )
         )
         if target is None:
-            raise HTTPException(404, detail={"code": "BARCODE_NOT_FOUND", "message": "등록되지 않은 바코드입니다"})
+            raise HTTPException(404, detail={"code": "EMP_NO_NOT_FOUND", "message": "등록되지 않은 사번입니다"})
         if current.role != Role.ADMIN and target.branch_id != current.branch_id:
             raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 스캔할 수 없습니다"})
     else:

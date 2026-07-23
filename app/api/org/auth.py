@@ -28,7 +28,7 @@ from app.schemas.org.auth import (
     TokenResponse,
 )
 from app.schemas.org.employee import EmployeeOut
-from app.services.barcode import unique_barcode, unique_emp_no
+from app.services.employee_codes import unique_emp_no
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -54,7 +54,6 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
             role=key.role,
             rank=key.rank,
             team=key.team,
-            barcode=await unique_barcode(db),
             emp_no=await unique_emp_no(db),
         )
         key.status = InviteStatus.USED

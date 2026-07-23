@@ -12,7 +12,7 @@ from app.models.org.employee import Employee
 from app.models.org.join_request import JoinRequest
 from app.schemas.org.employee import EmployeeOut
 from app.schemas.org.join_request import JoinRequestApprove, JoinRequestOut
-from app.services.barcode import unique_barcode, unique_emp_no
+from app.services.employee_codes import unique_emp_no
 
 router = APIRouter(prefix="/join-requests", tags=["join-requests"])
 
@@ -51,7 +51,6 @@ async def approve_join_request(
         role=payload.role,
         team=payload.team,
         rank=payload.rank,
-        barcode=await unique_barcode(db),
         emp_no=await unique_emp_no(db),
     )
     join_request.status = JoinRequestStatus.APPROVED

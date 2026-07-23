@@ -19,9 +19,7 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    # 출근 스캐너용 고유 바코드(기계 스캔) — 모든 생성 경로에서 자동발급 (§6.9)
-    barcode: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
-    # 사번(사람이 읽는 식별자) — {입사연도}-{4자리 순번}, 자동발급 후 불변
+    # 사번(사람이 읽는 식별자) — {입사연도}-{4자리 순번}. 프로필 + 출근 스캔 공용, 자동발급 후 불변
     emp_no: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True)
 
     branch_id: Mapped[str] = mapped_column(

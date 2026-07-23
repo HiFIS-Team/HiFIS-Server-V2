@@ -2,13 +2,16 @@
 
 from datetime import date, datetime
 
+from pydantic import AliasChoices, Field
+
 from app.enums import AttendanceSource, LeaveStatus, LeaveType
 from app.schemas.base import CamelModel
 
 
 class AttendanceScanRequest(CamelModel):
-    # 지점 스캐너가 읽은 바코드. 생략 시 로그인 본인 스캔(하위호환).
-    barcode: str | None = None
+    # 지점 스캐너가 읽은 사번(emp_no). 생략 시 로그인 본인 스캔(하위호환).
+    # 입력 키는 code / barcode 모두 허용(구 스캐너 호환), 하이픈 유무 무관.
+    code: str | None = Field(default=None, validation_alias=AliasChoices("code", "barcode"))
 
 
 class AttendanceOut(CamelModel):
