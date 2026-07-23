@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import current_period
 from app.enums import ScoreCategory
-from app.models.score_event import ScoreEvent
+from app.models.scoring.score_event import ScoreEvent
 
 
 async def accrue_score(

@@ -12,13 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import period_range
 from app.enums import DeductionMethod, EmployeeStatus, RegistrationType, ScoreCategory
-from app.models.employee import Employee
-from app.models.member import Member
-from app.models.payslip import Payslip
-from app.models.rank_policy import RankPolicy
-from app.models.registration import Registration
-from app.models.score_event import ScoreEvent
-from app.models.session_sign import SessionSign
+from app.models.org.employee import Employee
+from app.models.sales.member import Member
+from app.models.payroll.payslip import Payslip
+from app.models.payroll.rank_policy import RankPolicy
+from app.models.sales.registration import Registration
+from app.models.scoring.score_event import ScoreEvent
+from app.models.sales.session_sign import SessionSign
 from app.services.scoring import accrue_score
 
 FREELANCE_RATE = 0.033

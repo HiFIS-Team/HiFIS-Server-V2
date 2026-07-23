@@ -7,36 +7,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api import (
-    accounts,
+from app.api.collab import (
     approvals,
-    attendance,
-    auth,
-    branches,
-    contributions,
-    dashboard,
-    documents,
-    employees,
-    env,
     events,
-    invite_keys,
-    join_requests,
-    kindness,
     meetings,
-    members,
     notices,
     notifications,
-    payslips,
-    peer_reviews,
     projects,
-    rank_policies,
     reactions,
-    registrations,
-    scores,
-    search,
-    session_signs,
     todos,
 )
+from app.api.org import attendance, auth, branches, employees, invite_keys, join_requests
+from app.api.payroll import payslips, rank_policies
+from app.api.platform import accounts, dashboard, documents, search
+from app.api.sales import members, registrations, session_signs
+from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler
@@ -64,34 +49,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# org — 조직·인사
 app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(branches.router)
 app.include_router(invite_keys.router)
 app.include_router(join_requests.router)
+app.include_router(attendance.router)
+# sales — 회원·매출
 app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
+# scoring — 점수
 app.include_router(scores.router)
 app.include_router(env.router)
 app.include_router(peer_reviews.router)
 app.include_router(contributions.router)
 app.include_router(kindness.router)
+# payroll — 급여
 app.include_router(rank_policies.router)
 app.include_router(payslips.router)
+# collab — 협업
 app.include_router(projects.router)
 app.include_router(todos.router)
 app.include_router(notices.router)
 app.include_router(meetings.router)
 app.include_router(events.router)
-app.include_router(attendance.router)
 app.include_router(approvals.router)
+app.include_router(reactions.router)
+app.include_router(notifications.router)
+# platform — 문서·계정·검색·대시보드
 app.include_router(accounts.router)
 app.include_router(documents.router)
-app.include_router(reactions.router)
 app.include_router(search.router)
 app.include_router(dashboard.router)
-app.include_router(notifications.router)
 
 # 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
 app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")
