@@ -12,8 +12,8 @@ from app.models.org.employee import Employee
 from app.schemas.scoring.contribution import ContributionCreate, ContributionGrantOut
 from app.services.scoring import accrue_score
 
-FIXED_POINTS = {ContribType.IDEA: 5, ContribType.GOAL: 10}
-EXTRA_WORK_RATE = 3
+# 최종 점수표: 창의적 아이디어 3 / 자발적 목표 업무 10 / 근무 외 출근 1시간 이상 10(고정)
+FIXED_POINTS = {ContribType.IDEA: 3, ContribType.GOAL: 10, ContribType.EXTRA_WORK: 10}
 
 router = APIRouter(prefix="/contributions", tags=["contributions"])
 
@@ -32,14 +32,9 @@ async def create_contribution(
     if employee is None:
         raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원이 존재하지 않습니다"})
 
-    if payload.type == ContribType.EXTRA_WORK:
-        if payload.hours is None:
-            raise HTTPException(400, detail={"code": "HOURS_REQUIRED", "message": "추가근무는 hours 가 필요합니다"})
-        points = payload.hours * EXTRA_WORK_RATE
-        hours = payload.hours
-    else:
-        points = FIXED_POINTS[payload.type]
-        hours = None
+    # 근무 외 출근(1시간 이상)은 고정 10점. hours 는 기록용(옵션).
+    points = FIXED_POINTS[payload.type]
+    hours = payload.hours if payload.type == ContribType.EXTRA_WORK else None
 
     grant = ContributionGrant(
         employee_id=payload.employee_id,

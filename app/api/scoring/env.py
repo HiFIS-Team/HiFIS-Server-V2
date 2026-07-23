@@ -30,26 +30,36 @@ from app.services.scoring import accrue_score
 router = APIRouter(tags=["env"])
 
 
-# 기본 환경정비 항목 (스펙 §2a 배점표). 지점마다 없으면 자동 생성되는 고정 항목 —
-# editable=False 로 보호(수정/삭제 불가). 항목을 바꾸려면 이 상수를 고칠 것.
-BASE_ENV_ITEMS: list[tuple[str, int]] = [
-    ("세탁", 1),
-    ("건조기", 1),
-    ("빨래 수거", 1),
-    ("빨래 정리", 3),
-    ("쓰레기통 비우기", 1),
-    ("비품 관리", 1),
-    ("구역 청소", 3),
-    ("복도 청소", 3),
-    ("베란다 청소", 3),
-    ("남탈 청소", 5),
-    ("여탈 청소", 5),
-    ("기타", 1),
+# 기본 환경정비 항목 (최종 점수표). 지점마다 없으면 자동 생성 —
+# (이름, 배점, editable). editable=False 는 고정 보호(수정/삭제 불가).
+# '기타'는 1~10 범위라 editable=True 로 두어 지점별 조정 가능(항목을 바꾸려면 이 상수를 고칠 것).
+BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
+    ("빨래정리", 3, False),
+    ("건조기", 1, False),
+    ("세탁", 1, False),
+    ("구역청소", 2, False),
+    ("현수막", 10, False),
+    ("복도청소", 2, False),
+    ("락커정리", 2, False),
+    ("남탈부스", 5, False),
+    ("남탈청소", 2, False),
+    ("여탈부스", 5, False),
+    ("여탈청소", 2, False),
+    ("기구관리", 2, False),
+    ("회원지도(성함)", 2, False),
+    ("블로그", 10, False),
+    ("족자", 5, False),
+    ("게시물, 스토리", 3, False),
+    ("클레임 해결", 10, False),
+    ("전단지", 10, False),
+    ("화장실청소", 5, False),
+    ("tm회원관리", 1, False),
+    ("기타", 1, True),  # 1~10 범위 → 지점별 조정 가능
 ]
 
 
 async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
-    """지점에 환경정비 항목이 하나도 없으면 기본 12항목을 심는다 (멱등).
+    """지점에 환경정비 항목이 하나도 없으면 기본 항목을 심는다 (멱등).
 
     DB 초기화/부분 삭제 후에도 첫 조회 때 자동 복구 → 수동 재시드 불필요.
     """
@@ -58,8 +68,8 @@ async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
         return
     if await db.get(Branch, branch_id) is None:  # 실재하는 지점만
         return
-    for name, points in BASE_ENV_ITEMS:
-        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=False))
+    for name, points, editable in BASE_ENV_ITEMS:
+        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=editable))
     await db.commit()
 
 

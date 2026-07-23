@@ -106,9 +106,9 @@ class ApprovalStepStatus(StrEnum):
 
 
 class ContribType(StrEnum):
-    IDEA = "IDEA"              # 아이디어 = 5
-    GOAL = "GOAL"              # 목표달성 = 10
-    EXTRA_WORK = "EXTRA_WORK"  # 추가근무 = hours × 3
+    IDEA = "IDEA"              # 창의적 아이디어 = 3
+    GOAL = "GOAL"              # 자발적 목표 업무 = 10
+    EXTRA_WORK = "EXTRA_WORK"  # 근무 외 출근 1시간 이상 = 10(고정)
     SALES = "SALES"            # 매출성과 = 자동(부여 대상 아님)
 
 
