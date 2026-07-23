@@ -4,14 +4,16 @@
 목록은 지점 스코프(§0): MEMBER=본인 지점 로스터 / MANAGER·ADMIN=전체.
 """
 
+import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.security import hash_password, verify_password
+from app.core.storage import save_avatar
 from app.db.session import get_db
 from app.enums import EmployeeStatus, Role
 from app.models.org.branch import Branch
@@ -90,6 +92,60 @@ async def change_my_password(
         raise HTTPException(400, detail={"code": "INVALID_PASSWORD", "message": "현재 비밀번호가 올바르지 않습니다"})
     user.password_hash = hash_password(payload.new_password)
     await db.commit()
+    return None
+
+
+def _remove_local(url: str | None) -> None:
+    if url and url.startswith("/uploads/"):
+        path = url.lstrip("/")
+        if os.path.exists(path):
+            os.remove(path)
+
+
+@router.post("/me/avatar", response_model=EmployeeOut)
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Employee:
+    old = user.avatar_url
+    user.avatar_url = await save_avatar(file)
+    await db.commit()
+    await db.refresh(user)
+    _remove_local(old)  # 이전 아바타 파일 정리
+    return user
+
+
+@router.post("/me/withdraw", status_code=204)
+async def withdraw_me(
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """본인 탈퇴 — 소프트삭제 + 익명화. 근태·급여 등 기록은 row 유지로 보존."""
+    if user.deleted_at is not None:
+        raise HTTPException(400, detail={"code": "ALREADY_WITHDRAWN", "message": "이미 탈퇴한 계정입니다"})
+    if user.role == Role.ADMIN:  # 마지막 관리자는 탈퇴 불가
+        other_admins = await db.scalar(
+            select(func.count()).select_from(Employee).where(
+                Employee.role == Role.ADMIN,
+                Employee.deleted_at.is_(None),
+                Employee.id != user.id,
+            )
+        )
+        if not other_admins:
+            raise HTTPException(409, detail={"code": "LAST_ADMIN", "message": "다른 관리자가 있어야 탈퇴할 수 있습니다"})
+
+    old_avatar = user.avatar_url
+    user.name = "(탈퇴한 직원)"
+    user.email = f"withdrawn.{user.id}@removed.local"  # 원래 이메일 해방(재가입 가능)
+    user.phone = None
+    user.avatar_url = None
+    user.status_message = None
+    user.barcode = None  # 바코드 해방(스캔 불가)
+    user.status = EmployeeStatus.RESIGNED
+    user.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+    _remove_local(old_avatar)
     return None
 
 

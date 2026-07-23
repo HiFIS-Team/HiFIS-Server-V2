@@ -13,6 +13,30 @@ from fastapi import HTTPException, UploadFile
 
 UPLOAD_ROOT = "uploads"
 _CHUNK = 1024 * 1024  # 1MB
+_AVATAR_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+_AVATAR_MAX = 5 * 1024 * 1024  # 5MB
+
+
+async def save_avatar(upload: UploadFile) -> str:
+    """아바타 이미지를 uploads/avatars/ 에 저장하고 서빙 경로 반환(이미지·용량 검증)."""
+    filename = upload.filename or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in _AVATAR_EXTS:
+        raise HTTPException(400, detail={"code": "INVALID_IMAGE", "message": "이미지 파일만 업로드할 수 있습니다(png/jpg/gif/webp)"})
+    now = datetime.now(timezone.utc)
+    rel_dir = f"{UPLOAD_ROOT}/avatars/{now:%Y}/{now:%m}"
+    os.makedirs(rel_dir, exist_ok=True)
+    rel_path = f"{rel_dir}/{uuid.uuid4().hex}.{ext}"
+    size = 0
+    with open(rel_path, "wb") as out:
+        while chunk := await upload.read(_CHUNK):
+            size += len(chunk)
+            if size > _AVATAR_MAX:
+                out.close()
+                os.remove(rel_path)
+                raise HTTPException(400, detail={"code": "IMAGE_TOO_LARGE", "message": "이미지는 5MB 이하만 가능합니다"})
+            out.write(chunk)
+    return f"/{rel_path}"
 
 
 async def save_upload(upload: UploadFile) -> tuple[str, str, int]:
