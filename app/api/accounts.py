@@ -4,7 +4,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_secret, encrypt_secret
@@ -110,6 +110,8 @@ async def delete_account(
     if account is None:
         raise _not_found()
     _require_owner_or_admin(account, current)
+    # 접근 로그가 계정을 FK 참조 → 먼저 정리해야 FK 위반(500) 없이 삭제됨
+    await db.execute(delete(AccountAccessLog).where(AccountAccessLog.account_id == account_id))
     await db.delete(account)
     await db.commit()
     return None
