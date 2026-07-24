@@ -48,11 +48,10 @@ async def create_notice(
     notice = Notice(title=payload.title, body=payload.body, pinned=payload.pinned, author_id=current.id)
     db.add(notice)
     await db.flush()  # notice.id 확보(알림 링크용)
-    # 새 공지 알림(+웹푸시) — 재직 중 멤버·매니저 전원(작성자 제외)
+    # 새 공지 알림(+웹푸시) — 재직 중 전원(어드민 포함, 작성자만 제외)
     recipients = (
         await db.scalars(
             select(Employee.id).where(
-                Employee.role.in_((Role.MEMBER, Role.MANAGER)),
                 Employee.status == EmployeeStatus.ACTIVE,
                 Employee.deleted_at.is_(None),
                 Employee.id != current.id,

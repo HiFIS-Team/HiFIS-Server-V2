@@ -11,6 +11,7 @@ from app.workers.event_reminders import event_reminders
 from app.workers.payday_reminder import payday_deadline_reminders, payday_reminders
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
+from app.workers.ranking_jobs import announce_monthly_winners, ranking_change_scan
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -51,6 +52,20 @@ def start_scheduler() -> None:
         event_reminders,
         CronTrigger(hour=0, minute=0),
         id="event_reminder",
+        replace_existing=True,
+    )
+    # 매월 1일 01:00 UTC(=10:00 KST) — 전월 랭킹 1등 발표(급여마감 00:30 이후라 SALES 반영됨)
+    scheduler.add_job(
+        announce_monthly_winners,
+        CronTrigger(day=1, hour=1, minute=0),
+        id="ranking_monthly",
+        replace_existing=True,
+    )
+    # 5분마다 — 순위 변동 감지(밀려난 본인 + 어드민 알림)
+    scheduler.add_job(
+        ranking_change_scan,
+        CronTrigger(minute="*/5"),
+        id="ranking_change",
         replace_existing=True,
     )
     # TODO(§9.5): 세션 만료 스캔, 점수 기간 롤오버 잡 추가

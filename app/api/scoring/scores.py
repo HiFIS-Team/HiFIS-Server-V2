@@ -14,6 +14,7 @@ from app.enums import RankingKind, Role, ScoreCategory
 from app.models.org.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.score import RankingItem, ScoreCreate, ScoreEventOut, ScoreSummary
+from app.services.ranking import kind_conditions
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
@@ -57,13 +58,7 @@ async def ranking(
         stmt = stmt.where(ScoreEvent.branch_id == scope)
     # kind(랭킹 탭)가 category 보다 우선. OVERALL=필터 없음, SALES=CONTRIB 중 sales:* 만.
     if kind is not None:
-        if kind == RankingKind.SALES:
-            stmt = stmt.where(
-                ScoreEvent.category == ScoreCategory.CONTRIB,
-                ScoreEvent.source_ref_id.like("sales:%"),
-            )
-        elif kind != RankingKind.OVERALL:
-            stmt = stmt.where(ScoreEvent.category == ScoreCategory(kind.value))
+        stmt = stmt.where(*kind_conditions(kind))
     elif category is not None:
         stmt = stmt.where(ScoreEvent.category == category)
     if period:
