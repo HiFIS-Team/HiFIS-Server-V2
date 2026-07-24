@@ -7,6 +7,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.workers.payday_reminder import payday_reminders
 from app.workers.payroll_close import close_previous_month
 
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -20,6 +21,13 @@ def start_scheduler() -> None:
         close_previous_month,
         CronTrigger(day=1, hour=0, minute=30),
         id="payroll_close",
+        replace_existing=True,
+    )
+    # 매일 00:05 UTC(=09:05 KST) — 지급일 당일 대상자에게 급여 신청 알림
+    scheduler.add_job(
+        payday_reminders,
+        CronTrigger(hour=0, minute=5),
+        id="payday_reminder",
         replace_existing=True,
     )
     # TODO(§9.5): 프로젝트 마감 알림, 세션 만료 스캔, 점수 기간 롤오버 잡 추가

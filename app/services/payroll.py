@@ -96,6 +96,17 @@ def payday_window(year_month: str, today: date) -> dict:
     return {"year_month": year_month, "payday": payday.isoformat(), "is_open": today == payday}
 
 
+def due_year_month(today: date) -> str | None:
+    """오늘이 지급일인 급여 월(YYYY-MM). 기본(말일): 오늘이 그 달 말일이면 그 달.
+    (익월10일 규칙 대비 지난 달도 후보 — compute_payday 가 지점×직급 규칙으로 확장되면 그대로 반영.)"""
+    y, m = today.year, today.month
+    prev = f"{y - 1:04d}-12" if m == 1 else f"{y:04d}-{m - 1:02d}"
+    for cand in (f"{y:04d}-{m:02d}", prev):
+        if compute_payday(cand) == today:
+            return cand
+    return None
+
+
 def _deductions(gross: int, method: DeductionMethod) -> list[dict]:
     if method == DeductionMethod.FREELANCE:
         return [{"label": "사업소득세(3.3%)", "amount": round(gross * FREELANCE_RATE)}]
