@@ -82,6 +82,19 @@ class ProjectStatus(StrEnum):
     MISSED = "MISSED"            # 누락 (마감 지남 + 미완료)
 
 
+class ProjectRequestType(StrEnum):
+    """프로젝트 기한 변경 요청 종류 (매니저·멤버 → 어드민 승인)."""
+
+    EXTENSION = "EXTENSION"  # 기한 연장 요청 (마감 전)
+    OVERDUE = "OVERDUE"      # 누락 사유 (마감 지남 — 왜 늦었고 언제까지 끝내겠다)
+
+
+class ProjectRequestStatus(StrEnum):
+    PENDING = "PENDING"      # 대기 (어드민 승인 전)
+    APPROVED = "APPROVED"    # 승인 (새 기한 반영)
+    REJECTED = "REJECTED"    # 반려 (사유 필수)
+
+
 class MeetingScope(StrEnum):
     COMPANY = "COMPANY"
     PROJECT = "PROJECT"

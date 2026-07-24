@@ -20,6 +20,7 @@ from app.models.collab.notification import Notification, PushSubscription
 from app.models.payroll.payslip import Payslip
 from app.models.scoring.peer_review import PeerReview
 from app.models.collab.project import Project
+from app.models.collab.project_request import ProjectRequest
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.collab.reaction import Reaction
 from app.models.sales.registration import Registration
@@ -56,6 +57,7 @@ __all__ = [
     "Payslip",
     "PeerReview",
     "Project",
+    "ProjectRequest",
     "RankPolicy",
     "Reaction",
     "Registration",

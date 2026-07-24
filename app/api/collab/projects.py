@@ -8,8 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
-from app.enums import ProjectStatus, Role, ScoreCategory
+from app.enums import (
+    ProjectRequestStatus,
+    ProjectRequestType,
+    ProjectStatus,
+    Role,
+    ScoreCategory,
+)
 from app.models.collab.project import Project
+from app.models.collab.project_request import ProjectRequest
 from app.models.org.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.collab.project import (
@@ -19,6 +26,12 @@ from app.schemas.collab.project import (
     ProjectOut,
     ProjectUpdate,
 )
+from app.schemas.collab.project_request import (
+    ProjectRequestCreate,
+    ProjectRequestOut,
+    ProjectRequestReject,
+)
+from app.services.notifications import notify
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(get_current_user)])
@@ -88,6 +101,129 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
     return _to_out(project)
+
+
+# ---------- 프로젝트 기한 변경 요청 (연장/누락 사유 → 어드민 승인) ----------
+def _req_out(r: ProjectRequest) -> ProjectRequestOut:
+    return ProjectRequestOut(
+        id=r.id,
+        project_id=r.project_id,
+        type=r.type,
+        new_due=r.new_due,
+        reason=r.reason,
+        status=r.status,
+        requested_by_id=r.requested_by_id,
+        decided_by_id=r.decided_by_id,
+        decided_at=r.decided_at,
+        reject_reason=r.reject_reason,
+        created_at=r.created_at,
+    )
+
+
+# ⚠️ 리터럴 경로라 반드시 /{project_id} 보다 먼저 선언 (안 그러면 project_id="requests"로 잡힘)
+@router.get("/requests", response_model=list[ProjectRequestOut])
+async def list_project_requests(
+    db: AsyncSession = Depends(get_db),
+    status: ProjectRequestStatus | None = Query(None),
+    project_id: str | None = Query(None, alias="projectId"),
+) -> list[ProjectRequestOut]:
+    stmt = select(ProjectRequest)
+    if status:
+        stmt = stmt.where(ProjectRequest.status == status)
+    if project_id:
+        stmt = stmt.where(ProjectRequest.project_id == project_id)
+    rows = (await db.execute(stmt.order_by(ProjectRequest.created_at.desc()))).scalars().all()
+    return [_req_out(r) for r in rows]
+
+
+@router.post("/{project_id}/requests", response_model=ProjectRequestOut, status_code=201)
+async def create_project_request(
+    project_id: str,
+    payload: ProjectRequestCreate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectRequestOut:
+    """매니저·멤버가 기한 연장(EXTENSION)/누락 사유(OVERDUE)를 새 기한+사유로 제출."""
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    # 프로젝트당 대기 요청은 하나만 (중복 방지)
+    existing = await db.scalar(
+        select(ProjectRequest).where(
+            ProjectRequest.project_id == project_id,
+            ProjectRequest.status == ProjectRequestStatus.PENDING,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(400, detail={"code": "REQUEST_PENDING", "message": "이미 대기 중인 요청이 있습니다"})
+    req = ProjectRequest(
+        project_id=project_id,
+        type=payload.type,
+        new_due=payload.new_due,
+        reason=payload.reason,
+        requested_by_id=current.id,
+    )
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+    # 어드민에게 알림 (best-effort)
+    label = "누락 사유" if payload.type == ProjectRequestType.OVERDUE else "기한 연장"
+    admins = (await db.execute(select(Employee).where(Employee.role == Role.ADMIN))).scalars().all()
+    for admin in admins:
+        await notify(db, employee_id=admin.id, type="PROJECT", title=f"프로젝트 {label} 요청", body=f"{project.title} · {current.name}", link="/projects")
+    await db.commit()
+    return _req_out(req)
+
+
+async def _decide_request(
+    request_id: str,
+    status: ProjectRequestStatus,
+    db: AsyncSession,
+    current: Employee,
+    reason: str | None = None,
+) -> ProjectRequestOut:
+    req = await db.get(ProjectRequest, request_id)
+    if req is None:
+        raise HTTPException(404, detail={"code": "REQUEST_NOT_FOUND", "message": "요청을 찾을 수 없습니다"})
+    if req.status != ProjectRequestStatus.PENDING:
+        raise HTTPException(400, detail={"code": "ALREADY_DECIDED", "message": "이미 처리된 요청입니다"})
+    project = await db.get(Project, req.project_id)
+    req.status = status
+    req.decided_by_id = current.id
+    req.decided_at = datetime.now(timezone.utc)
+    label = "누락 사유" if req.type == ProjectRequestType.OVERDUE else "기한 연장"
+    title = project.title if project else ""
+    if status == ProjectRequestStatus.APPROVED:
+        if project is not None:
+            project.due = req.new_due  # 새 기한 반영
+            project.extension_reason = req.reason
+        n_title, n_body = f"프로젝트 {label} 승인", f"{title} · 새 마감 반영"
+    else:
+        req.reject_reason = reason
+        n_title, n_body = f"프로젝트 {label} 반려", f"{title} · 사유: {reason}"
+    await notify(db, employee_id=req.requested_by_id, type="PROJECT", title=n_title, body=n_body, link="/projects")
+    await db.commit()
+    await db.refresh(req)
+    return _req_out(req)
+
+
+@router.post("/requests/{request_id}/approve", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.ADMIN))])
+async def approve_project_request(
+    request_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectRequestOut:
+    return await _decide_request(request_id, ProjectRequestStatus.APPROVED, db, current)
+
+
+@router.post("/requests/{request_id}/reject", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.ADMIN))])
+async def reject_project_request(
+    request_id: str,
+    payload: ProjectRequestReject,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectRequestOut:
+    return await _decide_request(request_id, ProjectRequestStatus.REJECTED, db, current, payload.reason)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
