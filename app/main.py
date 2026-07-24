@@ -36,20 +36,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    # LAN(폰) 접속 — 사설망 IP:포트는 정규식으로 허용(DHCP로 IP가 바뀌어도 동작)
-    allow_origin_regex=(
+_cors_kwargs: dict = {
+    "allow_origins": settings.cors_origins_list,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+# LAN(폰) 접속용 사설망 IP 정규식은 **개발에서만** 허용(DHCP로 IP가 바뀌어도 동작).
+# 프로덕션은 자격증명 탈취 방지를 위해 CORS_ORIGINS(.env) 명시 오리진만 허용(§M6).
+if settings.environment == "development":
+    _cors_kwargs["allow_origin_regex"] = (
         r"^http://(localhost|127\.0\.0\.1"
         r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
         r"|192\.168\.\d{1,3}\.\d{1,3}"
         r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$"
-    ),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    )
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 # org — 조직·인사
 app.include_router(auth.router)

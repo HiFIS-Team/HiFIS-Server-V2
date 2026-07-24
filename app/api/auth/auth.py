@@ -99,8 +99,8 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
             401, detail={"code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}
         )
     return TokenResponse(
-        access_token=create_access_token(employee.id),
-        refresh_token=create_refresh_token(employee.id),
+        access_token=create_access_token(employee.id, employee.token_version),
+        refresh_token=create_refresh_token(employee.id, employee.token_version),
         employee=EmployeeOut.model_validate(employee),
     )
 
@@ -111,12 +111,18 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -
     employee = await db.get(Employee, data.get("sub"))
     if employee is None or employee.deleted_at is not None:
         raise HTTPException(401, detail={"code": "INVALID_TOKEN", "message": "유효하지 않은 사용자입니다"})
-    return AccessTokenResponse(access_token=create_access_token(employee.id))
+    if data.get("ver", 0) != employee.token_version:  # 폐기된 refresh 토큰
+        raise HTTPException(401, detail={"code": "TOKEN_REVOKED", "message": "세션이 만료되었어요. 다시 로그인해주세요"})
+    return AccessTokenResponse(access_token=create_access_token(employee.id, employee.token_version))
 
 
 @router.post("/logout", status_code=204)
-async def logout(_: Employee = Depends(get_current_user)) -> None:
-    # TODO: refresh 토큰 블록리스트(Redis/DB) 무효화 — §9.1
+async def logout(
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    user.token_version += 1  # 이 계정의 기존 access·refresh 토큰 전부 무효화(§M2)
+    await db.commit()
     return None
 
 

@@ -5,7 +5,7 @@ wire(Employee)엔 없는 password_hash 는 DB 전용 컬럼 (응답 직렬화 �
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, func
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -19,6 +19,8 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 세션 폐기용 버전 — 로그아웃/비번변경 시 +1 → 그 이전 발급 토큰(access·refresh) 전부 무효(§M2)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     # 사번(사람이 읽는 식별자) — {입사연도}-{4자리 순번}. 프로필 + 출근 스캔 공용, 자동발급 후 불변
     emp_no: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True)
 

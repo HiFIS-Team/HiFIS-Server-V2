@@ -32,23 +32,24 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _create_token(subject: str, token_type: str, expires_delta: timedelta) -> str:
+def _create_token(subject: str, token_type: str, expires_delta: timedelta, version: int = 0) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": subject,
         "type": token_type,
+        "ver": version,  # 세션 폐기용 — Employee.token_version 과 일치해야 유효(§M2)
         "iat": int(now.timestamp()),
         "exp": int((now + expires_delta).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(subject: str) -> str:
-    return _create_token(subject, "access", timedelta(minutes=settings.access_token_expire_minutes))
+def create_access_token(subject: str, version: int = 0) -> str:
+    return _create_token(subject, "access", timedelta(minutes=settings.access_token_expire_minutes), version)
 
 
-def create_refresh_token(subject: str) -> str:
-    return _create_token(subject, "refresh", timedelta(days=settings.refresh_token_expire_days))
+def create_refresh_token(subject: str, version: int = 0) -> str:
+    return _create_token(subject, "refresh", timedelta(days=settings.refresh_token_expire_days), version)
 
 
 def decode_token(token: str, expected_type: str) -> dict[str, Any]:

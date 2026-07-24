@@ -91,6 +91,7 @@ async def change_my_password(
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(400, detail={"code": "INVALID_PASSWORD", "message": "현재 비밀번호가 올바르지 않습니다"})
     user.password_hash = hash_password(payload.new_password)
+    user.token_version += 1  # 비번 변경 → 기존 세션 전부 무효화(§M2)
     await db.commit()
     return None
 

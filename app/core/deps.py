@@ -23,6 +23,8 @@ async def get_current_user(
     employee = await db.get(Employee, payload.get("sub"))
     if employee is None or employee.deleted_at is not None:
         raise HTTPException(401, detail={"code": "INVALID_TOKEN", "message": "유효하지 않은 사용자입니다"})
+    if payload.get("ver", 0) != employee.token_version:  # 로그아웃/비번변경으로 폐기된 세션
+        raise HTTPException(401, detail={"code": "TOKEN_REVOKED", "message": "세션이 만료되었어요. 다시 로그인해주세요"})
     return employee
 
 
