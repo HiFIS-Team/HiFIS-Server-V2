@@ -39,20 +39,27 @@ async def _get_or_404(approval_id: str, db: AsyncSession) -> Approval:
 
 @router.get("", response_model=list[ApprovalOut])
 async def list_approvals(
-    box: str = Query(..., pattern="^(mine|inbox)$"),
+    box: str = Query(..., pattern="^(mine|inbox|decided)$"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Approval]:
     stmt = select(Approval)
     if box == "mine":
         stmt = stmt.where(Approval.requester_id == current.id)
-    else:  # inbox — 내 결재 차례인 문서
+    elif box == "inbox":  # 내 결재 차례인 문서
         stmt = stmt.where(
             Approval.current_approver_id == current.id,
             Approval.status == ApprovalStatus.IN_PROGRESS,
         )
-    result = await db.execute(stmt.order_by(Approval.created_at.desc()))
-    return list(result.scalars().all())
+    # decided → 전체 조회 후 "내가 결재선에서 승인/반려한 문서"만 파이썬 필터
+    rows = list((await db.execute(stmt.order_by(Approval.created_at.desc()))).scalars().all())
+    if box == "decided":
+        rows = [
+            a
+            for a in rows
+            if any(s.get("approver_id") == current.id and s.get("status") in ("APPROVED", "REJECTED") for s in (a.steps or []))
+        ]
+    return rows
 
 
 @router.post("", response_model=ApprovalOut, status_code=201)
