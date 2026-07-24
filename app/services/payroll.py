@@ -8,7 +8,7 @@ gross = 기본급 + PT 커미션(세션 싸인당 한 회 단가 × 요율).
 ⚠️ 4대보험 요율은 연도별 변동 — §7 요율 미확정. 확정 시 아래 상수 갱신.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,6 +73,27 @@ async def ensure_rank_policies(db: AsyncSession) -> None:
                 )
             )
     await db.flush()
+
+
+# ── 지급일(급여날) ──
+def _last_day(year: int, month: int) -> int:
+    nxt = date(year, 12, 31) if month == 12 else date(year, month + 1, 1) - timedelta(days=1)
+    return nxt.day
+
+
+def compute_payday(year_month: str) -> date:
+    """해당 월 급여 지급일. 기본 = **말일**.
+    ⚠️ 지점×직급별 규칙(화순=말일 / 동광주·첨단: FC 말일·트레이너 익월10일)은 실제 지점 등록 후
+    지점 설정으로 확장할 것 — 현재는 전 지점·전 직급 말일 기본.
+    """
+    y, m = int(year_month[:4]), int(year_month[5:7])
+    return date(y, m, _last_day(y, m))
+
+
+def payday_window(year_month: str, today: date) -> dict:
+    """급여 신청 창 — 지급일 당일만 열림(전날까지 막힘)."""
+    payday = compute_payday(year_month)
+    return {"year_month": year_month, "payday": payday.isoformat(), "is_open": today == payday}
 
 
 def _deductions(gross: int, method: DeductionMethod) -> list[dict]:

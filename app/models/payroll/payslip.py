@@ -4,11 +4,22 @@
 (employee_id, year_month) 유니크 — 재생성 시 교체.
 """
 
-from sqlalchemy import JSON, Enum as SAEnum, ForeignKey, Integer, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
-from app.enums import DeductionMethod, Rank
+from app.enums import DeductionMethod, PayslipStatus, Rank
 
 
 class Payslip(UUIDMixin, TimestampMixin, Base):
@@ -32,3 +43,17 @@ class Payslip(UUIDMixin, TimestampMixin, Base):
     total_deduction: Mapped[int] = mapped_column(Integer, nullable=False)
     net: Mapped[int] = mapped_column(Integer, nullable=False)
     basis: Mapped[dict] = mapped_column(JSON, nullable=False)  # {new_sales, renewal_sales, session_signs}
+
+    # ── 제출·결재 워크플로우 (직원 신청 → 대표자 승인/반려) ──
+    status: Mapped[PayslipStatus] = mapped_column(
+        SAEnum(PayslipStatus, native_enum=False, length=20),
+        nullable=False,
+        default=PayslipStatus.DRAFT,
+        server_default="DRAFT",
+    )
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=True
+    )

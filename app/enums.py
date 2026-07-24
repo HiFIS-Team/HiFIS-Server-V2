@@ -27,6 +27,13 @@ def role_for_rank(rank: "Rank") -> "Role":
     return Role.MEMBER
 
 
+class PayslipStatus(StrEnum):
+    DRAFT = "DRAFT"          # 미제출(계산됨)
+    SUBMITTED = "SUBMITTED"  # 제출(대표자 승인 대기)
+    APPROVED = "APPROVED"    # 승인 완료(지급 확정)
+    REJECTED = "REJECTED"    # 반려
+
+
 class EmployeeStatus(StrEnum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
