@@ -31,6 +31,11 @@ class LeaveRequestCreate(CamelModel):
     reason: str | None = None
 
 
+class LeaveReject(CamelModel):
+    # 반려는 사유 필수
+    reason: str = Field(min_length=1)
+
+
 class LeaveRequestOut(CamelModel):
     id: str
     employee_id: str
@@ -39,4 +44,5 @@ class LeaveRequestOut(CamelModel):
     end_date: date
     days: float
     reason: str | None = None
+    reject_reason: str | None = None
     status: LeaveStatus

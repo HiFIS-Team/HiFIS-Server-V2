@@ -49,7 +49,8 @@ class LeaveRequest(UUIDMixin, TimestampMixin, Base):
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     days: Mapped[float] = mapped_column(Float, nullable=False)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # 신청 사유
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # 반려 사유(관리자)
     status: Mapped[LeaveStatus] = mapped_column(
         SAEnum(LeaveStatus, native_enum=False, length=20),
         nullable=False,

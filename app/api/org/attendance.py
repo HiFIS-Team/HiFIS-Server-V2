@@ -19,6 +19,7 @@ from app.models.org.employee import Employee
 from app.schemas.org.attendance import (
     AttendanceOut,
     AttendanceScanRequest,
+    LeaveReject,
     LeaveRequestCreate,
     LeaveRequestOut,
 )
@@ -144,7 +145,9 @@ async def create_leave(
     return leave
 
 
-async def _decide_leave(request_id: str, status: LeaveStatus, db: AsyncSession) -> LeaveRequest:
+async def _decide_leave(
+    request_id: str, status: LeaveStatus, db: AsyncSession, reason: str | None = None
+) -> LeaveRequest:
     leave = await db.get(LeaveRequest, request_id)
     if leave is None:
         raise HTTPException(404, detail={"code": "LEAVE_NOT_FOUND", "message": "휴가 신청을 찾을 수 없습니다"})
@@ -152,12 +155,17 @@ async def _decide_leave(request_id: str, status: LeaveStatus, db: AsyncSession) 
         raise HTTPException(400, detail={"code": "ALREADY_HANDLED", "message": "이미 처리된 신청입니다"})
     leave.status = status
     verb = "승인" if status == LeaveStatus.APPROVED else "반려"
+    body = f"{leave.start_date} ~ {leave.end_date}"
+    if status == LeaveStatus.REJECTED:
+        leave.reject_reason = reason
+        if reason:
+            body += f" · 사유: {reason}"
     await notify(
         db,
         employee_id=leave.employee_id,
         type="LEAVE",
         title=f"휴가 신청이 {verb}되었습니다",
-        body=f"{leave.start_date} ~ {leave.end_date}",
+        body=body,
         link="/attendance",
     )
     await db.commit()
@@ -171,8 +179,10 @@ async def approve_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> 
 
 
 @router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
-async def reject_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> LeaveRequest:
-    return await _decide_leave(request_id, LeaveStatus.REJECTED, db)
+async def reject_leave(
+    request_id: str, payload: LeaveReject, db: AsyncSession = Depends(get_db)
+) -> LeaveRequest:
+    return await _decide_leave(request_id, LeaveStatus.REJECTED, db, payload.reason)
 
 
 @router.post("/leaves/{request_id}/cancel", response_model=LeaveRequestOut)
