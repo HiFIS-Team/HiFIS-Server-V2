@@ -10,12 +10,21 @@ class Role(StrEnum):
 
 
 class Rank(StrEnum):
-    JUNIOR_TRAINER = "JUNIOR_TRAINER"
-    PRO_TRAINER = "PRO_TRAINER"
-    PRO1_TRAINER = "PRO1_TRAINER"
-    TEAM_LEAD = "TEAM_LEAD"
-    STORE_MANAGER = "STORE_MANAGER"
-    FC = "FC"
+    TRAINER = "TRAINER"              # 트레이너 (권한 MEMBER)
+    FC = "FC"                        # FC 정규 (권한 MEMBER)
+    TEAM_LEAD = "TEAM_LEAD"          # 팀장 (권한 MANAGER)
+    STORE_MANAGER = "STORE_MANAGER"  # 점장 (권한 MANAGER)
+    DEVELOPER = "DEVELOPER"          # 개발자 (권한 ADMIN)
+    CEO = "CEO"                      # 대표 (권한 ADMIN)
+
+
+def role_for_rank(rank: "Rank") -> "Role":
+    """직급 → 권한 매핑. FC·트레이너=MEMBER / 팀장·점장=MANAGER / 개발자·대표=ADMIN."""
+    if rank in (Rank.DEVELOPER, Rank.CEO):
+        return Role.ADMIN
+    if rank in (Rank.TEAM_LEAD, Rank.STORE_MANAGER):
+        return Role.MANAGER
+    return Role.MEMBER
 
 
 class EmployeeStatus(StrEnum):

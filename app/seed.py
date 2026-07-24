@@ -39,7 +39,7 @@ async def seed() -> None:
                 email=settings.seed_admin_email,
                 password_hash=hash_password(settings.seed_admin_password),
                 branch_id=branch.id,
-                rank=Rank.STORE_MANAGER,
+                rank=Rank.CEO,  # 대표(개발자·대표 = ADMIN)
                 role=Role.ADMIN,
                 emp_no=await unique_emp_no(db),
             )
