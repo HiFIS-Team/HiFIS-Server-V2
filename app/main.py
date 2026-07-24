@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
@@ -16,7 +15,7 @@ from app.api.board import approvals, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.members import members, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
-from app.api.platform import accounts, dashboard, documents, search
+from app.api.platform import accounts, dashboard, documents, files, search
 from app.api.projects import meetings, projects, todos
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees
@@ -106,9 +105,7 @@ app.include_router(accounts.router)
 app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(dashboard.router)
-
-# 로컬 업로드 정적 서빙 (§9.2). TODO: 서명 등 비공개 파일은 권한 게이트 서빙으로 교체.
-app.mount("/uploads", StaticFiles(directory="uploads", check_dir=False), name="uploads")
+app.include_router(files.router)  # 서명 URL 파일 서빙(/files) — 정적 /uploads 공개 대체(§H2)
 
 
 @app.get("/health", tags=["meta"])

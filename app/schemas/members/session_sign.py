@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from app.schemas.base import CamelModel
+from app.schemas.base import CamelModel, SignedUrl
 from app.schemas.members.registration import RegistrationOut
 
 
@@ -18,7 +18,7 @@ class SessionSignOut(CamelModel):
     member_id: str
     performed_by_trainer_id: str
     session_no: int
-    signature_url: str
+    signature_url: SignedUrl
     signed_at: datetime
 
 

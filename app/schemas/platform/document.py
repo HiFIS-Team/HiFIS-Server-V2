@@ -1,6 +1,6 @@
 """문서함 DTO — CLAUDE.md §6.6. (업로드는 멀티파트 폼이라 별도 스키마 없음)"""
 
-from app.schemas.base import CamelModel
+from app.schemas.base import CamelModel, SignedUrl
 
 
 class FolderCreate(CamelModel):
@@ -33,7 +33,7 @@ class DocumentOut(CamelModel):
     name: str
     ext: str
     size_bytes: int
-    url: str
+    url: SignedUrl
     scope: str
     space: str
     folder_id: str | None = None

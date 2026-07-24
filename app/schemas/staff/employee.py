@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
-from app.schemas.base import CamelModel
+from app.schemas.base import CamelModel, SignedUrlOptional
 
 
 class EmployeeCreate(CamelModel):
@@ -55,7 +55,7 @@ class EmployeeOut(CamelModel):
     team: str | None = None
     status: EmployeeStatus
     avatar_color: str
-    avatar_url: str | None = None
+    avatar_url: SignedUrlOptional = None
     status_message: str | None = None
     work_status: WorkStatus
     joined_at: datetime
