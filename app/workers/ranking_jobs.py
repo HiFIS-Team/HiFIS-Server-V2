@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.enums import EmployeeStatus, Role
 from app.models.org.employee import Employee
 from app.models.scoring.ranking_snapshot import RankingSnapshot
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.ranking import KIND_LABEL, RANKING_KINDS, compute_ranking
 
@@ -50,18 +51,11 @@ async def announce_monthly_winners(now: datetime | None = None) -> None:
             return
         # 1등 개인 축하
         for eid, label in congrats:
-            await notify(
-                db, employee_id=eid, type="RANKING",
-                title=f"🏆 {period} {label} 1위!",
-                body=f"지난달 {label}에 뽑혔어요. 축하합니다!", link="/ranking",
-            )
+            await notify(db, employee_id=eid, **ntext.ranking_winner(period, label))
         # 전원에게 통합 발표
         summary = " · ".join(f"{label} {name}" for label, name in winners)
         for eid in await _active_ids(db):
-            await notify(
-                db, employee_id=eid, type="RANKING",
-                title=f"📢 {period} 랭킹 발표", body=summary, link="/ranking",
-            )
+            await notify(db, employee_id=eid, **ntext.ranking_announce(period, summary))
         await db.commit()
 
 
@@ -104,11 +98,7 @@ async def ranking_change_scan(now: datetime | None = None) -> None:
                 # 밀려난 본인 알림
                 for b, overtakers, ob, nb in changes:
                     who = ", ".join(overtakers[:3]) + ("…" if len(overtakers) > 3 else "")
-                    await notify(
-                        db, employee_id=b, type="RANKING",
-                        title=f"{label} 순위 하락",
-                        body=f"{who} 님이 당신을 앞질렀어요 ({ob}위 → {nb}위)", link="/ranking",
-                    )
+                    await notify(db, employee_id=b, **ntext.ranking_drop(label, who, ob, nb))
                 # 어드민 요약(변동 있을 때만)
                 if changes:
                     lines = [
@@ -117,10 +107,7 @@ async def ranking_change_scan(now: datetime | None = None) -> None:
                     ]
                     body = " / ".join(lines[:6])
                     for aid in admin_ids:
-                        await notify(
-                            db, employee_id=aid, type="RANKING",
-                            title=f"{label} 순위 변동", body=body, link="/ranking",
-                        )
+                        await notify(db, employee_id=aid, **ntext.ranking_change_admin(label, body))
 
             # 스냅샷 갱신(교체)
             await db.execute(

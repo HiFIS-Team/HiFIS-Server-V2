@@ -31,6 +31,7 @@ from app.schemas.collab.project_request import (
     ProjectRequestOut,
     ProjectRequestReject,
 )
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.scoring import accrue_score
 
@@ -170,7 +171,7 @@ async def create_project_request(
     label = "누락 사유" if payload.type == ProjectRequestType.OVERDUE else "기한 연장"
     admins = (await db.execute(select(Employee).where(Employee.role == Role.ADMIN))).scalars().all()
     for admin in admins:
-        await notify(db, employee_id=admin.id, type="PROJECT", title=f"프로젝트 {label} 요청", body=f"{project.title} · {current.name}", link="/projects")
+        await notify(db, employee_id=admin.id, **ntext.project_request(label, project.title, current.name))
     await db.commit()
     return _req_out(req)
 
@@ -198,11 +199,13 @@ async def _decide_request(
             project.due = req.new_due  # 새 기한 반영
             project.extension_reason = req.reason
             project.overdue_notified_at = None  # 마감 변경 → 누락 알림 재무장
-        n_title, n_body = f"프로젝트 {label} 승인", f"{title} · 새 마감 반영"
     else:
         req.reject_reason = reason
-        n_title, n_body = f"프로젝트 {label} 반려", f"{title} · 사유: {reason}"
-    await notify(db, employee_id=req.requested_by_id, type="PROJECT", title=n_title, body=n_body, link="/projects")
+    await notify(
+        db,
+        employee_id=req.requested_by_id,
+        **ntext.project_request_decided(label, status == ProjectRequestStatus.APPROVED, title, reason),
+    )
     await db.commit()
     await db.refresh(req)
     return _req_out(req)

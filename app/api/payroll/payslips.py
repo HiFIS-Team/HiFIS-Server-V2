@@ -23,6 +23,7 @@ from app.schemas.payroll.payslip import (
     PayslipReject,
     PayslipSubmit,
 )
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.payroll import (
     build_payslip_data,
@@ -158,14 +159,7 @@ async def approve_payslip(
     payslip.status = PayslipStatus.APPROVED
     payslip.decided_at = datetime.now(timezone.utc)
     payslip.decided_by_id = current.id
-    await notify(
-        db,
-        employee_id=payslip.employee_id,
-        type="PAYROLL",
-        title="급여 신청이 승인되었어요",
-        body=f"{payslip.year_month} 급여명세서가 승인됐어요. 지급이 확정됩니다.",
-        link="/payroll",
-    )
+    await notify(db, employee_id=payslip.employee_id, **ntext.payslip_approved(payslip.year_month))
     await db.commit()
     await db.refresh(payslip)
     return payslip
@@ -183,14 +177,7 @@ async def reject_payslip(
     payslip.reject_reason = payload.reason
     payslip.decided_at = datetime.now(timezone.utc)
     payslip.decided_by_id = current.id
-    await notify(
-        db,
-        employee_id=payslip.employee_id,
-        type="PAYROLL",
-        title="급여 신청이 반려되었어요",
-        body=payload.reason,
-        link="/payroll",
-    )
+    await notify(db, employee_id=payslip.employee_id, **ntext.payslip_rejected(payload.reason))
     await db.commit()
     await db.refresh(payslip)
     return payslip

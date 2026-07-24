@@ -23,6 +23,7 @@ from app.schemas.org.attendance import (
     LeaveRequestCreate,
     LeaveRequestOut,
 )
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 
 router = APIRouter(tags=["attendance"])
@@ -73,14 +74,7 @@ async def scan_attendance(
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
         action = "퇴근"
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
-    await notify(
-        db,
-        employee_id=target.id,
-        type="ATTENDANCE",
-        title=f"{action} 완료",
-        body=f"{now.astimezone(KST):%H:%M} {action} 처리됐어요",
-        link="/attendance",
-    )
+    await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now.astimezone(KST)))
     await db.commit()
     await db.refresh(record)
     return record
@@ -165,19 +159,12 @@ async def _decide_leave(
     if leave.status != LeaveStatus.PENDING:
         raise HTTPException(400, detail={"code": "ALREADY_HANDLED", "message": "이미 처리된 신청입니다"})
     leave.status = status
-    verb = "승인" if status == LeaveStatus.APPROVED else "반려"
-    body = f"{leave.start_date} ~ {leave.end_date}"
     if status == LeaveStatus.REJECTED:
         leave.reject_reason = reason
-        if reason:
-            body += f" · 사유: {reason}"
     await notify(
         db,
         employee_id=leave.employee_id,
-        type="LEAVE",
-        title=f"휴가 신청이 {verb}되었습니다",
-        body=body,
-        link="/attendance",
+        **ntext.leave_decision(status == LeaveStatus.APPROVED, leave.start_date, leave.end_date, reason),
     )
     await db.commit()
     await db.refresh(leave)

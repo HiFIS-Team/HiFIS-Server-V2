@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.core.periods import KST
 from app.db.session import SessionLocal
 from app.models.collab.event import Event
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 
 REMIND_DAYS = {7, 3, 1, 0}
@@ -37,9 +38,6 @@ async def event_reminders(now: datetime | None = None) -> None:
             await notify(
                 db,
                 employee_id=e.owner_id,
-                type="SCHEDULE",
-                title=f"일정 {label} · {e.title}",
-                body=f"{e.start_at.astimezone(KST):%m/%d %H:%M} 시작",
-                link="/schedule",
+                **ntext.event_reminder(label, e.title, e.start_at.astimezone(KST)),
             )
         await db.commit()

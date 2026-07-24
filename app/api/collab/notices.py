@@ -11,6 +11,7 @@ from app.models.org.employee import Employee
 from app.models.collab.notice import Notice
 from app.models.collab.reaction import Reaction
 from app.schemas.collab.notice import NoticeCreate, NoticeOut, NoticeUpdate
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.reactions import aggregate_for
 
@@ -58,15 +59,9 @@ async def create_notice(
             )
         )
     ).all()
+    text = ntext.new_notice(notice.title, notice.body)
     for eid in recipients:
-        await notify(
-            db,
-            employee_id=eid,
-            type="NOTICE",
-            title=f"새 공지 · {notice.title}",
-            body=(notice.body or "")[:120],
-            link="/notices",
-        )
+        await notify(db, employee_id=eid, **text)
     await db.commit()
     await db.refresh(notice)
     return (await _to_out(db, [notice]))[0]

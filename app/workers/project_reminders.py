@@ -16,6 +16,7 @@ from app.db.session import SessionLocal
 from app.enums import EmployeeStatus
 from app.models.collab.project import Project
 from app.models.org.employee import Employee
+from app.services import notification_texts as ntext
 from app.services.notifications import notify, send_push
 
 
@@ -50,23 +51,14 @@ async def project_reminders(now: datetime | None = None) -> None:
                 if now_kst.hour == 9:
                     d = (due_date - today).days
                     for eid in assignees:
-                        await send_push(
-                            db, employee_id=eid, type="PROJECT",
-                            title=f"프로젝트 마감 D-{d}", body=p.title, link="/projects",
-                        )
+                        await send_push(db, employee_id=eid, **ntext.project_due_soon(d, p.title))
             elif today == due_date:
                 # 마감 당일 — 매시간
                 for eid in assignees:
-                    await send_push(
-                        db, employee_id=eid, type="PROJECT",
-                        title="오늘 프로젝트 마감!", body=p.title, link="/projects",
-                    )
+                    await send_push(db, employee_id=eid, **ntext.project_due_today(p.title))
             elif p.overdue_notified_at is None:
                 # 마감 초과 — 누락 1회(앱 내 알림 + 푸시)
                 for eid in assignees:
-                    await notify(
-                        db, employee_id=eid, type="PROJECT",
-                        title="프로젝트가 누락됐어요", body=p.title, link="/projects",
-                    )
+                    await notify(db, employee_id=eid, **ntext.project_overdue(p.title))
                 p.overdue_notified_at = now_utc
         await db.commit()

@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.enums import EmployeeStatus, PayslipStatus
 from app.models.org.employee import Employee
 from app.models.payroll.payslip import Payslip
+from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.payroll import due_year_month, ensure_rank_policies, get_rank_policy
 
@@ -57,21 +58,11 @@ async def payday_reminders(today: date | None = None) -> None:
             for emp in await _eligible_employees(db, ym_today):
                 if await _submitted(db, emp.id, ym_today):
                     continue
-                await notify(
-                    db, employee_id=emp.id, type="PAYROLL",
-                    title="오늘 급여를 신청하세요",
-                    body=f"{ym_today} 급여 지급일이에요. 명세서를 확인하고 신청해주세요.",
-                    link="/payroll",
-                )
+                await notify(db, employee_id=emp.id, **ntext.payday_today(ym_today))
         ym_tomorrow = due_year_month(today + timedelta(days=1))
         if ym_tomorrow:
             for emp in await _eligible_employees(db, ym_tomorrow):
-                await notify(
-                    db, employee_id=emp.id, type="PAYROLL",
-                    title="내일 급여 신청일이에요",
-                    body=f"{ym_tomorrow} 급여 지급일은 내일이에요. 미리 확인해두세요.",
-                    link="/payroll",
-                )
+                await notify(db, employee_id=emp.id, **ntext.payday_tomorrow(ym_tomorrow))
         await db.commit()
 
 
@@ -86,10 +77,5 @@ async def payday_deadline_reminders(today: date | None = None) -> None:
         for emp in await _eligible_employees(db, ym):
             if await _submitted(db, emp.id, ym):
                 continue
-            await notify(
-                db, employee_id=emp.id, type="PAYROLL",
-                title="급여 신청 마감 임박 (오늘 20시)",
-                body=f"{ym} 급여를 아직 신청하지 않았어요. 오늘 안에 신청해주세요.",
-                link="/payroll",
-            )
+            await notify(db, employee_id=emp.id, **ntext.payday_deadline(ym))
         await db.commit()
