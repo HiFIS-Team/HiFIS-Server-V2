@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
-from app.core.periods import period_range
+from app.core.periods import KST, period_range
 from app.db.session import get_db
 from app.enums import AttendanceSource, LeaveStatus, LeaveType, Role
 from app.models.org.attendance import Attendance, LeaveRequest
@@ -66,10 +66,21 @@ async def scan_attendance(
             employee_id=target.id, date=today, check_in=now, source=AttendanceSource.BARCODE
         )
         db.add(record)
+        action = "출근"
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
         record.check_out = now
         if record.check_in is not None:
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
+        action = "퇴근"
+    # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
+    await notify(
+        db,
+        employee_id=target.id,
+        type="ATTENDANCE",
+        title=f"{action} 완료",
+        body=f"{now.astimezone(KST):%H:%M} {action} 처리됐어요",
+        link="/attendance",
+    )
     await db.commit()
     await db.refresh(record)
     return record

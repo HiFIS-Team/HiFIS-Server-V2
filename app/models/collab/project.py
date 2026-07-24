@@ -22,6 +22,10 @@ class Project(UUIDMixin, TimestampMixin, Base):
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     assignee_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     extension_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 누락(마감 초과) 알림을 보낸 시각 — 1회만 보내기 위한 멱등 표시. 마감(due) 변경 시 초기화.
+    overdue_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_by_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=False
     )

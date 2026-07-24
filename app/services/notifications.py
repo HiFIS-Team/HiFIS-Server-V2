@@ -49,6 +49,23 @@ async def notify(
     return notification
 
 
+async def send_push(
+    db: AsyncSession,
+    *,
+    employee_id: str,
+    type: str,
+    title: str,
+    body: str | None = None,
+    link: str | None = None,
+) -> None:
+    """웹푸시만 발송(앱 내 알림함엔 안 남김). 채팅·반복 리마인더처럼 알림함이 넘칠 이벤트용.
+
+    만료 구독 정리(_push)가 db.delete 를 예약할 수 있어 commit 은 호출자 책임.
+    """
+    if _push_enabled():
+        await _push(db, employee_id, {"type": type, "title": title, "body": body, "link": link})
+
+
 async def _push(db: AsyncSession, employee_id: str, payload: dict) -> None:
     subs = (
         await db.scalars(

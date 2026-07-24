@@ -7,8 +7,10 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.workers.payday_reminder import payday_reminders
+from app.workers.event_reminders import event_reminders
+from app.workers.payday_reminder import payday_deadline_reminders, payday_reminders
 from app.workers.payroll_close import close_previous_month
+from app.workers.project_reminders import project_reminders
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -23,14 +25,35 @@ def start_scheduler() -> None:
         id="payroll_close",
         replace_existing=True,
     )
-    # 매일 00:05 UTC(=09:05 KST) — 지급일 당일 대상자에게 급여 신청 알림
+    # 매일 00:05 UTC(=09:05 KST) — 오늘/내일 지급일 급여 신청 알림(예고 포함)
     scheduler.add_job(
         payday_reminders,
         CronTrigger(hour=0, minute=5),
         id="payday_reminder",
         replace_existing=True,
     )
-    # TODO(§9.5): 프로젝트 마감 알림, 세션 만료 스캔, 점수 기간 롤오버 잡 추가
+    # 매일 11:00 UTC(=20:00 KST) — 지급일 당일 미신청자 마감 임박 알림
+    scheduler.add_job(
+        payday_deadline_reminders,
+        CronTrigger(hour=11, minute=0),
+        id="payday_deadline",
+        replace_existing=True,
+    )
+    # 매시간 정각 UTC — 프로젝트 마감(전 D-N 매일 9시 / 당일 매시간 / 누락 1회)
+    scheduler.add_job(
+        project_reminders,
+        CronTrigger(minute=0),
+        id="project_reminder",
+        replace_existing=True,
+    )
+    # 매일 00:00 UTC(=09:00 KST) — 일정 D-7/D-3/전날/당일 리마인더
+    scheduler.add_job(
+        event_reminders,
+        CronTrigger(hour=0, minute=0),
+        id="event_reminder",
+        replace_existing=True,
+    )
+    # TODO(§9.5): 세션 만료 스캔, 점수 기간 롤오버 잡 추가
     scheduler.start()
 
 

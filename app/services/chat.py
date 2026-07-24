@@ -6,8 +6,10 @@ REST 전송·WS 전송 공통 진입점. 방 멤버에게 인메모리 매니저
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.collab.chat import ChatRoomMember, Message
+from app.models.collab.chat import ChatRoom, ChatRoomMember, Message
+from app.models.org.employee import Employee
 from app.schemas.collab.chat import MessageOut
+from app.services.notifications import send_push
 from app.ws.manager import manager
 
 
@@ -36,12 +38,31 @@ async def post_message(
     await db.commit()
     await db.refresh(message)
 
+    members = await member_ids(db, room_id)
     payload = {
         "type": "message",
         "roomId": room_id,
         "message": MessageOut.model_validate(message).model_dump(by_alias=True, mode="json"),
     }
-    await manager.send_to(await member_ids(db, room_id), payload)
+    await manager.send_to(members, payload)
+
+    # 메시지마다 웹푸시(인스타처럼) — 보낸 사람 제외 방 멤버. 알림함엔 안 남김.
+    room = await db.get(ChatRoom, room_id)
+    sender = await db.get(Employee, sender_id)
+    sender_name = sender.name if sender else "새 메시지"
+    preview = body.strip() if body.strip() else "(사진)"
+    if room is not None and room.is_group and room.name:
+        title, text = room.name, f"{sender_name}: {preview}"
+    else:
+        title, text = sender_name, preview
+    pushed = False
+    for mid in members:
+        if mid == sender_id:
+            continue
+        await send_push(db, employee_id=mid, type="CHAT", title=title, body=text, link=f"/chat/rooms/{room_id}")
+        pushed = True
+    if pushed:
+        await db.commit()  # 만료 구독 정리분 반영(_push 예약 삭제)
     return message
 
 

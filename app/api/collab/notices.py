@@ -6,11 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
-from app.enums import ReactionTargetType, Role
+from app.enums import EmployeeStatus, ReactionTargetType, Role
 from app.models.org.employee import Employee
 from app.models.collab.notice import Notice
 from app.models.collab.reaction import Reaction
 from app.schemas.collab.notice import NoticeCreate, NoticeOut, NoticeUpdate
+from app.services.notifications import notify
 from app.services.reactions import aggregate_for
 
 router = APIRouter(prefix="/notices", tags=["notices"], dependencies=[Depends(get_current_user)])
@@ -46,6 +47,27 @@ async def create_notice(
 ) -> NoticeOut:
     notice = Notice(title=payload.title, body=payload.body, pinned=payload.pinned, author_id=current.id)
     db.add(notice)
+    await db.flush()  # notice.id 확보(알림 링크용)
+    # 새 공지 알림(+웹푸시) — 재직 중 멤버·매니저 전원(작성자 제외)
+    recipients = (
+        await db.scalars(
+            select(Employee.id).where(
+                Employee.role.in_((Role.MEMBER, Role.MANAGER)),
+                Employee.status == EmployeeStatus.ACTIVE,
+                Employee.deleted_at.is_(None),
+                Employee.id != current.id,
+            )
+        )
+    ).all()
+    for eid in recipients:
+        await notify(
+            db,
+            employee_id=eid,
+            type="NOTICE",
+            title=f"새 공지 · {notice.title}",
+            body=(notice.body or "")[:120],
+            link="/notices",
+        )
     await db.commit()
     await db.refresh(notice)
     return (await _to_out(db, [notice]))[0]

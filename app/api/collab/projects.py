@@ -197,6 +197,7 @@ async def _decide_request(
         if project is not None:
             project.due = req.new_due  # 새 기한 반영
             project.extension_reason = req.reason
+            project.overdue_notified_at = None  # 마감 변경 → 누락 알림 재무장
         n_title, n_body = f"프로젝트 {label} 승인", f"{title} · 새 마감 반영"
     else:
         req.reject_reason = reason
@@ -318,8 +319,11 @@ async def update_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    fields = payload.model_dump(exclude_unset=True)
+    for key, value in fields.items():
         setattr(project, key, value)
+    if "due" in fields:  # 마감 변경 → 누락 알림 재무장
+        project.overdue_notified_at = None
     await db.commit()
     await db.refresh(project)
     return _to_out(project)

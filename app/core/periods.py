@@ -1,8 +1,15 @@
 """기간(period, "YYYY-MM") 유틸 — 점수/매출 집계 공통."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
+
+# 한국 표준시 — 알림/리마인더의 벽시계 기준(급여 20시·출근 시간대·프로젝트 매일/매시).
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst() -> datetime:
+    return datetime.now(timezone.utc).astimezone(KST)
 
 
 def current_period() -> str:
