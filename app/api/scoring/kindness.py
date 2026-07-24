@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
 from app.enums import ScoreCategory
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.scoring.kindness import KindnessSurvey
 from app.schemas.scoring.kindness import KindnessSurveyOut, KindnessSurveyWebhook
 from app.services.scoring import accrue_score

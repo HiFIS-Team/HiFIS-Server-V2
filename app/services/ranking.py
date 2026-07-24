@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import RankingKind, ScoreCategory
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 
 # 표시 순서: 종합 → 매출 → 수업 → 친절 → 피드백

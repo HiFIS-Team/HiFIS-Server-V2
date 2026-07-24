@@ -14,8 +14,8 @@ from sqlalchemy import select
 from app.core.periods import KST
 from app.db.session import SessionLocal
 from app.enums import EmployeeStatus
-from app.models.collab.project import Project
-from app.models.org.employee import Employee
+from app.models.projects.project import Project
+from app.models.staff.employee import Employee
 from app.services import notification_texts as ntext
 from app.services.notifications import notify, send_push
 

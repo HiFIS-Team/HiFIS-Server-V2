@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import ReactionTargetType
-from app.models.collab.reaction import Reaction
-from app.schemas.collab.reaction import ReactionAgg
+from app.models.board.reaction import Reaction
+from app.schemas.board.reaction import ReactionAgg
 
 
 async def toggle_reaction(

@@ -8,7 +8,7 @@ from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
 from app.enums import ContribType, Role, ScoreCategory
 from app.models.scoring.contribution import ContributionGrant
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.schemas.scoring.contribution import ContributionCreate, ContributionGrantOut
 from app.services.scoring import accrue_score
 

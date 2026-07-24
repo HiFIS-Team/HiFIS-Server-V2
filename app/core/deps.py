@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.enums import Role
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 
 bearer_scheme = HTTPBearer(auto_error=True)
 

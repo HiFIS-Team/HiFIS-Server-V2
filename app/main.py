@@ -7,22 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api.collab import (
-    approvals,
-    chat,
-    events,
-    meetings,
-    notices,
-    notifications,
-    projects,
-    reactions,
-    todos,
-)
-from app.api.org import attendance, auth, branches, employees, invite_keys, join_requests
+from app.api.auth import auth, invite_keys, join_requests
+from app.api.board import approvals, events, notices, reactions
+from app.api.chat import chat, notifications
+from app.api.members import members, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
 from app.api.platform import accounts, dashboard, documents, search
-from app.api.sales import members, registrations, session_signs
+from app.api.projects import meetings, projects, todos
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
+from app.api.staff import attendance, branches, employees
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler

@@ -15,8 +15,8 @@ from sqlalchemy import select
 
 from app.core.security import decode_token
 from app.db.session import SessionLocal
-from app.models.collab.chat import ChatRoomMember
-from app.models.org.employee import Employee
+from app.models.chat.chat import ChatRoomMember
+from app.models.staff.employee import Employee
 from app.services.chat import broadcast_event, is_member, post_message
 from app.ws.manager import manager
 

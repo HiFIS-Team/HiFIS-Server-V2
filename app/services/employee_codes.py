@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 
 
 async def unique_emp_no(db: AsyncSession) -> str:

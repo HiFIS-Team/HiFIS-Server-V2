@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.scoring.peer_review import PeerReview
 from app.schemas.scoring.peer_review import (
     PeerAggregateItem,

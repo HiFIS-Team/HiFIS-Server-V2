@@ -12,7 +12,7 @@ from app.core.storage import save_upload
 from app.db.session import get_db
 from app.enums import Role
 from app.models.platform.document import Document, Folder
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.schemas.platform.document import DocumentOut, DocumentUpdate, FolderCreate, FolderOut, FolderUpdate
 
 router = APIRouter(tags=["documents"], dependencies=[Depends(get_current_user)])

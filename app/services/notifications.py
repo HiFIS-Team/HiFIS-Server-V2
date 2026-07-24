@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.collab.notification import Notification, PushSubscription
+from app.models.chat.notification import Notification, PushSubscription
 
 logger = logging.getLogger(__name__)
 

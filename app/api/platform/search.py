@@ -10,10 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
 from app.models.platform.document import Document
-from app.models.org.employee import Employee
-from app.models.collab.meeting import Meeting
-from app.models.collab.notice import Notice
-from app.models.collab.project import Project
+from app.models.staff.employee import Employee
+from app.models.projects.meeting import Meeting
+from app.models.board.notice import Notice
+from app.models.projects.project import Project
 from app.schemas.platform.search import DocumentHit, PersonHit, SearchResults, TitleHit
 
 router = APIRouter(tags=["search"], dependencies=[Depends(get_current_user)])

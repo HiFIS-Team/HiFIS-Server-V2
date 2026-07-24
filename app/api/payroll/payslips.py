@@ -14,7 +14,7 @@ from app.core.deps import get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import PayslipStatus, Role
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.payroll.payslip import Payslip
 from app.schemas.payroll.payslip import (
     PaydayWindowOut,

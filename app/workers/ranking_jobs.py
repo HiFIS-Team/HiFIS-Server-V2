@@ -12,7 +12,7 @@ from sqlalchemy import delete, select
 from app.core.periods import KST
 from app.db.session import SessionLocal
 from app.enums import EmployeeStatus, Role
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.scoring.ranking_snapshot import RankingSnapshot
 from app.services import notification_texts as ntext
 from app.services.notifications import notify

@@ -18,10 +18,10 @@ from app.enums import (
     RegistrationType,
     Role,
 )
-from app.models.org.attendance import Attendance, LeaveRequest
-from app.models.org.employee import Employee
-from app.models.sales.member import Member
-from app.models.sales.registration import Registration
+from app.models.staff.attendance import Attendance, LeaveRequest
+from app.models.staff.employee import Employee
+from app.models.members.member import Member
+from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.platform.dashboard import DashboardOut, SalesSummary, ScoreSummary
 

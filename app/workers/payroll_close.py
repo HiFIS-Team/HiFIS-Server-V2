@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
-from app.models.org.branch import Branch
+from app.models.staff.branch import Branch
 from app.services.payroll import generate_branch_payslips
 
 

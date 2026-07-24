@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.core.periods import KST
 from app.db.session import SessionLocal
-from app.models.collab.event import Event
+from app.models.board.event import Event
 from app.services import notification_texts as ntext
 from app.services.notifications import notify
 

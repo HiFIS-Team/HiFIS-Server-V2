@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Rank, Role
-from app.models.org.branch import Branch
+from app.models.staff.branch import Branch
 from app.models.payroll.rank_policy import RankPolicy
 from app.schemas.payroll.rank_policy import RankPolicyCreate, RankPolicyOut
 

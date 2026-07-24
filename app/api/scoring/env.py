@@ -12,8 +12,8 @@ from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
-from app.models.org.branch import Branch
-from app.models.org.employee import Employee
+from app.models.staff.branch import Branch
+from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.env import (

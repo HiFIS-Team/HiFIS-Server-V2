@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
 from app.enums import RankingKind, Role, ScoreCategory
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.score import RankingItem, ScoreCreate, ScoreEventOut, ScoreSummary
 from app.services.ranking import kind_conditions

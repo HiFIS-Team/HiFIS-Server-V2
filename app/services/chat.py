@@ -6,9 +6,9 @@ REST 전송·WS 전송 공통 진입점. 방 멤버에게 인메모리 매니저
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.collab.chat import ChatRoom, ChatRoomMember, Message
-from app.models.org.employee import Employee
-from app.schemas.collab.chat import MessageOut
+from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
+from app.models.staff.employee import Employee
+from app.schemas.chat.chat import MessageOut
 from app.services import notification_texts as ntext
 from app.services.notifications import send_push
 from app.ws.manager import manager

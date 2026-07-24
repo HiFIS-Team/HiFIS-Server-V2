@@ -12,7 +12,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.enums import Role
 from app.models.platform.account import Account, AccountAccessLog
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.schemas.platform.account import AccountCreate, AccountOut, AccountSecretOut, AccountUpdate
 
 router = APIRouter(prefix="/accounts", tags=["accounts"], dependencies=[Depends(get_current_user)])

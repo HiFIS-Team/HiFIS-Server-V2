@@ -12,8 +12,8 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.enums import Rank, Role
-from app.models.org.branch import Branch
-from app.models.org.employee import Employee
+from app.models.staff.branch import Branch
+from app.models.staff.employee import Employee
 from app.services.employee_codes import unique_emp_no
 
 

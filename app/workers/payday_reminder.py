@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.core.periods import now_kst, period_range
 from app.db.session import SessionLocal
 from app.enums import EmployeeStatus, PayslipStatus
-from app.models.org.employee import Employee
+from app.models.staff.employee import Employee
 from app.models.payroll.payslip import Payslip
 from app.services import notification_texts as ntext
 from app.services.notifications import notify
