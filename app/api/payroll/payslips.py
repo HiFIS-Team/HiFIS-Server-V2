@@ -119,15 +119,14 @@ async def list_payslips(
     box: str | None = Query(None),
 ) -> list[Payslip]:
     stmt = select(Payslip)
-    # box=inbox → 결재 대기(SUBMITTED). box=decided → 처리 내역(승인/반려). MANAGER는 자기 지점만, ADMIN은 전체.
+    # box=inbox → 결재 대기(SUBMITTED). box=decided → 처리 내역(승인/반려).
     if box == "inbox":
         stmt = stmt.where(Payslip.status == PayslipStatus.SUBMITTED)
-        if current.role != Role.ADMIN and not branch_id:
-            branch_id = current.branch_id
     elif box == "decided":
         stmt = stmt.where(Payslip.status.in_([PayslipStatus.APPROVED, PayslipStatus.REJECTED]))
-        if current.role != Role.ADMIN and not branch_id:
-            branch_id = current.branch_id
+    # MANAGER는 항상 자기 지점만(box 유무와 무관), ADMIN은 전체
+    if current.role != Role.ADMIN and not branch_id:
+        branch_id = current.branch_id
     if branch_id:
         stmt = stmt.join(Employee, Employee.id == Payslip.employee_id).where(
             Employee.branch_id == branch_id

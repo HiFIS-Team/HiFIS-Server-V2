@@ -75,9 +75,13 @@ async def create_member(payload: MemberCreate, db: AsyncSession = Depends(get_db
 
 
 @router.get("/{member_id}", response_model=MemberOut)
-async def get_member(member_id: str, db: AsyncSession = Depends(get_db)) -> Member:
+async def get_member(
+    member_id: str,
+    scope: str | None = Depends(branch_scope),
+    db: AsyncSession = Depends(get_db),
+) -> Member:
     member = await db.get(Member, member_id)
-    if member is None:
+    if member is None or (scope and member.branch_id != scope):  # 타 지점 회원 존재도 숨김(404)
         raise _not_found()
     return member
 
@@ -110,9 +114,12 @@ async def update_member(
 
 @router.get("/{member_id}/registrations", response_model=list[RegistrationOut])
 async def list_member_registrations(
-    member_id: str, db: AsyncSession = Depends(get_db)
+    member_id: str,
+    scope: str | None = Depends(branch_scope),
+    db: AsyncSession = Depends(get_db),
 ) -> list[Registration]:
-    if await db.get(Member, member_id) is None:
+    member = await db.get(Member, member_id)
+    if member is None or (scope and member.branch_id != scope):
         raise _not_found()
     result = await db.execute(
         select(Registration)

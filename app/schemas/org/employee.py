@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from pydantic import Field
+
 from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
 from app.schemas.base import CamelModel
 
@@ -9,7 +11,7 @@ from app.schemas.base import CamelModel
 class EmployeeCreate(CamelModel):
     name: str
     email: str
-    password: str
+    password: str = Field(min_length=8)  # 비밀번호 정책 — 최소 8자
     branch_id: str
     rank: Rank
     role: Role = Role.MEMBER
@@ -38,7 +40,7 @@ class EmployeeMeUpdate(CamelModel):
 
 class PasswordChange(CamelModel):
     current_password: str
-    new_password: str
+    new_password: str = Field(min_length=8)
 
 
 class EmployeeOut(CamelModel):

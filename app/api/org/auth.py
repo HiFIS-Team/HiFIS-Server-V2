@@ -32,6 +32,9 @@ from app.services.employee_codes import unique_emp_no
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# 로그인 타이밍 오라클 방지 — 사용자가 없어도 더미 해시로 verify 를 돌려 응답시간을 균일화
+_DUMMY_HASH = hash_password("timing-equalizer-placeholder")
+
 
 @router.post("/signup", response_model=SignupResponse, status_code=201)
 async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> SignupResponse:
@@ -89,7 +92,9 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
         select(Employee).where(Employee.email == payload.email, Employee.deleted_at.is_(None))
     )
     employee = result.scalar_one_or_none()
-    if employee is None or not verify_password(payload.password, employee.password_hash):
+    # 사용자 유무와 무관하게 항상 verify 실행(단락 평가로 인한 타이밍 노출 방지)
+    password_ok = verify_password(payload.password, employee.password_hash if employee else _DUMMY_HASH)
+    if employee is None or not password_ok:
         raise HTTPException(
             401, detail={"code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}
         )

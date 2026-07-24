@@ -77,8 +77,11 @@ async def ranking(
 async def summary(
     employee_id: str = Query(..., alias="employeeId"),
     period: str | None = Query(None),
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScoreSummary:
+    if current.role == Role.MEMBER and employee_id != current.id:  # 멤버는 본인 요약만
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 점수만 조회할 수 있습니다"})
     stmt = select(ScoreEvent.category, func.coalesce(func.sum(ScoreEvent.points), 0)).where(
         ScoreEvent.employee_id == employee_id
     )
