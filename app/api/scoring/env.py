@@ -46,7 +46,7 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     ("여탈부스", 5, False),
     ("여탈청소", 2, False),
     ("기구관리", 2, False),
-    ("성함", 2, False),
+    ("회원지도", 2, False),
     ("블로그", 10, False),
     ("족자", 5, False),
     ("게시물", 3, False),
