@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
 from app.db.session import get_db
-from app.enums import Role, ScoreCategory
+from app.enums import RankingKind, Role, ScoreCategory
 from app.models.org.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.score import RankingItem, ScoreCreate, ScoreEventOut, ScoreSummary
@@ -44,6 +44,7 @@ async def list_scores(
 async def ranking(
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(branch_scope),
+    kind: RankingKind | None = Query(None),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
     branch_id: str | None = Query(None, alias="branchId"),
@@ -54,7 +55,16 @@ async def ranking(
     )
     if scope:
         stmt = stmt.where(ScoreEvent.branch_id == scope)
-    if category:
+    # kind(랭킹 탭)가 category 보다 우선. OVERALL=필터 없음, SALES=CONTRIB 중 sales:* 만.
+    if kind is not None:
+        if kind == RankingKind.SALES:
+            stmt = stmt.where(
+                ScoreEvent.category == ScoreCategory.CONTRIB,
+                ScoreEvent.source_ref_id.like("sales:%"),
+            )
+        elif kind != RankingKind.OVERALL:
+            stmt = stmt.where(ScoreEvent.category == ScoreCategory(kind.value))
+    elif category is not None:
         stmt = stmt.where(ScoreEvent.category == category)
     if period:
         stmt = stmt.where(ScoreEvent.period == period)

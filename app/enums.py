@@ -122,6 +122,16 @@ class ScoreCategory(StrEnum):
     OPERATOR = "OPERATOR"  # 운영자 직접 부여/감점
 
 
+class RankingKind(StrEnum):
+    """랭킹 탭 종류 — /scores/ranking?kind=. 표시 순서: 종합왕 → 매출왕 → 수업왕 → 친절왕 → 피드백왕."""
+
+    OVERALL = "OVERALL"    # 종합왕 — 전체 점수 합
+    SALES = "SALES"        # 매출왕 — 매출성과(SALES) 자동 기여도 (CONTRIB 중 sales:*)
+    CLASS = "CLASS"        # 수업왕 — 수업 개수 점수
+    KINDNESS = "KINDNESS"  # 친절왕 — 회원 친절도
+    PEER = "PEER"          # 피드백왕 — 동료평가
+
+
 class ReactionTargetType(StrEnum):
     NOTICE = "NOTICE"    # 공지
     MEETING = "MEETING"  # 회의록
