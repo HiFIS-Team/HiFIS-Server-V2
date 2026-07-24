@@ -135,15 +135,19 @@ async def aggregate_peer_reviews(
     ]
 
 
-@router.get("", response_model=list[PeerReviewOut], dependencies=[Depends(get_current_user)])
+@router.get("", response_model=list[PeerReviewOut])
 async def list_peer_reviews(
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(branch_scope),
     reviewee_id: str | None = Query(None, alias="revieweeId"),
     period: str | None = Query(None),
 ) -> list[PeerReviewOut]:
     stmt = select(PeerReview)
-    if scope:
+    # 멤버는 본인이 작성한 평가만(익명성 보호) — 남의 평가·리뷰어 노출 차단. MANAGER·ADMIN 은 전체.
+    if current.role == Role.MEMBER:
+        stmt = stmt.where(PeerReview.reviewer_id == current.id)
+    elif scope:
         stmt = stmt.join(Employee, Employee.id == PeerReview.reviewee_id).where(
             Employee.branch_id == scope
         )

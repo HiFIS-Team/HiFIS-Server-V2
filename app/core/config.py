@@ -1,5 +1,6 @@
 """애플리케이션 설정 — pydantic-settings + .env (CLAUDE.md §8)."""
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +48,28 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def _guard_secrets(self) -> "Settings":
+        """기동 시 시크릿 검증 — .env 미주입/플레이스홀더면 즉시 실패(fail-closed).
+
+        빈 값이나 알려진 기본값으로는 부팅 금지: 토큰 위조·계정비번 복호화(§C1) 원천 차단.
+        """
+        insecure = {
+            "jwt_secret": "change-me-in-env",
+            "account_master_key": "00" * 32,
+            "kindness_webhook_secret": "change-me-webhook-secret",
+        }
+        for field, placeholder in insecure.items():
+            value = getattr(self, field)
+            if not value or value == placeholder:
+                raise ValueError(
+                    f"보안 설정 '{field}' 가 비었거나 기본(안전하지 않은) 값입니다 "
+                    f"— .env 에 실제 시크릿을 설정하세요"
+                )
+        if self.environment != "development" and self.seed_admin_password == "admin1234":
+            raise ValueError("프로덕션에서 seed_admin_password 기본값(admin1234) 사용 금지")
+        return self
 
 
 settings = Settings()

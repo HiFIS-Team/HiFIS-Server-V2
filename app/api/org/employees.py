@@ -189,12 +189,18 @@ async def create_employee(payload: EmployeeCreate, db: AsyncSession = Depends(ge
 
 @router.patch("/{employee_id}", response_model=EmployeeOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
 async def update_employee(
-    employee_id: str, payload: EmployeeUpdate, db: AsyncSession = Depends(get_db)
+    employee_id: str,
+    payload: EmployeeUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Employee:
     employee = await db.get(Employee, employee_id)
     if employee is None or employee.deleted_at is not None:
         raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
     data = payload.model_dump(exclude_unset=True)
+    # 권한 상승 방지: ADMIN 권한을 주거나 ADMIN 계정을 수정하는 건 ADMIN 만 (MANAGER 셀프승격 차단)
+    if current.role != Role.ADMIN and (data.get("role") == Role.ADMIN or employee.role == Role.ADMIN):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "ADMIN 권한 변경은 관리자만 가능합니다"})
     if data.get("branch_id"):
         await _get_branch_or_400(db, data["branch_id"])
     for key, value in data.items():

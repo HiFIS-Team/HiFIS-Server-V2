@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.enums import ApprovalStatus, ApprovalStepStatus
+from app.enums import ApprovalStatus, ApprovalStepStatus, Role
 from app.models.collab.approval import Approval
 from app.models.org.employee import Employee
 from app.schemas.collab.approval import ApprovalAction, ApprovalCreate, ApprovalOut, CommentCreate
@@ -36,6 +36,15 @@ async def _get_or_404(approval_id: str, db: AsyncSession) -> Approval:
     if approval is None:
         raise HTTPException(404, detail={"code": "APPROVAL_NOT_FOUND", "message": "결재 문서를 찾을 수 없습니다"})
     return approval
+
+
+def _require_participant(approval: Approval, current: Employee) -> None:
+    """결재 당사자(신청자·결재선) 또는 ADMIN 만 열람/댓글 허용."""
+    if current.role == Role.ADMIN:
+        return
+    if current.id == approval.requester_id or current.id in (approval.approver_ids or []):
+        return
+    raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "결재 당사자만 접근할 수 있습니다"})
 
 
 @router.get("", response_model=list[ApprovalOut])
@@ -96,8 +105,14 @@ async def create_approval(
 
 
 @router.get("/{approval_id}", response_model=ApprovalOut)
-async def get_approval(approval_id: str, db: AsyncSession = Depends(get_db)) -> Approval:
-    return await _get_or_404(approval_id, db)
+async def get_approval(
+    approval_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Approval:
+    approval = await _get_or_404(approval_id, db)
+    _require_participant(approval, current)
+    return approval
 
 
 async def _act(approval_id: str, decision: ApprovalStepStatus, comment: str | None, current: Employee, db: AsyncSession) -> Approval:
@@ -179,6 +194,7 @@ async def add_comment(
     db: AsyncSession = Depends(get_db),
 ) -> Approval:
     approval = await _get_or_404(approval_id, db)
+    _require_participant(approval, current)
     now_iso = datetime.now(timezone.utc).isoformat()
     approval.comments = approval.comments + [
         {"author_id": current.id, "body": payload.body, "created_at": now_iso}

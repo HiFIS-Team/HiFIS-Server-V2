@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
+from app.enums import Role
 from app.models.org.branch import Branch
 from app.models.org.employee import Employee
 from app.models.sales.member import Member
@@ -83,12 +84,22 @@ async def get_member(member_id: str, db: AsyncSession = Depends(get_db)) -> Memb
 
 @router.patch("/{member_id}", response_model=MemberOut)
 async def update_member(
-    member_id: str, payload: MemberUpdate, db: AsyncSession = Depends(get_db)
+    member_id: str,
+    payload: MemberUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Member:
     member = await db.get(Member, member_id)
     if member is None:
         raise _not_found()
     data = payload.model_dump(exclude_unset=True)
+    # 담당 트레이너 재배정은 매출 귀속이 바뀌므로 ADMIN·MANAGER 만(매출 가로채기 차단)
+    if (
+        "owner_trainer_id" in data
+        and data["owner_trainer_id"] != member.owner_trainer_id
+        and current.role not in (Role.ADMIN, Role.MANAGER)
+    ):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당 트레이너 변경은 관리자/매니저만 가능합니다"})
     await _validate_refs(db, None, data.get("owner_trainer_id"), data.get("referrer_member_id"))
     for key, value in data.items():
         setattr(member, key, value)

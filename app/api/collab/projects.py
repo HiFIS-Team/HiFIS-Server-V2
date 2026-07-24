@@ -317,12 +317,22 @@ async def list_project_awards(
 
 @router.patch("/{project_id}", response_model=ProjectOut)
 async def update_project(
-    project_id: str, payload: ProjectUpdate, db: AsyncSession = Depends(get_db)
+    project_id: str,
+    payload: ProjectUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ProjectOut:
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    # ADMIN/MANAGER·작성자 = 전체 수정 / 담당자 = 진행률만 / 그 외 = 금지
+    is_manager = current.role in (Role.ADMIN, Role.MANAGER) or project.created_by_id == current.id
+    is_assignee = current.id in (project.assignee_ids or [])
+    if not (is_manager or is_assignee):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 수정할 권한이 없습니다"})
     fields = payload.model_dump(exclude_unset=True)
+    if not is_manager and set(fields) - {"progress"}:
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당자는 진행률만 변경할 수 있습니다"})
     for key, value in fields.items():
         setattr(project, key, value)
     if "due" in fields:  # 마감 변경 → 누락 알림 재무장
@@ -333,10 +343,16 @@ async def update_project(
 
 
 @router.delete("/{project_id}", status_code=204)
-async def delete_project(project_id: str, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_project(
+    project_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    if current.role not in (Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 삭제할 권한이 없습니다"})
     await db.delete(project)
     await db.commit()
     return None

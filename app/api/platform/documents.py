@@ -22,6 +22,10 @@ def _parse_tags(raw: str | None) -> list[str]:
     return [t.strip() for t in raw.split(",")] if raw and raw.strip() else []
 
 
+def _forbidden() -> HTTPException:
+    return HTTPException(403, detail={"code": "FORBIDDEN", "message": "작성자 또는 관리자만 가능합니다"})
+
+
 # ---------- Folder ----------
 @router.get("/folders", response_model=list[FolderOut])
 async def list_folders(
@@ -59,11 +63,16 @@ async def create_folder(
 
 @router.patch("/folders/{folder_id}", response_model=FolderOut)
 async def update_folder(
-    folder_id: str, payload: FolderUpdate, db: AsyncSession = Depends(get_db)
+    folder_id: str,
+    payload: FolderUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Folder:
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
+    if current.role != Role.ADMIN and folder.created_by_id != current.id:
+        raise _forbidden()
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(folder, key, value)
     await db.commit()
@@ -72,10 +81,16 @@ async def update_folder(
 
 
 @router.delete("/folders/{folder_id}", status_code=204)
-async def delete_folder(folder_id: str, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_folder(
+    folder_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
+    if current.role != Role.ADMIN and folder.created_by_id != current.id:
+        raise _forbidden()
     await db.execute(delete(Document).where(Document.folder_id == folder_id))  # 하위 문서 함께
     await db.delete(folder)
     await db.commit()
@@ -139,11 +154,16 @@ async def upload_document(
 
 @router.patch("/documents/{document_id}", response_model=DocumentOut)
 async def update_document(
-    document_id: str, payload: DocumentUpdate, db: AsyncSession = Depends(get_db)
+    document_id: str,
+    payload: DocumentUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Document:
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
+    if current.role != Role.ADMIN and document.uploader_id != current.id:
+        raise _forbidden()
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(document, key, value)
     await db.commit()
