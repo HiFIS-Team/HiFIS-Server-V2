@@ -2,11 +2,12 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.ratelimit import limiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -87,7 +88,8 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+@limiter.limit("10/minute")  # IP당 분 10회 — 무차별 대입 방지(§M4)
+async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     result = await db.execute(
         select(Employee).where(Employee.email == payload.email, Employee.deleted_at.is_(None))
     )

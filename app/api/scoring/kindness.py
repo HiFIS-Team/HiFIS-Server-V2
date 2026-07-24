@@ -5,12 +5,13 @@ POST /webhooks/kindness-survey: 앱 UI 작성 없음, 외부 폼 전용. 시크�
 
 import hmac
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import branch_scope, get_current_user
+from app.core.ratelimit import limiter
 from app.db.session import get_db
 from app.enums import ScoreCategory
 from app.models.staff.employee import Employee
@@ -36,8 +37,9 @@ async def _verify_webhook_secret(x_webhook_secret: str | None = Header(None)) ->
     status_code=201,
     dependencies=[Depends(_verify_webhook_secret)],
 )
+@limiter.limit("30/minute")  # IP당 분 30회 — 웹훅 스팸/포인트 남용 방지(§M4)
 async def receive_kindness_survey(
-    payload: KindnessSurveyWebhook, db: AsyncSession = Depends(get_db)
+    request: Request, payload: KindnessSurveyWebhook, db: AsyncSession = Depends(get_db)
 ) -> KindnessSurvey:
     if not payload.consent:
         raise HTTPException(400, detail={"code": "CONSENT_REQUIRED", "message": "개인정보 동의가 필요합니다"})

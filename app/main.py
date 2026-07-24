@@ -4,8 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+
+from app.core.ratelimit import limiter
 
 from app.api.auth import auth, invite_keys, join_requests
 from app.api.board import approvals, events, notices, reactions
@@ -35,6 +39,19 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 레이트리밋(§9.7) — 라우트의 @limiter.limit 데코레이터가 app.state.limiter 를 사용
+app.state.limiter = limiter
+
+
+async def _rate_limit_handler(request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": {"code": "RATE_LIMITED", "message": "요청이 너무 많아요. 잠시 후 다시 시도해주세요"}},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 _cors_kwargs: dict = {
     "allow_origins": settings.cors_origins_list,
