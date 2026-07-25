@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.periods import KST
 from app.core.security import hash_password, verify_password
 from app.core.storage import save_avatar
 from app.db.session import get_db
@@ -89,9 +90,20 @@ async def set_my_schedule(
     user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Employee:
-    """기본 근무 시간 설정·수정 — 근무외출근 자동 판정 기준. 최초 로그인 가이드에서 설정, 근태 화면에서 언제든 변경."""
+    """기본 근무 시간 설정·수정 — 근무외출근 자동 판정 기준. 최초는 온보딩 가이드, 이후 근태 화면에서 변경.
+
+    ⚠️ 이미 설정돼 있고 **지금이 본인 근무 시간 중(shift_start~shift_end)** 이면 변경 불가(403 WITHIN_SHIFT).
+    근무 중 종료 시각을 당겨 초과근무 점수를 만드는 파밍 방지 — 근무 시간 밖에서만 수정.
+    """
     if payload.shift_end <= payload.shift_start:
         raise HTTPException(400, detail={"code": "INVALID_RANGE", "message": "퇴근 시간이 출근 시간보다 늦어야 합니다"})
+    if user.shift_start is not None and user.shift_end is not None:
+        now = datetime.now(timezone.utc).astimezone(KST)
+        now_min = now.hour * 60 + now.minute
+        sh, sm = user.shift_start.split(":")
+        eh, em = user.shift_end.split(":")
+        if int(sh) * 60 + int(sm) <= now_min <= int(eh) * 60 + int(em):
+            raise HTTPException(403, detail={"code": "WITHIN_SHIFT", "message": "근무 시간 중에는 근무 시간을 변경할 수 없습니다"})
     user.shift_start = payload.shift_start
     user.shift_end = payload.shift_end
     await db.commit()
