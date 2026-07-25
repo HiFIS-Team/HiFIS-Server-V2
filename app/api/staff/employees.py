@@ -24,6 +24,7 @@ from app.schemas.staff.employee import (
     EmployeeOut,
     EmployeeUpdate,
     PasswordChange,
+    ScheduleSet,
 )
 from app.services.employee_codes import unique_emp_no
 
@@ -77,6 +78,24 @@ async def update_me(
 ) -> Employee:
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(user, key, value)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/me/schedule", response_model=EmployeeOut)
+async def set_my_schedule(
+    payload: ScheduleSet,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Employee:
+    """기본 근무 시간 최초 1회 설정 → 이후 잠금(본인·관리자 모두 변경 불가). 근무외출근 자동 판정 기준."""
+    if user.shift_start is not None:
+        raise HTTPException(409, detail={"code": "SCHEDULE_LOCKED", "message": "근무 시간이 이미 설정되어 변경할 수 없습니다"})
+    if payload.shift_end <= payload.shift_start:
+        raise HTTPException(400, detail={"code": "INVALID_RANGE", "message": "퇴근 시간이 출근 시간보다 늦어야 합니다"})
+    user.shift_start = payload.shift_start
+    user.shift_end = payload.shift_end
     await db.commit()
     await db.refresh(user)
     return user

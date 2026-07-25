@@ -20,6 +20,16 @@ def attendance_scan(action: str, when: datetime) -> dict:
     }
 
 
+def offhours_award(kind: str, points: int) -> dict:
+    # kind = "조기 출근" | "초과 근무" — 스캔이 기본 근무시간보다 30분+ 이르거나 늦을 때 자동 적립
+    return {
+        "type": "ATTENDANCE",
+        "title": f"근무 외 출근 +{points}점",
+        "body": f"{kind}으로 근무 외 출근 점수 {points}점이 자동 적립됐어요",
+        "link": "/ranking",
+    }
+
+
 def leave_decision(approved: bool, start_date, end_date, reason: str | None = None) -> dict:
     verb = "승인" if approved else "반려"
     body = f"{start_date} ~ {end_date}"

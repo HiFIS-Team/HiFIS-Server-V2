@@ -60,3 +60,8 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=DeductionMethod.FREELANCE,
         server_default=DeductionMethod.FREELANCE.value,
     )
+
+    # 기본 근무 시간 (§6.9) — "HH:MM" KST. 최초 1회 본인 설정 → 잠금(본인·관리자 모두 변경 경로 없음).
+    # 스캔이 이 시각보다 30분+ 이르거나 늦으면 근무 외 출근 점수 자동 적립. null = 아직 미설정(첫 로그인 게이트).
+    shift_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    shift_end: Mapped[str | None] = mapped_column(String(5), nullable=True)

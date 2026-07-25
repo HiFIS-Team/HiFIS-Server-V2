@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.periods import KST, period_range
 from app.db.session import get_db
-from app.enums import AttendanceSource, LeaveStatus, LeaveType, Role
+from app.enums import AttendanceSource, LeaveStatus, LeaveType, Role, ScoreCategory
+from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
@@ -25,8 +26,43 @@ from app.schemas.staff.attendance import (
 )
 from app.services import notification_texts as ntext
 from app.services.notifications import notify
+from app.services.scoring import accrue_score
 
 router = APIRouter(tags=["attendance"])
+
+# 근무 외 출근 자동 점수 (§6.9) — 기본 근무시간보다 이 분수 이상 이르거나 늦으면 인정, 각 +점수(하루 최대 2회).
+OFFHOURS_THRESHOLD_MIN = 30
+OFFHOURS_POINTS = 10
+
+
+def _hhmm_to_min(s: str) -> int:
+    h, m = s.split(":")
+    return int(h) * 60 + int(m)
+
+
+async def _award_offhours(
+    db: AsyncSession, target: Employee, day_key: str, ref_suffix: str, kind_label: str
+) -> None:
+    """근무외출근 자동 점수 — (직원·근무일·방향)당 1회만 적립(퇴근 재스캔 멱등). 시스템 발생이라 created_by=None."""
+    ref = f"offhours:{day_key}:{ref_suffix}"
+    exists = await db.scalar(
+        select(ScoreEvent).where(
+            ScoreEvent.employee_id == target.id,
+            ScoreEvent.source_ref_id == ref,
+        )
+    )
+    if exists is not None:
+        return
+    await accrue_score(
+        db,
+        employee_id=target.id,
+        branch_id=target.branch_id,
+        category=ScoreCategory.CONTRIB,
+        points=OFFHOURS_POINTS,
+        reason=f"{kind_label} (자동)",
+        source_ref_id=ref,
+    )
+    await notify(db, employee_id=target.id, **ntext.offhours_award(kind_label, OFFHOURS_POINTS))
 
 
 # ---------- 근태 ----------
@@ -53,7 +89,9 @@ async def scan_attendance(
         target = current
 
     now = datetime.now(timezone.utc)
-    today = now.date()
+    now_kst = now.astimezone(KST)
+    today = now_kst.date()  # KST 근무일 기준(자정 넘는 UTC 분리 방지 → 이른 출근도 같은 날 퇴근과 페어링)
+    now_min = now_kst.hour * 60 + now_kst.minute
     record = (
         await db.execute(
             select(Attendance).where(
@@ -68,13 +106,19 @@ async def scan_attendance(
         )
         db.add(record)
         action = "출근"
+        # 기본 출근보다 30분+ 이르게 왔으면 조기출근 자동 점수
+        if target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
+            await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
         record.check_out = now
         if record.check_in is not None:
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
         action = "퇴근"
+        # 기본 퇴근보다 30분+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만)
+        if target.shift_end and now_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
+            await _award_offhours(db, target, today.isoformat(), "out", "초과 근무")
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
-    await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now.astimezone(KST)))
+    await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
     await db.commit()
     await db.refresh(record)
     return record

@@ -60,3 +60,11 @@ class EmployeeOut(CamelModel):
     work_status: WorkStatus
     joined_at: datetime
     last_active_at: datetime | None = None
+    shift_start: str | None = None  # 기본 근무 시간 "HH:MM" (null=미설정 → 첫 로그인 시 설정 유도)
+    shift_end: str | None = None
+
+
+class ScheduleSet(CamelModel):
+    # 최초 1회 본인 설정 (이후 잠금). "HH:MM" 24시간.
+    shift_start: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    shift_end: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
