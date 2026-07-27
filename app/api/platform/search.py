@@ -1,13 +1,14 @@
 """통합검색 라우터 — 프론트 검색 오버레이 (CLAUDE.md §6.13).
 
-사람은 지점 스코프(MEMBER=본인 지점). 나머지(공지·회의록·프로젝트·문서)는 전사 공용.
+전 항목 전사 공용(전 지점). 사람도 전 지점 검색 — 멘션·담당 지정 때 다른 지점 사람도 찾아야 하기 때문.
+(지점 업무 데이터가 아니라 '사람'이므로 지점 제한 없음. §branch_scope 주석 참고.)
 """
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user
+from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.platform.document import Document
 from app.models.staff.employee import Employee
@@ -23,17 +24,15 @@ router = APIRouter(tags=["search"], dependencies=[Depends(get_current_user)])
 async def search(
     q: str = Query(..., min_length=1),
     limit: int = Query(5, ge=1, le=20),
-    scope_branch: str | None = Depends(branch_scope),  # MEMBER=본인 지점 / MANAGER·ADMIN=None
     db: AsyncSession = Depends(get_db),
 ) -> SearchResults:
     like = f"%{q}%"
 
+    # 사람은 전 지점 검색(멘션·담당 지정 지원). 지점 업무 데이터가 아니라 '인원'이라 제한 없음.
     people_stmt = select(Employee).where(
         Employee.deleted_at.is_(None),
         or_(Employee.name.ilike(like), Employee.email.ilike(like)),
     )
-    if scope_branch is not None:
-        people_stmt = people_stmt.where(Employee.branch_id == scope_branch)
     people = (await db.scalars(people_stmt.order_by(Employee.name).limit(limit))).all()
 
     notices = (

@@ -44,18 +44,17 @@ async def list_scores(
 @router.get("/ranking", response_model=list[RankingItem])
 async def ranking(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
     kind: RankingKind | None = Query(None),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
     branch_id: str | None = Query(None, alias="branchId"),
 ) -> list[RankingItem]:
+    # 랭킹은 '전사 통합'(전 지점) — 전 인원을 한 줄로 세운다(멤버·매니저 모두 동일한 통합 랭킹).
+    # 특정 지점 랭킹만 보려면 branchId 로 필터. (지점 스코프를 걸지 않는 이유: §branch_scope 주석)
     total = func.coalesce(func.sum(ScoreEvent.points), 0).label("points")
     stmt = select(Employee.id, Employee.name, total).join(
         ScoreEvent, ScoreEvent.employee_id == Employee.id
     )
-    if scope:
-        stmt = stmt.where(ScoreEvent.branch_id == scope)
     # kind(랭킹 탭)가 category 보다 우선. OVERALL=필터 없음, SALES=CONTRIB 중 sales:* 만.
     if kind is not None:
         stmt = stmt.where(*kind_conditions(kind))

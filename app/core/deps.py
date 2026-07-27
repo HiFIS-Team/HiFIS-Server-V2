@@ -38,10 +38,12 @@ def require_role(*roles: Role) -> Callable[..., Coroutine[Any, Any, Employee]]:
 
 
 async def branch_scope(current: Employee = Depends(get_current_user)) -> str | None:
-    """목록 지점 스코프 (§0 멀티테넌시).
+    """목록 지점 스코프 (§0 멀티테넌시) — '지점 업무 데이터'용.
 
-    MEMBER 는 본인 소속 지점으로 제한(branch_id 반환), MANAGER/ADMIN 은 전체(None).
+    ADMIN 만 전 지점(None). MEMBER·MANAGER 는 본인 소속 지점으로 제한(branch_id 반환).
+    → 회원·매출·세션·점수원장·근태·환경정비 등 지점 업무 데이터는 매니저도 자기 지점만 본다.
+    ※ '사람(직원 명단·검색)'과 '랭킹'은 전사 인원이 보여야 하므로 이 스코프를 쓰지 않는다.
     """
-    if current.role == Role.MEMBER:
-        return current.branch_id
-    return None
+    if current.role == Role.ADMIN:
+        return None
+    return current.branch_id

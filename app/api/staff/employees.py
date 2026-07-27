@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.deps import get_current_user, require_role
 from app.core.periods import KST
 from app.core.security import hash_password, verify_password
 from app.core.storage import save_avatar
@@ -42,18 +42,19 @@ async def _get_branch_or_400(db: AsyncSession, branch_id: str) -> Branch:
 @router.get("", response_model=list[EmployeeOut], dependencies=[Depends(get_current_user)])
 async def list_employees(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),  # MEMBER=본인 지점 강제 / MANAGER·ADMIN=None(전체)
     branch_id: str | None = Query(None, alias="branchId"),
     status: EmployeeStatus | None = Query(None),
     role: Role | None = Query(None),
     team: str | None = Query(None),
     q: str | None = Query(None),
 ) -> list[Employee]:
-    # 로스터 조회는 인증된 전 직원 허용(§멀티테넌시). MEMBER 는 본인 지점으로 제한.
-    effective_branch = scope or branch_id
+    # 직원 명단은 '전사 인원 디렉터리'(전 지점) — 프로젝트 담당자·회의 참석자·멘션·랭킹 등
+    # 인원 지정에 다른 지점 사람도 보여야 한다. (지점 업무 데이터가 아니라 '사람'이므로 지점 제한 없음.
+    #  민감 데이터(회원·급여·점수원장 등)는 각 도메인에서 별도 지점 스코프.)
+    # 특정 지점만 보고 싶으면 branchId 로 필터.
     stmt = select(Employee).where(Employee.deleted_at.is_(None))
-    if effective_branch:
-        stmt = stmt.where(Employee.branch_id == effective_branch)
+    if branch_id:
+        stmt = stmt.where(Employee.branch_id == branch_id)
     if status:
         stmt = stmt.where(Employee.status == status)
     if role:
