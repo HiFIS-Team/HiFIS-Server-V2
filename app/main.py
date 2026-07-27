@@ -29,9 +29,9 @@ from app.ws.manager import manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await manager.start(settings.redis_url)  # 사내톡 WS Redis 팬아웃(§9.3) — 워커 수 무관 실시간
-    start_scheduler()  # 월마감 등 백그라운드 잡 (§9.5)
+    await start_scheduler(settings.redis_url)  # 백그라운드 잡 — Redis 리더 락으로 단일 워커만 실행(§9.5)
     yield
-    stop_scheduler()
+    await stop_scheduler()
     await manager.stop()
     await engine.dispose()
 
