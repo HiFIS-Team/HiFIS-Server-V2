@@ -16,10 +16,9 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_db
-from app.enums import AccessEvent, InviteStatus, JoinRequestStatus
+from app.enums import AccessEvent, InviteStatus
 from app.models.staff.employee import Employee
 from app.models.auth.invite import InviteKey
-from app.models.auth.join_request import JoinRequest
 from app.models.platform.access_log import AccessLog
 from app.schemas.auth.auth import (
     AccessTokenResponse,
@@ -48,51 +47,28 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
     if (await db.execute(select(Employee).where(Employee.email == payload.email))).scalar_one_or_none():
         raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
 
-    # 유효 초대키 → 즉시 가입 (JOINED)
-    if payload.invite_key:
-        key = (
-            await db.execute(select(InviteKey).where(InviteKey.code == payload.invite_key))
-        ).scalar_one_or_none()
-        now = datetime.now(timezone.utc)
-        if key is None or key.status != InviteStatus.UNUSED or key.expires_at <= now:
-            raise HTTPException(400, detail={"code": "INVALID_INVITE_KEY", "message": "유효하지 않은 초대키입니다"})
-        employee = Employee(
-            name=payload.name,
-            email=payload.email,
-            phone=payload.phone,
-            password_hash=hash_password(payload.password),
-            branch_id=key.branch_id,
-            role=key.role,
-            rank=key.rank,
-            team=key.team,
-            emp_no=await unique_emp_no(db),
-        )
-        key.status = InviteStatus.USED
-        db.add(employee)
-        await db.commit()
-        return SignupResponse(result="JOINED")
-
-    # 초대키 없음 → 승인 대기 (PENDING)
-    pending = (
-        await db.execute(
-            select(JoinRequest).where(
-                JoinRequest.email == payload.email,
-                JoinRequest.status == JoinRequestStatus.PENDING,
-            )
-        )
+    # 회원가입은 유효한 초대키 필수 → 즉시 가입 (승인 대기 흐름 폐지)
+    key = (
+        await db.execute(select(InviteKey).where(InviteKey.code == payload.invite_key))
     ).scalar_one_or_none()
-    if pending:
-        raise HTTPException(409, detail={"code": "JOIN_REQUEST_PENDING", "message": "이미 승인 대기 중입니다"})
-    db.add(
-        JoinRequest(
-            name=payload.name,
-            email=payload.email,
-            phone=payload.phone,
-            password_hash=hash_password(payload.password),
-        )
+    now = datetime.now(timezone.utc)
+    if key is None or key.status != InviteStatus.UNUSED or key.expires_at <= now:
+        raise HTTPException(400, detail={"code": "INVALID_INVITE_KEY", "message": "유효하지 않은 초대키입니다"})
+    employee = Employee(
+        name=payload.name,
+        email=payload.email,
+        phone=payload.phone,
+        password_hash=hash_password(payload.password),
+        branch_id=key.branch_id,
+        role=key.role,
+        rank=key.rank,
+        team=key.team,
+        emp_no=await unique_emp_no(db),
     )
+    key.status = InviteStatus.USED
+    db.add(employee)
     await db.commit()
-    return SignupResponse(result="PENDING")
+    return SignupResponse(result="JOINED")
 
 
 @router.post("/login", response_model=TokenResponse)

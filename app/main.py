@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app.core.ratelimit import limiter
 
-from app.api.auth import auth, invite_keys, join_requests
+from app.api.auth import auth, invite_keys
 from app.api.board import approvals, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.members import members, registrations, session_signs
@@ -77,7 +77,6 @@ app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(branches.router)
 app.include_router(invite_keys.router)
-app.include_router(join_requests.router)
 app.include_router(attendance.router)
 # sales — 회원·매출
 app.include_router(members.router)

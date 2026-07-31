@@ -68,12 +68,6 @@ class InviteStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
-class JoinRequestStatus(StrEnum):
-    PENDING = "PENDING"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
-
-
 class RegistrationType(StrEnum):
     NEW = "NEW"          # 신규
     RENEWAL = "RENEWAL"  # 재등록

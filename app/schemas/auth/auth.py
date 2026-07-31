@@ -27,7 +27,7 @@ class SignupRequest(CamelModel):
     email: str
     password: str = Field(min_length=8)  # 비밀번호 정책 — 최소 8자
     phone: str  # 필수 — 휴대폰 번호(정규화 저장)
-    invite_key: str | None = None
+    invite_key: str = Field(min_length=1)  # 필수 — 회원가입은 초대키만(승인 대기 폐지)
 
     @field_validator("phone")
     @classmethod
@@ -36,7 +36,7 @@ class SignupRequest(CamelModel):
 
 
 class SignupResponse(CamelModel):
-    result: Literal["JOINED", "PENDING"]
+    result: Literal["JOINED"]  # 승인 대기(PENDING) 폐지 — 유효 초대키만 가입
 
 
 class TokenResponse(CamelModel):
