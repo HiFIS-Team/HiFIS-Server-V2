@@ -18,7 +18,7 @@ from app.api.payroll import payslips, rank_policies
 from app.api.platform import access_logs, accounts, dashboard, documents, files, search
 from app.api.projects import meetings, projects, todos
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
-from app.api.staff import attendance, branches, employees
+from app.api.staff import attendance, branches, employees, home
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler
@@ -75,6 +75,7 @@ app.add_middleware(CORSMiddleware, **_cors_kwargs)
 # org — 조직·인사
 app.include_router(auth.router)
 app.include_router(employees.router)
+app.include_router(home.router)  # GET /me/home (개인 홈 요약)
 app.include_router(branches.router)
 app.include_router(invite_keys.router)
 app.include_router(attendance.router)
