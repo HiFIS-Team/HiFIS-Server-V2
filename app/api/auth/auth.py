@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
-from app.core.ratelimit import limiter
+from app.core.ratelimit import client_key, limiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -16,10 +16,11 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_db
-from app.enums import InviteStatus, JoinRequestStatus
+from app.enums import AccessEvent, InviteStatus, JoinRequestStatus
 from app.models.staff.employee import Employee
 from app.models.auth.invite import InviteKey
 from app.models.auth.join_request import JoinRequest
+from app.models.platform.access_log import AccessLog
 from app.schemas.auth.auth import (
     AccessTokenResponse,
     LoginRequest,
@@ -97,6 +98,8 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")  # IP당 분 10회 — 무차별 대입 방지(§M4)
 async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+    ip = client_key(request)  # 프록시(Caddy/CF) 뒤에선 X-Forwarded-For 첫 홉
+    user_agent = (request.headers.get("user-agent") or "")[:300]
     result = await db.execute(
         select(Employee).where(Employee.email == payload.email, Employee.deleted_at.is_(None))
     )
@@ -104,14 +107,32 @@ async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depe
     # 사용자 유무와 무관하게 항상 verify 실행(단락 평가로 인한 타이밍 노출 방지)
     password_ok = verify_password(payload.password, employee.password_hash if employee else _DUMMY_HASH)
     if employee is None or not password_ok:
+        db.add(AccessLog(  # 실패도 기록(무차별 대입·이상 접근 모니터링, §8)
+            employee_id=employee.id if employee else None,
+            email=payload.email,
+            event=AccessEvent.LOGIN_FAIL,
+            ip=ip,
+            user_agent=user_agent,
+        ))
+        await db.commit()
         raise HTTPException(
             401, detail={"code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}
         )
-    return TokenResponse(
+    # 응답을 커밋 전에 만들어 둔다(순서 무관 — expire_on_commit=False 지만 명시적으로 안전하게)
+    response = TokenResponse(
         access_token=create_access_token(employee.id, employee.token_version),
         refresh_token=create_refresh_token(employee.id, employee.token_version),
         employee=EmployeeOut.model_validate(employee),
     )
+    db.add(AccessLog(
+        employee_id=employee.id,
+        email=employee.email,
+        event=AccessEvent.LOGIN_SUCCESS,
+        ip=ip,
+        user_agent=user_agent,
+    ))
+    await db.commit()
+    return response
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)

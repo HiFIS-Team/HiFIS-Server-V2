@@ -15,7 +15,7 @@ from app.api.board import approvals, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.members import members, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
-from app.api.platform import accounts, dashboard, documents, files, search
+from app.api.platform import access_logs, accounts, dashboard, documents, files, search
 from app.api.projects import meetings, projects, todos
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees
@@ -105,6 +105,7 @@ app.include_router(chat.router)
 app.include_router(ws_chat_router)  # WS /ws/chat
 # platform — 문서·계정·검색·대시보드
 app.include_router(accounts.router)
+app.include_router(access_logs.router)
 app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(dashboard.router)

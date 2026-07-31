@@ -1,5 +1,6 @@
 """모델 등록 지점 — Alembic autogenerate 가 metadata 를 인식하도록 여기서 import."""
 
+from app.models.platform.access_log import AccessLog
 from app.models.platform.account import Account, AccountAccessLog
 from app.models.board.approval import Approval
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message

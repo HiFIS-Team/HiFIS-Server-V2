@@ -20,6 +20,7 @@ from app.workers.payday_reminder import payday_deadline_reminders, payday_remind
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
 from app.workers.ranking_jobs import announce_monthly_winners, ranking_change_scan
+from app.workers.retention import purge_old_access_logs
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ def _register_jobs() -> None:
     # 5분마다 — 순위 변동 감지(밀려난 본인 + 어드민 알림)
     scheduler.add_job(ranking_change_scan, CronTrigger(minute="*/5"),
                       id="ranking_change", replace_existing=True)
+    # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
+    scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
+                      id="access_log_purge", replace_existing=True)
     # 검증용 하트비트 — 환경변수로만 켬(운영 기본 꺼짐). 멀티워커 단일실행 확인에 사용.
     if os.getenv("SCHED_HEARTBEAT_TEST"):
         scheduler.add_job(_heartbeat, CronTrigger(second="*/2"),

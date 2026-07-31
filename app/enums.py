@@ -179,3 +179,10 @@ class ReactionTargetType(StrEnum):
     NOTICE = "NOTICE"    # 공지
     MEETING = "MEETING"  # 회의록
     MESSAGE = "MESSAGE"  # 사내톡 메시지 (§6.11, 추후)
+
+
+class AccessEvent(StrEnum):
+    """접속 로그 이벤트 — 개인정보처리방침 §1-1·§8(접속 기록 보관)."""
+
+    LOGIN_SUCCESS = "LOGIN_SUCCESS"
+    LOGIN_FAIL = "LOGIN_FAIL"
