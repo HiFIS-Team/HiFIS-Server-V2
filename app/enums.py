@@ -115,7 +115,7 @@ class AttendanceSource(StrEnum):
 
 
 class AttendanceStatus(StrEnum):
-    """근태 기록 판정 (서버 계산, §6.9) — 기록이 있는 날만. 결근/월차/휴무는 근무일·휴가로 별도 판단."""
+    """근태 판정 (서버 계산, §6.9). NORMAL~NO_CHECKOUT 은 기록 기반, ABSENT~DAY_OFF 는 일자 기반(캘린더)."""
 
     NORMAL = "NORMAL"                  # 정상
     LATE = "LATE"                      # 지각
@@ -123,6 +123,9 @@ class AttendanceStatus(StrEnum):
     LATE_AND_EARLY = "LATE_AND_EARLY"  # 지각 + 조기퇴근
     IN_PROGRESS = "IN_PROGRESS"        # 출근했고 아직 퇴근 전(당일)
     NO_CHECKOUT = "NO_CHECKOUT"        # 지난 날인데 퇴근 기록 없음
+    ABSENT = "ABSENT"                  # 결근 — 근무일인데 과거·기록 없음·휴가 없음
+    ON_LEAVE = "ON_LEAVE"              # 휴가/월차(승인) — 반차 포함
+    DAY_OFF = "DAY_OFF"                # 휴무 — 근무 요일 아님
     UNKNOWN = "UNKNOWN"                # 근무시간 미설정 등 판정 불가
 
 

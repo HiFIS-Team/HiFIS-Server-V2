@@ -5,7 +5,7 @@ wire(Employee)엔 없는 password_hash 는 DB 전용 컬럼 (응답 직렬화 �
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Integer, String, func
+from sqlalchemy import ARRAY, DateTime, Enum as SAEnum, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -65,3 +65,5 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # 스캔이 이 시각보다 30분+ 이르거나 늦으면 근무 외 출근 점수 자동 적립. null = 아직 미설정(첫 로그인 게이트).
     shift_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
     shift_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # 근무 요일 — ISO 요일 1(월)~7(일) 배열. null=미설정. 결근 판정 기준(근무일인데 기록 없으면 결근).
+    work_days: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)

@@ -4,7 +4,7 @@
 목록은 지점 스코프(MEMBER=본인 지점).
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -26,6 +26,7 @@ from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
+    AttendanceDayOut,
     AttendanceOut,
     AttendanceScanRequest,
     LeaveBalanceOut,
@@ -199,6 +200,96 @@ async def list_attendance(
         o = AttendanceOut.model_validate(r)
         o.status = _attendance_status(r, ss, se, today)
         out.append(o)
+    return out
+
+
+@router.get("/attendance/calendar", response_model=list[AttendanceDayOut])
+async def attendance_calendar(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    month: str = Query(...),
+    employee_id: str | None = Query(None, alias="employeeId"),
+) -> list[AttendanceDayOut]:
+    """월 캘린더 — 하루하루 판정(정상/지각/조기퇴근/결근/휴가/휴무). 결근 = 근무일인데 과거·기록없음·휴가없음.
+
+    근무 요일(work_days) 미설정이면 결근/휴무는 판정 못 하고 기록 있는 날만 반환한다.
+    """
+    target = current
+    if employee_id and employee_id != current.id:
+        if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+            raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
+        target = await db.get(Employee, employee_id)
+        if target is None or target.deleted_at is not None:
+            raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+        if current.role == Role.MANAGER and target.branch_id != current.branch_id:
+            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
+
+    start, end = period_range(month)
+    start_d, end_d = start.date(), end.date()
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(오늘까지)
+
+    recs = {
+        r.date: r
+        for r in (
+            await db.execute(
+                select(Attendance).where(
+                    Attendance.employee_id == target.id,
+                    Attendance.date >= start_d,
+                    Attendance.date < end_d,
+                )
+            )
+        ).scalars().all()
+    }
+    leaves = list(
+        (
+            await db.execute(
+                select(LeaveRequest).where(
+                    LeaveRequest.employee_id == target.id,
+                    LeaveRequest.status == LeaveStatus.APPROVED,
+                    LeaveRequest.start_date < end_d,
+                    LeaveRequest.end_date >= start_d,
+                )
+            )
+        ).scalars().all()
+    )
+
+    def leave_on(day: date) -> LeaveRequest | None:
+        for lv in leaves:
+            if lv.start_date <= day <= lv.end_date:
+                return lv
+        return None
+
+    work_days = set(target.work_days or [])
+    out: list[AttendanceDayOut] = []
+    day = start_d
+    while day < limit_d:
+        rec = recs.get(day)
+        lv = leave_on(day)
+        if rec is not None:  # 기록 있음 → 근무시간 대비 판정
+            out.append(
+                AttendanceDayOut(
+                    date=day,
+                    status=_attendance_status(rec, target.shift_start, target.shift_end, today),
+                    check_in=rec.check_in,
+                    check_out=rec.check_out,
+                    work_minutes=rec.work_minutes,
+                )
+            )
+        elif lv is not None:  # 승인 휴가(반차 포함) → 결근 아님
+            out.append(
+                AttendanceDayOut(
+                    date=day, status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
+                )
+            )
+        elif work_days:
+            if day.isoweekday() not in work_days:
+                out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
+            elif day < today:  # 근무일인데 과거·기록없음·휴가없음 → 결근
+                out.append(AttendanceDayOut(date=day, status=AttendanceStatus.ABSENT))
+            # 오늘 근무일 + 기록 없음 → 아직 결근 아님(스캔 대기) → 생략
+        # work_days 미설정이면 기록 없는 날은 판정 불가 → 생략
+        day += timedelta(days=1)
     return out
 
 

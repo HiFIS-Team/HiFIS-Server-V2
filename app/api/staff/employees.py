@@ -107,6 +107,7 @@ async def set_my_schedule(
             raise HTTPException(403, detail={"code": "WITHIN_SHIFT", "message": "근무 시간 중에는 근무 시간을 변경할 수 없습니다"})
     user.shift_start = payload.shift_start
     user.shift_end = payload.shift_end
+    user.work_days = payload.work_days  # 결근 판정 기준 근무 요일
     await db.commit()
     await db.refresh(user)
     return user

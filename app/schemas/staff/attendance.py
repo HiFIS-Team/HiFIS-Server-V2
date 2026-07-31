@@ -25,6 +25,18 @@ class AttendanceOut(CamelModel):
     status: AttendanceStatus | None = None  # 서버 판정(정상/지각/조기퇴근 등) — 근무시간 대비
 
 
+class AttendanceDayOut(CamelModel):
+    """캘린더 하루 상태 — 기록 없는 날(결근/휴가/휴무)까지 포함해 서버가 판정."""
+
+    date: date
+    status: AttendanceStatus
+    check_in: datetime | None = None
+    check_out: datetime | None = None
+    work_minutes: int | None = None
+    leave_type: LeaveType | None = None    # ON_LEAVE 일 때 휴가 종류
+    half_period: HalfPeriod | None = None  # 반차면 오전/오후
+
+
 class LeaveRequestCreate(CamelModel):
     type: LeaveType
     half_period: HalfPeriod | None = None  # type=HALF 면 필수(오전/오후)
