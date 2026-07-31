@@ -53,7 +53,8 @@ def _to_out(review: PeerReview) -> PeerReviewOut:
 @router.post("", response_model=PeerReviewOut, status_code=201)
 async def create_peer_review(
     payload: PeerReviewCreate,
-    current: Employee = Depends(require_role(Role.MEMBER)),
+    # 점장(MANAGER)도 동료평가에 참여함 → 허용. ADMIN·MASTER 는 운영 전담이라 제외.
+    current: Employee = Depends(require_role(Role.MEMBER, Role.MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> PeerReviewOut:
     reviewee = await db.get(Employee, payload.reviewee_id)
