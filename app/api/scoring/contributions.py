@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import ContribType, Role, ScoreCategory
 from app.models.scoring.contribution import ContributionGrant
@@ -66,6 +67,7 @@ async def list_contributions(
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
+    period: str | None = Query(None),  # "YYYY-MM" — 점수 원장과 동일. 앱 '이번 달 기여' 필터
 ) -> list[ContributionGrant]:
     stmt = select(ContributionGrant)
     if scope:
@@ -74,5 +76,8 @@ async def list_contributions(
         )
     if employee_id:
         stmt = stmt.where(ContributionGrant.employee_id == employee_id)
+    if period:
+        start, end = period_range(period)
+        stmt = stmt.where(ContributionGrant.created_at >= start, ContributionGrant.created_at < end)
     result = await db.execute(stmt.order_by(ContributionGrant.created_at.desc()))
     return list(result.scalars().all())
