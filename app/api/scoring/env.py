@@ -1,15 +1,17 @@
 """환경정비 라우터 — EnvItem/EnvTaskLog/SupplyOrder (CLAUDE.md §4.2).
 
-- 항목 정의: [ADMIN,MANAGER] / 수행(env-logs POST): [MEMBER]만 (§1 반복업무는 MEMBER 수행).
+- 항목 정의: [ADMIN,MANAGER] / 수행(env-logs POST): [MEMBER,MANAGER] (점장도 정비 수행. ADMIN·MASTER 제외).
 - 수행 → ENV 점수 적립, 취소(DELETE) → 연결 점수 회수.
 """
+
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
-from app.core.periods import period_range
+from app.core.periods import KST, period_range
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
 from app.models.staff.branch import Branch
@@ -51,10 +53,10 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     ("족자", 5, False),
     ("게시물", 3, False),
     ("스토리", 3, False),
-    ("클레임 해결", 10, False),
+    ("클레임해결", 10, False),
     ("전단지", 10, False),
     ("화장실청소", 5, False),
-    ("tm회원관리", 1, False),
+    ("TM회원관리", 1, False),
     ("기타", 1, True),  # 1~10 범위 → 지점별 조정 가능
 ]
 
@@ -131,7 +133,8 @@ async def update_env_item(
 @router.post("/env-logs", response_model=EnvTaskLogOut, status_code=201)
 async def create_env_log(
     payload: EnvLogCreate,
-    current: Employee = Depends(require_role(Role.MEMBER)),
+    # 점장(MANAGER)도 정비를 수행함 → 허용. ADMIN·MASTER 는 운영 전담이라 제외(세션 싸인과 동일).
+    current: Employee = Depends(require_role(Role.MEMBER, Role.MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> EnvTaskLog:
     item = await db.get(EnvItem, payload.env_item_id)
@@ -168,6 +171,8 @@ async def list_env_logs(
     scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
     employee_id: str | None = Query(None, alias="employeeId"),
+    date: str | None = Query(None),      # "YYYY-MM-DD" — 하루치(KST). 앱 '오늘' 필터
+    period: str | None = Query(None),    # "YYYY-MM" — 월치(세션 싸인과 동일)
 ) -> list[EnvTaskLog]:
     stmt = select(EnvTaskLog)
     if scope:
@@ -176,6 +181,16 @@ async def list_env_logs(
         stmt = stmt.where(EnvTaskLog.branch_id == branch_id)
     if employee_id:
         stmt = stmt.where(EnvTaskLog.employee_id == employee_id)
+    if date:
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, detail={"code": "INVALID_DATE", "message": "date 형식은 YYYY-MM-DD 입니다"})
+        day_start = datetime(d.year, d.month, d.day, tzinfo=KST)  # KST 하루 → created_at(UTC) 비교
+        stmt = stmt.where(EnvTaskLog.created_at >= day_start, EnvTaskLog.created_at < day_start + timedelta(days=1))
+    if period:
+        start, end = period_range(period)
+        stmt = stmt.where(EnvTaskLog.created_at >= start, EnvTaskLog.created_at < end)
     result = await db.execute(stmt.order_by(EnvTaskLog.created_at.desc()))
     return list(result.scalars().all())
 
