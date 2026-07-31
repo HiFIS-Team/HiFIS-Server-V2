@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from app.enums import RegistrationType
 from app.schemas.base import CamelModel, SignedUrl
 from app.schemas.members.registration import RegistrationOut
 
@@ -20,6 +21,10 @@ class SessionSignOut(CamelModel):
     session_no: int
     signature_url: SignedUrl
     signed_at: datetime
+    # 앱 기록 표시용 조인값(목록·생성 응답에서 서버가 채움) — "박서연 [신규] 12/20회차"
+    member_name: str | None = None
+    total_sessions: int | None = None
+    registration_type: RegistrationType | None = None
 
 
 class SessionSignResult(CamelModel):

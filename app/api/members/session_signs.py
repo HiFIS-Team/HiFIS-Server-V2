@@ -14,6 +14,7 @@ from app.core.storage import save_signature
 from app.enums import RegistrationStatus, Role, ScoreCategory
 from app.db.session import get_db
 from app.models.staff.employee import Employee
+from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
 from app.schemas.members.registration import RegistrationOut
@@ -25,10 +26,22 @@ CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
 router = APIRouter(prefix="/session-signs", tags=["session-signs"])
 
 
+def _sign_out(
+    sign: SessionSign, member_name: str | None, total_sessions: int | None, reg_type
+) -> SessionSignOut:
+    """SessionSignOut + 앱 기록 표시용 조인값(회원명·총 회차·신규/재등록)."""
+    out = SessionSignOut.model_validate(sign)
+    out.member_name = member_name
+    out.total_sessions = total_sessions
+    out.registration_type = reg_type
+    return out
+
+
 @router.post("", response_model=SessionSignResult, status_code=201)
 async def create_session_sign(
     payload: SessionSignCreate,
-    current: Employee = Depends(require_role(Role.MEMBER)),
+    # 점장(MANAGER)도 트레이너로 수업함 → 싸인 허용. ADMIN·MASTER 는 운영 전담이라 제외.
+    current: Employee = Depends(require_role(Role.MEMBER, Role.MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> SessionSignResult:
     registration = await db.get(Registration, payload.registration_id)
@@ -71,8 +84,9 @@ async def create_session_sign(
     await db.commit()
     await db.refresh(sign)
     await db.refresh(registration)
+    member = await db.get(Member, registration.member_id)
     return SessionSignResult(
-        sign=SessionSignOut.model_validate(sign),
+        sign=_sign_out(sign, member.name if member else None, registration.total_sessions, registration.type),
         registration=RegistrationOut.model_validate(registration),
     )
 
@@ -84,8 +98,13 @@ async def list_session_signs(
     trainer_id: str | None = Query(None, alias="trainerId"),
     member_id: str | None = Query(None, alias="memberId"),
     period: str | None = Query(None),
-) -> list[SessionSign]:
-    stmt = select(SessionSign)
+) -> list[SessionSignOut]:
+    # 회원명·총 회차·신규/재등록을 함께 조인 → 앱이 별도 요청 없이 기록 한 줄을 그린다.
+    stmt = (
+        select(SessionSign, Member.name, Registration.total_sessions, Registration.type)
+        .join(Member, Member.id == SessionSign.member_id)
+        .join(Registration, Registration.id == SessionSign.registration_id)
+    )
     if scope:
         stmt = stmt.join(Employee, Employee.id == SessionSign.performed_by_trainer_id).where(
             Employee.branch_id == scope
@@ -97,5 +116,5 @@ async def list_session_signs(
     if period:
         start, end = period_range(period)
         stmt = stmt.where(SessionSign.signed_at >= start, SessionSign.signed_at < end)
-    result = await db.execute(stmt.order_by(SessionSign.signed_at.desc()))
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt.order_by(SessionSign.signed_at.desc()))).all()
+    return [_sign_out(sign, name, total, rtype) for sign, name, total, rtype in rows]

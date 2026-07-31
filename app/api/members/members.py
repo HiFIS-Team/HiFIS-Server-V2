@@ -4,18 +4,20 @@
 목록은 지점 스코프(§0): MEMBER=본인 지점 / MANAGER·ADMIN=전체.
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
-from app.enums import Role
+from app.enums import RegistrationStatus, Role
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
-from app.schemas.members.member import MemberCreate, MemberOut, MemberUpdate
+from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut, MemberUpdate
 from app.schemas.members.registration import RegistrationOut
 
 router = APIRouter(prefix="/members", tags=["members"], dependencies=[Depends(get_current_user)])
@@ -57,9 +59,28 @@ async def list_members(
     return list(result.scalars().all())
 
 
-@router.post("", response_model=MemberOut, status_code=201)
-async def create_member(payload: MemberCreate, db: AsyncSession = Depends(get_db)) -> Member:
+@router.post("", response_model=MemberCreateOut, status_code=201)
+async def create_member(
+    payload: MemberCreate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MemberCreateOut:
     await _validate_refs(db, payload.branch_id, payload.owner_trainer_id, payload.referrer_member_id)
+
+    # 첫 등록권 동봉 시 — 회원 생성 전에 트레이너·권한부터 검증(실패해도 회원이 남지 않게)
+    reg_in = payload.registration
+    reg_trainer: Employee | None = None
+    if reg_in is not None:
+        trainer_id = reg_in.trainer_id or payload.owner_trainer_id
+        reg_trainer = await db.get(Employee, trainer_id)
+        if reg_trainer is None:
+            raise HTTPException(400, detail={"code": "TRAINER_NOT_FOUND", "message": "트레이너가 존재하지 않습니다"})
+        # 급여 조작 방지 — /registrations 와 동일 규칙(MEMBER=본인 담당만·크로스브랜치 차단)
+        if current.role == Role.MEMBER and trainer_id != current.id:
+            raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 담당 등록만 생성할 수 있습니다"})
+        if current.role not in (Role.MASTER, Role.ADMIN) and reg_trainer.branch_id != current.branch_id:
+            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 등록은 생성할 수 없습니다"})
+
     member = Member(
         name=payload.name,
         phone=payload.phone,
@@ -69,9 +90,30 @@ async def create_member(payload: MemberCreate, db: AsyncSession = Depends(get_db
         memo=payload.memo,
     )
     db.add(member)
+    await db.flush()  # member.id 확보
+
+    registration: Registration | None = None
+    if reg_in is not None:
+        registration = Registration(
+            member_id=member.id,
+            trainer_id=reg_trainer.id,
+            type=reg_in.type,
+            total_sessions=reg_in.total_sessions,
+            used_sessions=0,
+            price_paid=reg_in.price_paid,
+            session_unit_price=reg_in.session_unit_price,
+            status=RegistrationStatus.ACTIVE,
+            purchased_at=reg_in.purchased_at or datetime.now(timezone.utc),
+        )
+        db.add(registration)
+
     await db.commit()
     await db.refresh(member)
-    return member
+    out = MemberCreateOut.model_validate(member)
+    if registration is not None:
+        await db.refresh(registration)
+        out.registration = RegistrationOut.model_validate(registration)
+    return out
 
 
 @router.get("/{member_id}", response_model=MemberOut)
