@@ -83,7 +83,7 @@ async def scan_attendance(
         )
         if target is None:
             raise HTTPException(404, detail={"code": "EMP_NO_NOT_FOUND", "message": "등록되지 않은 사번입니다"})
-        if current.role != Role.ADMIN and target.branch_id != current.branch_id:
+        if current.role not in (Role.MASTER, Role.ADMIN) and target.branch_id != current.branch_id:
             raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 스캔할 수 없습니다"})
     else:
         target = current
@@ -215,12 +215,12 @@ async def _decide_leave(
     return leave
 
 
-@router.post("/leaves/{request_id}/approve", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.post("/leaves/{request_id}/approve", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
 async def approve_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> LeaveRequest:
     return await _decide_leave(request_id, LeaveStatus.APPROVED, db)
 
 
-@router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
 async def reject_leave(
     request_id: str, payload: LeaveReject, db: AsyncSession = Depends(get_db)
 ) -> LeaveRequest:

@@ -4,7 +4,8 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
-    ADMIN = "ADMIN"
+    MASTER = "MASTER"    # 대표 — 승인·반려 등 최종 결정권 전부
+    ADMIN = "ADMIN"      # 관리자 — 전 지점 조회(마스터와 같은 화면)이나 승인·반려는 불가(보기만)
     MANAGER = "MANAGER"
     MEMBER = "MEMBER"
 
@@ -14,17 +15,30 @@ class Rank(StrEnum):
     FC = "FC"                        # FC 정규 (권한 MEMBER)
     TEAM_LEAD = "TEAM_LEAD"          # 팀장 (권한 MANAGER)
     STORE_MANAGER = "STORE_MANAGER"  # 점장 (권한 MANAGER)
-    DEVELOPER = "DEVELOPER"          # 개발자 (권한 ADMIN)
-    CEO = "CEO"                      # 대표 (권한 ADMIN)
+    DEVELOPER = "DEVELOPER"          # 개발자 (권한 MASTER)
+    CEO = "CEO"                      # 대표 (권한 MASTER)
 
 
 def role_for_rank(rank: "Rank") -> "Role":
-    """직급 → 권한 매핑. FC·트레이너=MEMBER / 팀장·점장=MANAGER / 개발자·대표=ADMIN."""
+    """직급 → 권한 매핑. FC·트레이너=MEMBER / 팀장·점장=MANAGER / 개발자·대표=MASTER.
+
+    ※ ADMIN(전 지점 조회 전용 참관 권한)은 어느 직급에도 자동 매핑되지 않는다 —
+      대표(MASTER)가 직원 수정에서 수동 지정한다.
+    """
     if rank in (Rank.DEVELOPER, Rank.CEO):
-        return Role.ADMIN
+        return Role.MASTER
     if rank in (Rank.TEAM_LEAD, Rank.STORE_MANAGER):
         return Role.MANAGER
     return Role.MEMBER
+
+
+# 권한 위계 — 승인·감사·수정 가드에서 "이 권한 이상인가" 판단에 사용.
+_ROLE_ORDER: dict[Role, int] = {Role.MEMBER: 0, Role.MANAGER: 1, Role.ADMIN: 2, Role.MASTER: 3}
+
+
+def role_at_least(role: "Role", floor: "Role") -> bool:
+    """권한 위계 비교 — role 이 floor 이상인지. MASTER > ADMIN > MANAGER > MEMBER."""
+    return _ROLE_ORDER[role] >= _ROLE_ORDER[floor]
 
 
 class PayslipStatus(StrEnum):

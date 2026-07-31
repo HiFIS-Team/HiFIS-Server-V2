@@ -101,7 +101,7 @@ async def update_member(
     if (
         "owner_trainer_id" in data
         and data["owner_trainer_id"] != member.owner_trainer_id
-        and current.role not in (Role.ADMIN, Role.MANAGER)
+        and current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER)
     ):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당 트레이너 변경은 관리자/매니저만 가능합니다"})
     await _validate_refs(db, None, data.get("owner_trainer_id"), data.get("referrer_member_id"))

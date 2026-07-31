@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role
 from app.db.session import get_db
-from app.enums import Role
+from app.enums import Role, role_at_least
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.auth.invite import InviteKey
@@ -32,8 +32,9 @@ async def create_invite_key(
 ) -> InviteKey:
     if await db.get(Branch, payload.branch_id) is None:
         raise HTTPException(400, detail={"code": "BRANCH_NOT_FOUND", "message": "지점이 존재하지 않습니다"})
-    if payload.role == Role.ADMIN and current.role != Role.ADMIN:  # 권한 상승 차단
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "ADMIN 초대키는 관리자만 발급할 수 있습니다"})
+    # 권한 상승 차단 — 본인보다 높은 권한의 초대키는 발급 불가 (MANAGER→ADMIN·ADMIN→MASTER 등)
+    if not role_at_least(current.role, payload.role):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인보다 높은 권한의 초대키는 발급할 수 없습니다"})
     code = payload.code or f"HIFIS-{uuid.uuid4().hex[:8].upper()}"
     if (await db.execute(select(InviteKey).where(InviteKey.code == code))).scalar_one_or_none():
         raise HTTPException(409, detail={"code": "CODE_TAKEN", "message": "이미 사용 중인 초대 코드입니다"})

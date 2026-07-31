@@ -167,11 +167,11 @@ async def create_project_request(
     db.add(req)
     await db.commit()
     await db.refresh(req)
-    # 어드민에게 알림 (best-effort)
+    # 승인권자(MASTER)에게 알림 (best-effort) — 승인·반려는 MASTER 전용
     label = "누락 사유" if payload.type == ProjectRequestType.OVERDUE else "기한 연장"
-    admins = (await db.execute(select(Employee).where(Employee.role == Role.ADMIN))).scalars().all()
-    for admin in admins:
-        await notify(db, employee_id=admin.id, **ntext.project_request(label, project.title, current.name))
+    approvers = (await db.execute(select(Employee).where(Employee.role == Role.MASTER))).scalars().all()
+    for approver in approvers:
+        await notify(db, employee_id=approver.id, **ntext.project_request(label, project.title, current.name))
     await db.commit()
     return _req_out(req)
 
@@ -211,7 +211,7 @@ async def _decide_request(
     return _req_out(req)
 
 
-@router.post("/requests/{request_id}/approve", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.ADMIN))])
+@router.post("/requests/{request_id}/approve", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def approve_project_request(
     request_id: str,
     current: Employee = Depends(get_current_user),
@@ -220,7 +220,7 @@ async def approve_project_request(
     return await _decide_request(request_id, ProjectRequestStatus.APPROVED, db, current)
 
 
-@router.post("/requests/{request_id}/reject", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.ADMIN))])
+@router.post("/requests/{request_id}/reject", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def reject_project_request(
     request_id: str,
     payload: ProjectRequestReject,
@@ -326,7 +326,7 @@ async def update_project(
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
     # ADMIN/MANAGER·작성자 = 전체 수정 / 담당자 = 진행률만 / 그 외 = 금지
-    is_manager = current.role in (Role.ADMIN, Role.MANAGER) or project.created_by_id == current.id
+    is_manager = current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER) or project.created_by_id == current.id
     is_assignee = current.id in (project.assignee_ids or [])
     if not (is_manager or is_assignee):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 수정할 권한이 없습니다"})
@@ -351,7 +351,7 @@ async def delete_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    if current.role not in (Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 삭제할 권한이 없습니다"})
     await db.delete(project)
     await db.commit()

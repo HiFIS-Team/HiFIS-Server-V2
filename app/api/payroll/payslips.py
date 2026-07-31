@@ -125,7 +125,7 @@ async def list_payslips(
     elif box == "decided":
         stmt = stmt.where(Payslip.status.in_([PayslipStatus.APPROVED, PayslipStatus.REJECTED]))
     # MANAGER는 항상 자기 지점만(box 유무와 무관), ADMIN은 전체
-    if current.role != Role.ADMIN and not branch_id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and not branch_id:
         branch_id = current.branch_id
     if branch_id:
         stmt = stmt.join(Employee, Employee.id == Payslip.employee_id).where(
@@ -148,7 +148,7 @@ async def _decide(db: AsyncSession, payslip_id: str, actor: Employee) -> Payslip
     return payslip
 
 
-@router.post("/{payslip_id}/approve", response_model=PayslipOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.post("/{payslip_id}/approve", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
 async def approve_payslip(
     payslip_id: str,
     current: Employee = Depends(get_current_user),
@@ -164,7 +164,7 @@ async def approve_payslip(
     return payslip
 
 
-@router.post("/{payslip_id}/reject", response_model=PayslipOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.post("/{payslip_id}/reject", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
 async def reject_payslip(
     payslip_id: str,
     payload: PayslipReject,

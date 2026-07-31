@@ -24,12 +24,12 @@ def _prev_period(today: date) -> str:
     return f"{y - 1:04d}-12" if m == 1 else f"{y:04d}-{m - 1:02d}"
 
 
-async def _active_ids(db, *, role: Role | None = None) -> list[str]:
+async def _active_ids(db, *, roles: tuple[Role, ...] | None = None) -> list[str]:
     stmt = select(Employee.id).where(
         Employee.status == EmployeeStatus.ACTIVE, Employee.deleted_at.is_(None)
     )
-    if role is not None:
-        stmt = stmt.where(Employee.role == role)
+    if roles:
+        stmt = stmt.where(Employee.role.in_(roles))
     return list(await db.scalars(stmt))
 
 
@@ -64,7 +64,7 @@ async def ranking_change_scan(now: datetime | None = None) -> None:
     now_utc = now or datetime.now(timezone.utc)
     period = now_utc.astimezone(KST).strftime("%Y-%m")
     async with SessionLocal() as db:
-        admin_ids = await _active_ids(db, role=Role.ADMIN)
+        admin_ids = await _active_ids(db, roles=(Role.MASTER, Role.ADMIN))
         for kind in RANKING_KINDS:
             ranking = await compute_ranking(db, kind=kind, period=period)  # 전사 통합
             new_rank = {r["employee_id"]: r["rank"] for r in ranking}

@@ -29,7 +29,7 @@ async def list_join_requests(
     return list(result.scalars().all())
 
 
-@router.post("/{request_id}/approve", response_model=EmployeeOut, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.post("/{request_id}/approve", response_model=EmployeeOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
 async def approve_join_request(
     request_id: str, payload: JoinRequestApprove, db: AsyncSession = Depends(get_db)
 ) -> Employee:
@@ -60,7 +60,7 @@ async def approve_join_request(
     return employee
 
 
-@router.post("/{request_id}/reject", status_code=204, dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.post("/{request_id}/reject", status_code=204, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
 async def reject_join_request(request_id: str, db: AsyncSession = Depends(get_db)) -> None:
     join_request = await db.get(JoinRequest, request_id)
     if join_request is None:

@@ -58,7 +58,7 @@ async def create_registration(
     # 급여 조작 방지: MEMBER 는 본인 담당(trainer=self)만 / 크로스브랜치 등록 차단(ADMIN 제외)
     if current.role == Role.MEMBER and payload.trainer_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 담당 등록만 생성할 수 있습니다"})
-    if current.role != Role.ADMIN and trainer.branch_id != current.branch_id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and trainer.branch_id != current.branch_id:
         raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 등록은 생성할 수 없습니다"})
     registration = Registration(
         member_id=payload.member_id,

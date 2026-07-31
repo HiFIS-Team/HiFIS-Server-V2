@@ -40,7 +40,7 @@ async def _get_or_404(approval_id: str, db: AsyncSession) -> Approval:
 
 def _require_participant(approval: Approval, current: Employee) -> None:
     """결재 당사자(신청자·결재선) 또는 ADMIN 만 열람/댓글 허용."""
-    if current.role == Role.ADMIN:
+    if current.role in (Role.MASTER, Role.ADMIN):
         return
     if current.id == approval.requester_id or current.id in (approval.approver_ids or []):
         return

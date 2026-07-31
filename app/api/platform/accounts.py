@@ -23,7 +23,7 @@ def _not_found() -> HTTPException:
 
 
 def _require_owner_or_admin(account: Account, current: Employee) -> None:
-    if current.role != Role.ADMIN and account.owner_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and account.owner_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "작성자 또는 관리자만 가능합니다"})
 
 

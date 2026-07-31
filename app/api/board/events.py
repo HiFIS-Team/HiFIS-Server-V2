@@ -24,7 +24,7 @@ async def _get_owned(event_id: str, current: Employee, db: AsyncSession) -> Even
     event = await db.get(Event, event_id)
     if event is None:
         raise _not_found()
-    if current.role not in (Role.ADMIN, Role.MANAGER) and event.owner_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and event.owner_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "소유자만 수정할 수 있습니다"})
     return event
 

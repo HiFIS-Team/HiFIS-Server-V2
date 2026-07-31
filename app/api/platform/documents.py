@@ -71,7 +71,7 @@ async def update_folder(
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
-    if current.role != Role.ADMIN and folder.created_by_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and folder.created_by_id != current.id:
         raise _forbidden()
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(folder, key, value)
@@ -89,7 +89,7 @@ async def delete_folder(
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
-    if current.role != Role.ADMIN and folder.created_by_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and folder.created_by_id != current.id:
         raise _forbidden()
     await db.execute(delete(Document).where(Document.folder_id == folder_id))  # 하위 문서 함께
     await db.delete(folder)
@@ -162,7 +162,7 @@ async def update_document(
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
-    if current.role != Role.ADMIN and document.uploader_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and document.uploader_id != current.id:
         raise _forbidden()
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(document, key, value)
@@ -180,7 +180,7 @@ async def delete_document(
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
-    if current.role != Role.ADMIN and document.uploader_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN) and document.uploader_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "업로더 또는 관리자만 삭제할 수 있습니다"})
     path = document.url.lstrip("/")
     if os.path.exists(path):

@@ -59,7 +59,7 @@ async def update_todo(
     todo = await db.get(Todo, todo_id)
     if todo is None:
         raise HTTPException(404, detail={"code": "TODO_NOT_FOUND", "message": "할일을 찾을 수 없습니다"})
-    if current.role not in (Role.ADMIN, Role.MANAGER) and todo.assignee_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and todo.assignee_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 할일만 수정할 수 있습니다"})
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(todo, key, value)

@@ -189,7 +189,7 @@ async def delete_env_log(
     log = await db.get(EnvTaskLog, log_id)
     if log is None:
         raise HTTPException(404, detail={"code": "ENV_LOG_NOT_FOUND", "message": "수행 기록을 찾을 수 없습니다"})
-    if current.role not in (Role.ADMIN, Role.MANAGER) and log.employee_id != current.id:
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and log.employee_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 기록만 취소할 수 있습니다"})
     # 연결된 ENV 점수 회수 (− 취소)
     await db.execute(

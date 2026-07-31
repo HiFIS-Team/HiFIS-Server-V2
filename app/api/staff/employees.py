@@ -16,7 +16,7 @@ from app.core.periods import KST
 from app.core.security import hash_password, verify_password
 from app.core.storage import save_avatar
 from app.db.session import get_db
-from app.enums import EmployeeStatus, Role
+from app.enums import EmployeeStatus, Role, role_at_least
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.staff.employee import (
@@ -155,16 +155,16 @@ async def withdraw_me(
     """본인 탈퇴 — 소프트삭제 + 익명화. 근태·급여 등 기록은 row 유지로 보존."""
     if user.deleted_at is not None:
         raise HTTPException(400, detail={"code": "ALREADY_WITHDRAWN", "message": "이미 탈퇴한 계정입니다"})
-    if user.role == Role.ADMIN:  # 마지막 관리자는 탈퇴 불가
-        other_admins = await db.scalar(
+    if user.role == Role.MASTER:  # 마지막 마스터(대표)는 탈퇴 불가 — 승인권 공백 방지
+        other_masters = await db.scalar(
             select(func.count()).select_from(Employee).where(
-                Employee.role == Role.ADMIN,
+                Employee.role == Role.MASTER,
                 Employee.deleted_at.is_(None),
                 Employee.id != user.id,
             )
         )
-        if not other_admins:
-            raise HTTPException(409, detail={"code": "LAST_ADMIN", "message": "다른 관리자가 있어야 탈퇴할 수 있습니다"})
+        if not other_masters:
+            raise HTTPException(409, detail={"code": "LAST_MASTER", "message": "다른 마스터가 있어야 탈퇴할 수 있습니다"})
 
     old_avatar = user.avatar_url
     user.name = "(탈퇴한 직원)"
@@ -186,7 +186,7 @@ async def get_employee(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Employee:
-    if current.role not in (Role.ADMIN, Role.MANAGER) and current.id != employee_id:
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and current.id != employee_id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
     employee = await db.get(Employee, employee_id)
     if employee is None or employee.deleted_at is not None:
@@ -229,9 +229,13 @@ async def update_employee(
     if employee is None or employee.deleted_at is not None:
         raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
     data = payload.model_dump(exclude_unset=True)
-    # 권한 상승 방지: ADMIN 권한을 주거나 ADMIN 계정을 수정하는 건 ADMIN 만 (MANAGER 셀프승격 차단)
-    if current.role != Role.ADMIN and (data.get("role") == Role.ADMIN or employee.role == Role.ADMIN):
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "ADMIN 권한 변경은 관리자만 가능합니다"})
+    # 권한 상승 방지: 본인보다 높은 권한으로 승격하거나, 본인보다 높은 권한자의 계정을 수정 불가
+    # (MANAGER 셀프승격 · ADMIN 이 MASTER 를 건드리는 것 차단)
+    new_role = data.get("role")
+    if new_role is not None and not role_at_least(current.role, new_role):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인보다 높은 권한으로 변경할 수 없습니다"})
+    if not role_at_least(current.role, employee.role):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인보다 높은 권한자의 계정은 수정할 수 없습니다"})
     if data.get("branch_id"):
         await _get_branch_or_400(db, data["branch_id"])
     for key, value in data.items():
@@ -241,11 +245,29 @@ async def update_employee(
     return employee
 
 
-@router.delete("/{employee_id}", status_code=204, dependencies=[Depends(require_role(Role.ADMIN))])
-async def delete_employee(employee_id: str, db: AsyncSession = Depends(get_db)) -> None:
+@router.delete("/{employee_id}", status_code=204)
+async def delete_employee(
+    employee_id: str,
+    current: Employee = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     employee = await db.get(Employee, employee_id)
     if employee is None or employee.deleted_at is not None:
         raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+    # 권한 상승 방지 — 본인보다 높은 권한자(예: ADMIN 이 MASTER)는 삭제 불가
+    if not role_at_least(current.role, employee.role):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인보다 높은 권한자는 삭제할 수 없습니다"})
+    # 마지막 마스터는 삭제 불가 — 승인권 공백 방지
+    if employee.role == Role.MASTER:
+        other_masters = await db.scalar(
+            select(func.count()).select_from(Employee).where(
+                Employee.role == Role.MASTER,
+                Employee.deleted_at.is_(None),
+                Employee.id != employee.id,
+            )
+        )
+        if not other_masters:
+            raise HTTPException(409, detail={"code": "LAST_MASTER", "message": "마지막 마스터는 삭제할 수 없습니다"})
     employee.deleted_at = datetime.now(timezone.utc)  # 소프트 삭제
     await db.commit()
     return None
