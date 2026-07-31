@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     vapid_private_key: str = ""
     vapid_subject: str = "mailto:admin@hifis.local"
 
+    # 이메일 발송(비밀번호 재설정 인증번호 등, §2.3) — smtp_host 비면 로그 스텁으로 폴백(개발).
+    # 무료 SMTP 계정 하나면 충분(예: Gmail/Naver 587 STARTTLS). 문자(SMS)는 후순위.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""          # 발신 표시 주소(비면 smtp_user 사용)
+    smtp_starttls: bool = True
+
     # 초기 부트스트랩 시드 (app.seed) — 첫 지점·관리자
     seed_branch_name: str = "본사"
     seed_admin_name: str = "관리자"

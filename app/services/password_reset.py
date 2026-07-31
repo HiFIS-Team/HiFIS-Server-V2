@@ -2,10 +2,11 @@
 
 - 프론트 auth_reset.dart 3단계: ①대상 입력(이메일/전화) ②6자리 인증번호 ③새 비번.
 - 인증번호·재설정 토큰은 Redis 에 TTL 로 저장 → 서버 재시작·멀티워커에도 안전.
-- 실제 발송(이메일/SMS)은 send_reset_code 스텁(로그) — 채널 확정되면 그 함수만 채우면 됨.
+- 발송: EMAIL 은 SMTP(설정 시) → 미설정/실패/PHONE 이면 로그 폴백(개발). SMS 는 후순위.
 - 사용자 열거(enumeration) 방지: request 엔드포인트는 대상 유무와 무관하게 항상 성공 응답.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -51,14 +52,44 @@ def generate_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
-async def send_reset_code(method: str, contact: str, code: str) -> None:
-    """인증번호 발송 — 지금은 스텁(로그 출력).
+def _send_email_sync(to: str, subject: str, body: str) -> None:
+    """SMTP 발송(블로킹) — asyncio.to_thread 로 감싸 이벤트 루프 비차단. 저빈도라 충분."""
+    import smtplib
+    from email.message import EmailMessage
 
-    TODO(채널 확정 시): method 가 EMAIL 이면 SMTP, PHONE 이면 SMS provider 로 발송.
-    settings 에 발송 설정을 추가하고 여기만 구현하면 라우터/검증 로직은 그대로 동작한다.
-    실 발송을 붙이면 이 WARNING 로그(코드 평문 노출)는 제거할 것.
+    msg = EmailMessage()
+    msg["From"] = settings.smtp_from or settings.smtp_user
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as s:
+        if settings.smtp_starttls:
+            s.starttls()
+        if settings.smtp_user:
+            s.login(settings.smtp_user, settings.smtp_password)
+        s.send_message(msg)
+
+
+async def send_reset_code(method: str, contact: str, code: str) -> None:
+    """인증번호 발송 — EMAIL 은 SMTP(설정 시), 그 외/미설정/실패는 로그 폴백.
+
+    - smtp_host 가 설정돼 있고 method=EMAIL 이면 실제 이메일 발송.
+    - 미설정(개발)·PHONE(SMS 미구현)·발송 실패 시에는 코드를 WARNING 로그로 남긴다
+      (개발 중 `docker compose logs api | grep password-reset` 로 확인).
     """
-    # 스텁: 개발/테스트에서 코드를 눈으로 확인하도록 WARNING(기본 노출 레벨)로 남긴다.
+    if method == "EMAIL" and settings.smtp_host:
+        try:
+            await asyncio.to_thread(
+                _send_email_sync,
+                contact,
+                "[HiFIS] 비밀번호 재설정 인증번호",
+                f"인증번호는 {code} 입니다. 3분 안에 입력해 주세요.\n\n요청하지 않으셨다면 이 메일을 무시하세요.",
+            )
+            logger.info("[password-reset] 이메일 발송 완료 contact=%s", contact)
+            return
+        except Exception:
+            logger.exception("[password-reset] 이메일 발송 실패 — 로그 폴백")
+    # 폴백: 개발/미설정/실패/PHONE — 코드를 눈으로 확인하도록 WARNING 으로 남긴다.
     logger.warning("[password-reset] 발송 스텁(실제 발송 아님) method=%s contact=%s code=%s", method, contact, code)
 
 
