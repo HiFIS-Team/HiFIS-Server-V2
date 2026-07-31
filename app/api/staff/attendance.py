@@ -4,7 +4,7 @@
 목록은 지점 스코프(MEMBER=본인 지점).
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -13,13 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user, require_role
 from app.core.periods import KST, period_range
 from app.db.session import get_db
-from app.enums import AttendanceSource, LeaveStatus, LeaveType, Role, ScoreCategory
+from app.enums import (
+    AttendanceSource,
+    AttendanceStatus,
+    HalfPeriod,
+    LeaveStatus,
+    LeaveType,
+    Role,
+    ScoreCategory,
+)
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
     AttendanceOut,
     AttendanceScanRequest,
+    LeaveBalanceOut,
     LeaveReject,
     LeaveRequestCreate,
     LeaveRequestOut,
@@ -38,6 +47,33 @@ OFFHOURS_POINTS = 10
 def _hhmm_to_min(s: str) -> int:
     h, m = s.split(":")
     return int(h) * 60 + int(m)
+
+
+def _kst_min(dt: datetime) -> int:
+    k = dt.astimezone(KST)
+    return k.hour * 60 + k.minute
+
+
+def _attendance_status(
+    rec: Attendance, shift_start: str | None, shift_end: str | None, today: date
+) -> AttendanceStatus:
+    """근무시간 대비 판정(§6.9) — 정상/지각/조기퇴근. 근무시간 미설정이면 UNKNOWN.
+
+    결근(근무일인데 기록 없음)은 근무 요일 스케줄이 없어 여기서 판정하지 않는다.
+    """
+    if not shift_start or not shift_end or rec.check_in is None:
+        return AttendanceStatus.UNKNOWN
+    late = _kst_min(rec.check_in) > _hhmm_to_min(shift_start)
+    if rec.check_out is None:
+        return AttendanceStatus.IN_PROGRESS if rec.date >= today else AttendanceStatus.NO_CHECKOUT
+    early = _kst_min(rec.check_out) < _hhmm_to_min(shift_end)
+    if late and early:
+        return AttendanceStatus.LATE_AND_EARLY
+    if late:
+        return AttendanceStatus.LATE
+    if early:
+        return AttendanceStatus.EARLY_LEAVE
+    return AttendanceStatus.NORMAL
 
 
 async def _award_offhours(
@@ -71,7 +107,7 @@ async def scan_attendance(
     payload: AttendanceScanRequest | None = Body(default=None),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Attendance:
+) -> AttendanceOut:
     # 사번(emp_no) 스캔이면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
     if payload is not None and payload.code:
         normalized = payload.code.strip().replace("-", "")  # 하이픈 유무 모두 허용
@@ -121,7 +157,9 @@ async def scan_attendance(
     await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
     await db.commit()
     await db.refresh(record)
-    return record
+    out = AttendanceOut.model_validate(record)
+    out.status = _attendance_status(record, target.shift_start, target.shift_end, now_kst.date())
+    return out
 
 
 @router.get("/attendance", response_model=list[AttendanceOut])
@@ -130,7 +168,7 @@ async def list_attendance(
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     month: str | None = Query(None),
-) -> list[Attendance]:
+) -> list[AttendanceOut]:
     stmt = select(Attendance)
     if scope:
         stmt = stmt.join(Employee, Employee.id == Attendance.employee_id).where(
@@ -141,8 +179,27 @@ async def list_attendance(
     if month:
         start, end = period_range(month)
         stmt = stmt.where(Attendance.date >= start.date(), Attendance.date < end.date())
-    result = await db.execute(stmt.order_by(Attendance.date.desc()))
-    return list(result.scalars().all())
+    rows = list((await db.execute(stmt.order_by(Attendance.date.desc()))).scalars().all())
+    # 직원별 근무시간 로드 → 판정(정상/지각/조기퇴근)
+    emp_ids = {r.employee_id for r in rows}
+    shifts: dict[str, tuple[str | None, str | None]] = {}
+    if emp_ids:
+        for eid, ss, se in (
+            await db.execute(
+                select(Employee.id, Employee.shift_start, Employee.shift_end).where(
+                    Employee.id.in_(emp_ids)
+                )
+            )
+        ).all():
+            shifts[eid] = (ss, se)
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    out: list[AttendanceOut] = []
+    for r in rows:
+        ss, se = shifts.get(r.employee_id, (None, None))
+        o = AttendanceOut.model_validate(r)
+        o.status = _attendance_status(r, ss, se, today)
+        out.append(o)
+    return out
 
 
 # ---------- 휴가 ----------
@@ -150,6 +207,35 @@ def _compute_days(leave_type: LeaveType, start, end) -> float:
     if leave_type == LeaveType.HALF:
         return 0.5
     return float((end - start).days + 1)
+
+
+def annual_leave_granted(joined: date, as_of: date) -> float:
+    """근로기준법 제60조 연차 부여(입사일 기준).
+
+    - 계속근로 1년 미만: 1개월 개근 1일씩(최대 11) — 개근은 경과 개월수로 단순화.
+    - 1년 이상: 15일 + (근속연수-1)//2 가산(3년차부터 2년마다 1일), 최대 25일.
+    """
+    months = (as_of.year - joined.year) * 12 + (as_of.month - joined.month)
+    if as_of.day < joined.day:
+        months -= 1
+    months = max(months, 0)
+    years = months // 12
+    if years < 1:
+        return float(min(months, 11))
+    return float(min(15 + (years - 1) // 2, 25))
+
+
+def _leave_year_start(joined: date, as_of: date) -> date:
+    """이번 연차연도 시작 = as_of 이전의 가장 최근 입사기념일."""
+
+    def anniv(year: int) -> date:
+        try:
+            return joined.replace(year=year)
+        except ValueError:  # 2/29 입사
+            return joined.replace(year=year, month=2, day=28)
+
+    a = anniv(as_of.year)
+    return a if a <= as_of else anniv(as_of.year - 1)
 
 
 @router.get("/leaves", response_model=list[LeaveRequestOut])
@@ -172,6 +258,40 @@ async def list_leaves(
     return list(result.scalars().all())
 
 
+@router.get("/leaves/balance", response_model=LeaveBalanceOut)
+async def leave_balance(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    employee_id: str | None = Query(None, alias="employeeId"),
+) -> LeaveBalanceOut:
+    """연차 부여/사용/잔여 — 입사일 기준 근로기준법 산정. 기본 본인, employeeId 지정은 매니저↑."""
+    target = current
+    if employee_id and employee_id != current.id:
+        if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+            raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
+        target = await db.get(Employee, employee_id)
+        if target is None or target.deleted_at is not None:
+            raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+        if current.role == Role.MANAGER and target.branch_id != current.branch_id:
+            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
+
+    as_of = datetime.now(timezone.utc).astimezone(KST).date()
+    joined = target.joined_at.astimezone(KST).date()
+    granted = annual_leave_granted(joined, as_of)
+    year_start = _leave_year_start(joined, as_of)
+    # 사용=승인+대기(신청중) 연차/반차 — 이번 연차연도. 병가·외근·기타는 연차 차감 아님.
+    used_raw = await db.scalar(
+        select(func.coalesce(func.sum(LeaveRequest.days), 0.0)).where(
+            LeaveRequest.employee_id == target.id,
+            LeaveRequest.type.in_([LeaveType.ANNUAL, LeaveType.HALF]),
+            LeaveRequest.status.in_([LeaveStatus.APPROVED, LeaveStatus.PENDING]),
+            LeaveRequest.start_date >= year_start,
+        )
+    )
+    used = float(used_raw or 0.0)
+    return LeaveBalanceOut(granted=granted, used=used, remaining=granted - used)
+
+
 @router.post("/leaves", response_model=LeaveRequestOut, status_code=201)
 async def create_leave(
     payload: LeaveRequestCreate,
@@ -180,9 +300,16 @@ async def create_leave(
 ) -> LeaveRequest:
     if payload.end_date < payload.start_date:
         raise HTTPException(400, detail={"code": "INVALID_RANGE", "message": "종료일이 시작일보다 빠릅니다"})
+    # 반차면 오전/오후 필수, 그 외 타입은 시간대 무시(null)
+    half_period = None
+    if payload.type == LeaveType.HALF:
+        if payload.half_period is None:
+            raise HTTPException(400, detail={"code": "HALF_PERIOD_REQUIRED", "message": "반차는 오전/오후를 선택해야 합니다"})
+        half_period = payload.half_period
     leave = LeaveRequest(
         employee_id=current.id,
         type=payload.type,
+        half_period=half_period,
         start_date=payload.start_date,
         end_date=payload.end_date,
         days=_compute_days(payload.type, payload.start_date, payload.end_date),

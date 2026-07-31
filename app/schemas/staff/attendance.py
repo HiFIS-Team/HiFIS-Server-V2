@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from pydantic import AliasChoices, Field
 
-from app.enums import AttendanceSource, LeaveStatus, LeaveType
+from app.enums import AttendanceSource, AttendanceStatus, HalfPeriod, LeaveStatus, LeaveType
 from app.schemas.base import CamelModel
 
 
@@ -22,13 +22,21 @@ class AttendanceOut(CamelModel):
     check_out: datetime | None = None
     work_minutes: int | None = None
     source: AttendanceSource
+    status: AttendanceStatus | None = None  # 서버 판정(정상/지각/조기퇴근 등) — 근무시간 대비
 
 
 class LeaveRequestCreate(CamelModel):
     type: LeaveType
+    half_period: HalfPeriod | None = None  # type=HALF 면 필수(오전/오후)
     start_date: date
     end_date: date
     reason: str | None = None
+
+
+class LeaveBalanceOut(CamelModel):
+    granted: float    # 부여 일수(입사일 기준 근로기준법 산정)
+    used: float       # 사용(승인)+신청중(대기) 확정 일수 — 이번 연차연도
+    remaining: float  # 잔여 = granted - used
 
 
 class LeaveReject(CamelModel):
@@ -40,6 +48,7 @@ class LeaveRequestOut(CamelModel):
     id: str
     employee_id: str
     type: LeaveType
+    half_period: HalfPeriod | None = None
     start_date: date
     end_date: date
     days: float

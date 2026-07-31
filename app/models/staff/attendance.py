@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
-from app.enums import AttendanceSource, LeaveStatus, LeaveType
+from app.enums import AttendanceSource, HalfPeriod, LeaveStatus, LeaveType
 
 
 class Attendance(UUIDMixin, TimestampMixin, Base):
@@ -45,6 +45,10 @@ class LeaveRequest(UUIDMixin, TimestampMixin, Base):
     )
     type: Mapped[LeaveType] = mapped_column(
         SAEnum(LeaveType, native_enum=False, length=20), nullable=False
+    )
+    # 반차 시간대 — type=HALF 일 때만 채워짐(오전/오후). 그 외엔 null.
+    half_period: Mapped[HalfPeriod | None] = mapped_column(
+        SAEnum(HalfPeriod, native_enum=False, length=10), nullable=True
     )
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)

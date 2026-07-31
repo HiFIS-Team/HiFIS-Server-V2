@@ -114,12 +114,31 @@ class AttendanceSource(StrEnum):
     MANUAL = "MANUAL"
 
 
+class AttendanceStatus(StrEnum):
+    """근태 기록 판정 (서버 계산, §6.9) — 기록이 있는 날만. 결근/월차/휴무는 근무일·휴가로 별도 판단."""
+
+    NORMAL = "NORMAL"                  # 정상
+    LATE = "LATE"                      # 지각
+    EARLY_LEAVE = "EARLY_LEAVE"        # 조기퇴근
+    LATE_AND_EARLY = "LATE_AND_EARLY"  # 지각 + 조기퇴근
+    IN_PROGRESS = "IN_PROGRESS"        # 출근했고 아직 퇴근 전(당일)
+    NO_CHECKOUT = "NO_CHECKOUT"        # 지난 날인데 퇴근 기록 없음
+    UNKNOWN = "UNKNOWN"                # 근무시간 미설정 등 판정 불가
+
+
 class LeaveType(StrEnum):
     ANNUAL = "ANNUAL"  # 연차
     HALF = "HALF"      # 반차
     SICK = "SICK"      # 병가
     FIELD = "FIELD"    # 외근
     ETC = "ETC"
+
+
+class HalfPeriod(StrEnum):
+    """반차 시간대 — type=HALF 일 때만 의미 있음 (오전/오후)."""
+
+    AM = "AM"  # 오전 반차
+    PM = "PM"  # 오후 반차
 
 
 class LeaveStatus(StrEnum):
