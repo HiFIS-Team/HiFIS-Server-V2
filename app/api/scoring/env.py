@@ -140,11 +140,13 @@ async def create_env_log(
     item = await db.get(EnvItem, payload.env_item_id)
     if item is None:
         raise HTTPException(400, detail={"code": "ENV_ITEM_NOT_FOUND", "message": "환경정비 항목이 존재하지 않습니다"})
+    # 기타 등 write-in: 적은 내용을 라벨에 접어 "기타(창고정리)" 로 스냅샷(점수 원장·랭킹 사유도 동일). item_name String(100) 보호.
+    label = f"{item.name}({payload.note})"[:100] if payload.note else item.name
     log = EnvTaskLog(
         employee_id=current.id,
         branch_id=item.branch_id,
         env_item_id=item.id,
-        item_name=item.name,
+        item_name=label,
         points=item.points,
         note=payload.note,
     )
@@ -158,7 +160,7 @@ async def create_env_log(
         points=item.points,
         created_by_id=current.id,
         source_ref_id=log.id,
-        reason=item.name,
+        reason=label,
     )
     await db.commit()
     await db.refresh(log)

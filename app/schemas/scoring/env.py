@@ -30,7 +30,7 @@ class EnvItemOut(CamelModel):
 
 class EnvLogCreate(CamelModel):
     env_item_id: str
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=80)  # 기타 등 write-in 텍스트 → 라벨 "기타(내용)"
 
 
 class EnvTaskLogOut(CamelModel):
