@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
 from app.models.staff.employee import Employee
@@ -108,7 +108,7 @@ async def create_peer_review(
     return _to_out(review)
 
 
-@router.get("/aggregate", response_model=list[PeerAggregateItem], dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+@router.get("/aggregate", response_model=list[PeerAggregateItem], dependencies=[Depends(require_role(Role.ADMIN))])
 async def aggregate_peer_reviews(
     db: AsyncSession = Depends(get_db), period: str | None = Query(None)
 ) -> list[PeerAggregateItem]:
@@ -140,18 +140,14 @@ async def aggregate_peer_reviews(
 async def list_peer_reviews(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
     reviewee_id: str | None = Query(None, alias="revieweeId"),
     period: str | None = Query(None),
 ) -> list[PeerReviewOut]:
     stmt = select(PeerReview)
-    # 멤버는 본인이 작성한 평가만(익명성 보호) — 남의 평가·리뷰어 노출 차단. MANAGER·ADMIN 은 전체.
-    if current.role == Role.MEMBER:
+    # 익명성 보호 — MEMBER·MANAGER 는 본인이 작성한 평가만(남의 평가·리뷰어 노출 차단).
+    # 제출 현황(남이 쓴 평가)은 면담 자료라 ADMIN·MASTER 만 전체 열람. 점장(MANAGER)도 못 봄.
+    if current.role in (Role.MEMBER, Role.MANAGER):
         stmt = stmt.where(PeerReview.reviewer_id == current.id)
-    elif scope:
-        stmt = stmt.join(Employee, Employee.id == PeerReview.reviewee_id).where(
-            Employee.branch_id == scope
-        )
     if reviewee_id:
         stmt = stmt.where(PeerReview.reviewee_id == reviewee_id)
     if period:
