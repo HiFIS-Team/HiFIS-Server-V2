@@ -51,9 +51,11 @@ class Payslip(UUIDMixin, TimestampMixin, Base):
         default=PayslipStatus.DRAFT,
         server_default="DRAFT",
     )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)  # 신청 특이사항(지각 사유·추가 근무 등) — 대표가 결재 시 참고
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decided_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=True
     )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # 실지급 처리 시각

@@ -98,9 +98,10 @@ async def submit_my_payslip(
         payslip = Payslip(employee_id=current.id, year_month=payload.year_month, **data)
         db.add(payslip)
         await db.flush()
-    if payslip.status in (PayslipStatus.SUBMITTED, PayslipStatus.APPROVED):
+    if payslip.status in (PayslipStatus.SUBMITTED, PayslipStatus.APPROVED, PayslipStatus.PAID):
         raise HTTPException(400, detail={"code": "ALREADY_SUBMITTED", "message": "이미 제출된 명세서예요"})
     payslip.status = PayslipStatus.SUBMITTED
+    payslip.note = payload.note  # 특이사항(재제출 시 갱신)
     payslip.submitted_at = datetime.now(timezone.utc)
     payslip.reject_reason = None
     payslip.decided_at = None
@@ -108,6 +109,48 @@ async def submit_my_payslip(
     await db.commit()
     await db.refresh(payslip)
     return payslip
+
+
+@router.post("/me/cancel", response_model=PayslipOut)
+async def cancel_my_payslip(
+    year_month: str = Query(..., alias="yearMonth"),
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Payslip:
+    """본인 급여 신청 취소(제출 철회) — SUBMITTED → DRAFT. 승인·지급된 뒤에는 불가."""
+    payslip = (
+        await db.execute(
+            select(Payslip).where(
+                Payslip.employee_id == current.id, Payslip.year_month == year_month
+            )
+        )
+    ).scalar_one_or_none()
+    if payslip is None:
+        raise HTTPException(404, detail={"code": "PAYSLIP_NOT_FOUND", "message": "해당 월 명세서가 없습니다"})
+    if payslip.status != PayslipStatus.SUBMITTED:
+        raise HTTPException(400, detail={"code": "NOT_SUBMITTED", "message": "제출 대기 중인 신청만 취소할 수 있어요"})
+    payslip.status = PayslipStatus.DRAFT
+    payslip.submitted_at = None  # note 는 유지(재신청 시 재사용)
+    await db.commit()
+    await db.refresh(payslip)
+    return payslip
+
+
+@router.get("/me/list", response_model=list[PayslipOut])
+async def my_payslip_list(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None, alias="to"),
+) -> list[Payslip]:
+    """본인 명세서 목록(히스토리·추이) — yearMonth "YYYY-MM" 범위(포함). 범위 생략 시 전체, 최신순."""
+    stmt = select(Payslip).where(Payslip.employee_id == current.id)
+    if from_:
+        stmt = stmt.where(Payslip.year_month >= from_)  # "YYYY-MM" 문자열 정렬 = 월 정렬
+    if to:
+        stmt = stmt.where(Payslip.year_month <= to)
+    result = await db.execute(stmt.order_by(Payslip.year_month.desc()))
+    return list(result.scalars().all())
 
 
 @router.get("", response_model=list[PayslipOut], dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
@@ -123,7 +166,9 @@ async def list_payslips(
     if box == "inbox":
         stmt = stmt.where(Payslip.status == PayslipStatus.SUBMITTED)
     elif box == "decided":
-        stmt = stmt.where(Payslip.status.in_([PayslipStatus.APPROVED, PayslipStatus.REJECTED]))
+        stmt = stmt.where(
+            Payslip.status.in_([PayslipStatus.APPROVED, PayslipStatus.PAID, PayslipStatus.REJECTED])
+        )
     # MANAGER는 항상 자기 지점만(box 유무와 무관), ADMIN은 전체
     if current.role not in (Role.MASTER, Role.ADMIN) and not branch_id:
         branch_id = current.branch_id
@@ -177,6 +222,26 @@ async def reject_payslip(
     payslip.decided_at = datetime.now(timezone.utc)
     payslip.decided_by_id = current.id
     await notify(db, employee_id=payslip.employee_id, **ntext.payslip_rejected(payload.reason))
+    await db.commit()
+    await db.refresh(payslip)
+    return payslip
+
+
+@router.post("/{payslip_id}/pay", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+async def pay_payslip(
+    payslip_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Payslip:
+    """지급 처리 — 승인된 명세서를 실입금 확인 후 PAID 로. APPROVED 만 대상."""
+    payslip = await db.get(Payslip, payslip_id)
+    if payslip is None:
+        raise HTTPException(404, detail={"code": "PAYSLIP_NOT_FOUND", "message": "명세서를 찾을 수 없습니다"})
+    if payslip.status != PayslipStatus.APPROVED:
+        raise HTTPException(400, detail={"code": "NOT_APPROVED", "message": "승인된 명세서만 지급 처리할 수 있어요"})
+    payslip.status = PayslipStatus.PAID
+    payslip.paid_at = datetime.now(timezone.utc)
+    await notify(db, employee_id=payslip.employee_id, **ntext.payslip_paid(payslip.year_month))
     await db.commit()
     await db.refresh(payslip)
     return payslip

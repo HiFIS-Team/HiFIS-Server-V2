@@ -13,6 +13,7 @@ class PayslipGenerateRequest(CamelModel):
 
 class PayslipSubmit(CamelModel):
     year_month: str
+    note: str | None = None  # 특이사항(선택) — 지각 사유·추가 근무 설명 등
 
 
 class PayslipReject(CamelModel):
@@ -59,7 +60,9 @@ class PayslipOut(CamelModel):
     basis: PayslipBasis
     # 제출·결재
     status: PayslipStatus
+    note: str | None = None
     reject_reason: str | None = None
     submitted_at: datetime | None = None
     decided_at: datetime | None = None
     decided_by_id: str | None = None
+    paid_at: datetime | None = None

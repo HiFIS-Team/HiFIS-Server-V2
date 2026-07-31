@@ -118,6 +118,10 @@ def payslip_rejected(reason: str | None) -> dict:
     return {"type": "PAYROLL", "title": "급여 신청이 반려되었어요", "body": reason, "link": "/payroll"}
 
 
+def payslip_paid(year_month: str) -> dict:
+    return {"type": "PAYROLL", "title": "급여가 지급되었어요", "body": f"{year_month} 급여가 지급 완료됐어요.", "link": "/payroll"}
+
+
 def payday_today(year_month: str) -> dict:
     return {"type": "PAYROLL", "title": "오늘 급여를 신청하세요", "body": f"{year_month} 급여 지급일이에요. 명세서를 확인하고 신청해주세요.", "link": "/payroll"}
 
