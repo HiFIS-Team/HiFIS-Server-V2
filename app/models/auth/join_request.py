@@ -15,6 +15,7 @@ class JoinRequest(UUIDMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 가입 시 입력 → 승인 시 Employee 로 승계
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[JoinRequestStatus] = mapped_column(
         SAEnum(JoinRequestStatus, native_enum=False, length=20),

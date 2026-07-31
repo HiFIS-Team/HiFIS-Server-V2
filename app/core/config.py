@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
+    password_reset_token_expire_minutes: int = 10  # 비번 재설정 토큰 유효(분) — verify→confirm 사이
 
     # 외부 웹훅 (네이버폼 등 회원 친절도 설문 수신) 시크릿 (§4.5)
     kindness_webhook_secret: str = "change-me-webhook-secret"

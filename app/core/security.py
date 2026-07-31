@@ -52,6 +52,22 @@ def create_refresh_token(subject: str, version: int = 0) -> str:
     return _create_token(subject, "refresh", timedelta(days=settings.refresh_token_expire_days), version)
 
 
+def create_reset_token(subject: str, jti: str) -> str:
+    """비번 재설정 토큰 — verify 성공 시 발급, confirm 에서 소비.
+
+    jti 는 Redis 에 저장돼 단일 사용을 강제한다(토큰만으론 부족 → Redis 항목까지 있어야 유효).
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "type": "pwreset",
+        "jti": jti,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=settings.password_reset_token_expire_minutes)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
 def decode_token(token: str, expected_type: str) -> dict[str, Any]:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])

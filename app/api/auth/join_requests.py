@@ -46,6 +46,7 @@ async def approve_join_request(
     employee = Employee(
         name=join_request.name,
         email=join_request.email,
+        phone=join_request.phone,
         password_hash=join_request.password_hash,
         branch_id=payload.branch_id,
         role=payload.role,

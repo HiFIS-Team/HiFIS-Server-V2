@@ -13,6 +13,7 @@ class JoinRequestOut(CamelModel):
     id: str
     name: str
     email: str
+    phone: str | None = None
     status: JoinRequestStatus
     created_at: datetime
 

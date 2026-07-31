@@ -23,6 +23,10 @@ from app.models.auth.join_request import JoinRequest
 from app.schemas.auth.auth import (
     AccessTokenResponse,
     LoginRequest,
+    PasswordResetConfirmReq,
+    PasswordResetRequestReq,
+    PasswordResetVerifyReq,
+    PasswordResetVerifyResp,
     RefreshRequest,
     SignupRequest,
     SignupResponse,
@@ -30,6 +34,7 @@ from app.schemas.auth.auth import (
 )
 from app.schemas.staff.employee import EmployeeOut
 from app.services.employee_codes import unique_emp_no
+from app.services.password_reset import consume_reset_token, issue_code, normalize_contact, verify_code
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -53,6 +58,7 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
         employee = Employee(
             name=payload.name,
             email=payload.email,
+            phone=payload.phone,
             password_hash=hash_password(payload.password),
             branch_id=key.branch_id,
             role=key.role,
@@ -80,6 +86,7 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
         JoinRequest(
             name=payload.name,
             email=payload.email,
+            phone=payload.phone,
             password_hash=hash_password(payload.password),
         )
     )
@@ -131,3 +138,49 @@ async def logout(
 @router.get("/me", response_model=EmployeeOut)
 async def me(user: Employee = Depends(get_current_user)) -> Employee:
     return user
+
+
+# --- 비밀번호 재설정 (비로그인) — 3단계 (CLAUDE.md §2.3) ---
+@router.post("/password-reset/request", status_code=200)
+@limiter.limit("5/minute")  # IP당 분 5회 — 스팸/열거 방지
+async def password_reset_request(
+    request: Request, payload: PasswordResetRequestReq, db: AsyncSession = Depends(get_db)
+) -> dict:
+    method, contact = normalize_contact(payload.contact)
+    if method == "EMAIL":
+        emp = (
+            await db.execute(select(Employee).where(Employee.email == contact, Employee.deleted_at.is_(None)))
+        ).scalar_one_or_none()
+    else:
+        emp = (
+            await db.execute(select(Employee).where(Employee.phone == contact, Employee.deleted_at.is_(None)))
+        ).scalar_one_or_none()
+    # 대상 유무와 무관하게 항상 성공 응답(사용자 열거 방지). 존재하면 인증번호 발송.
+    if emp is not None:
+        await issue_code(payload.contact, emp.id)
+    return {"ok": True}
+
+
+@router.post("/password-reset/verify", response_model=PasswordResetVerifyResp)
+@limiter.limit("10/minute")
+async def password_reset_verify(
+    request: Request, payload: PasswordResetVerifyReq
+) -> PasswordResetVerifyResp:
+    reset_token = await verify_code(payload.contact, payload.code)
+    if reset_token is None:
+        raise HTTPException(400, detail={"code": "INVALID_CODE", "message": "인증번호가 올바르지 않거나 만료되었습니다"})
+    return PasswordResetVerifyResp(reset_token=reset_token)
+
+
+@router.post("/password-reset/confirm", status_code=204)
+async def password_reset_confirm(
+    payload: PasswordResetConfirmReq, db: AsyncSession = Depends(get_db)
+) -> None:
+    employee_id = await consume_reset_token(payload.reset_token)
+    employee = await db.get(Employee, employee_id)
+    if employee is None or employee.deleted_at is not None:
+        raise HTTPException(400, detail={"code": "INVALID_RESET_TOKEN", "message": "재설정 토큰이 유효하지 않습니다"})
+    employee.password_hash = hash_password(payload.password)
+    employee.token_version += 1  # 재설정 시 기존 세션 전부 무효화(§M2)
+    await db.commit()
+    return None
