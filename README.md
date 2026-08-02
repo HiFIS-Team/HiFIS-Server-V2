@@ -29,14 +29,24 @@
 cp .env.example .env      # 이미 있으면 생략. JWT_SECRET·비밀번호 확인/교체
 
 # 2. 빌드 & 실행 (db + redis + api)
-docker compose up --build
+docker compose up -d --build
+
+# 3. DB 마이그레이션 적용
+docker compose exec api alembic upgrade head
+
+# 4. 초기 관리자·지점 시드 (.env 의 SEED_* 값 사용)
+docker compose exec api python -m app.seed
 ```
 
-- API: http://localhost:8000
-- 헬스체크: http://localhost:8000/health
-- API 문서(Swagger): http://localhost:8000/docs
+기본 관리자: `admin@hifis.local` / `admin1234` (운영 전 반드시 교체). 로그인은 `POST /auth/login`.
+
+- API: http://localhost:8001
+- 헬스체크: http://localhost:8001/health
+- API 문서(Swagger): http://localhost:8001/docs
 
 개발 모드에선 `./app`이 컨테이너에 마운트돼 **코드 저장 시 자동 리로드**된다.
+
+> 호스트 포트는 api `8001` / db `5434` / redis `6380` 을 쓴다 (이 서버에서 `8000·5432·6379`는 다른 스택이 사용 중이라 충돌 회피). 컨테이너 내부 포트는 그대로라 `.env`의 `DATABASE_URL`·`REDIS_URL`은 수정 불필요.
 
 ### 운영 배포 (Caddy 자동 HTTPS)
 

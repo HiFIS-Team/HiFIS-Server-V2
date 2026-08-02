@@ -1,0 +1,152 @@
+"""APScheduler 인프로세스 스케줄러 (CLAUDE.md §9.5).
+
+멀티워커(gunicorn --workers N) 안전화: **Redis 리더 락**으로 한 번에 한 워커만
+스케줄러를 실행한다. 각 워커는 스케줄러를 paused 로 띄우고, 락을 잡은 '리더'만
+resume() 한다. 리더가 죽으면 락 TTL 만료 → 다른 워커가 이어받는다(failover).
+
+Redis 미설정 시엔 리더선출 없이 바로 실행(단일 프로세스 개발 전제).
+"""
+
+import asyncio
+import logging
+import os
+import uuid
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+from app.workers.event_reminders import event_reminders
+from app.workers.payday_reminder import payday_deadline_reminders, payday_reminders
+from app.workers.payroll_close import close_previous_month
+from app.workers.project_reminders import project_reminders
+from app.workers.ranking_jobs import announce_monthly_winners, ranking_change_scan
+from app.workers.retention import purge_old_access_logs
+
+logger = logging.getLogger(__name__)
+
+scheduler = AsyncIOScheduler(timezone="UTC")
+
+_LOCK_KEY = "hifis:scheduler:leader"
+_TTL_S = 30       # 락 유효기간 — 리더가 죽으면 이 시간 내 만료
+_RENEW_S = 10     # 리더 갱신/후보 재시도 주기
+_HB_KEY = "hifis:scheduler:hb"  # 하트비트(단일 실행 검증용) — SCHED_HEARTBEAT_TEST 일 때만
+
+_token = uuid.uuid4().hex  # 이 워커의 락 소유 토큰
+_redis = None
+_campaign_task: asyncio.Task | None = None
+_is_leader = False
+
+# get==token 일 때만 연장/삭제(다른 워커 락을 건드리지 않도록 CAS)
+_RENEW_LUA = "if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('pexpire',KEYS[1],ARGV[2]) else return 0 end"
+_RELEASE_LUA = "if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end"
+
+
+async def _heartbeat() -> None:
+    """단일 실행 검증용 카운터(운영 기본 비활성). 리더만 도니 워커수와 무관하게 1씩 증가."""
+    if _redis is not None:
+        await _redis.incr(_HB_KEY)
+
+
+def _register_jobs() -> None:
+    # 매월 1일 00:30 UTC — 전월 급여 마감
+    scheduler.add_job(close_previous_month, CronTrigger(day=1, hour=0, minute=30),
+                      id="payroll_close", replace_existing=True)
+    # 매일 00:05 UTC(=09:05 KST) — 오늘/내일 지급일 급여 신청 알림(예고 포함)
+    scheduler.add_job(payday_reminders, CronTrigger(hour=0, minute=5),
+                      id="payday_reminder", replace_existing=True)
+    # 매일 11:00 UTC(=20:00 KST) — 지급일 당일 미신청자 마감 임박 알림
+    scheduler.add_job(payday_deadline_reminders, CronTrigger(hour=11, minute=0),
+                      id="payday_deadline", replace_existing=True)
+    # 매시간 정각 UTC — 프로젝트 마감(전 D-N 매일 9시 / 당일 매시간 / 누락 1회)
+    scheduler.add_job(project_reminders, CronTrigger(minute=0),
+                      id="project_reminder", replace_existing=True)
+    # 매일 00:00 UTC(=09:00 KST) — 일정 D-7/D-3/전날/당일 리마인더
+    scheduler.add_job(event_reminders, CronTrigger(hour=0, minute=0),
+                      id="event_reminder", replace_existing=True)
+    # 매월 1일 01:00 UTC(=10:00 KST) — 전월 랭킹 1등 발표(급여마감 00:30 이후라 SALES 반영됨)
+    scheduler.add_job(announce_monthly_winners, CronTrigger(day=1, hour=1, minute=0),
+                      id="ranking_monthly", replace_existing=True)
+    # 5분마다 — 순위 변동 감지(밀려난 본인 + 어드민 알림)
+    scheduler.add_job(ranking_change_scan, CronTrigger(minute="*/5"),
+                      id="ranking_change", replace_existing=True)
+    # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
+    scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
+                      id="access_log_purge", replace_existing=True)
+    # 검증용 하트비트 — 환경변수로만 켬(운영 기본 꺼짐). 멀티워커 단일실행 확인에 사용.
+    if os.getenv("SCHED_HEARTBEAT_TEST"):
+        scheduler.add_job(_heartbeat, CronTrigger(second="*/2"),
+                          id="heartbeat_test", replace_existing=True)
+    # TODO(§9.5): 세션 만료 스캔, 점수 기간 롤오버 잡 추가
+
+
+async def start_scheduler(redis_url: str | None) -> None:
+    """스케줄러 기동. Redis 있으면 리더 락으로 단일 워커만 실행, 없으면 바로 실행."""
+    global _redis, _campaign_task
+    if scheduler.running:
+        return
+    _register_jobs()
+
+    if not redis_url:
+        scheduler.start()  # 단일 프로세스 — 바로 실행
+        logger.info("scheduler: 로컬 모드(단일 프로세스)로 시작")
+        return
+
+    scheduler.start(paused=True)  # 리더가 되기 전엔 잡 미발화
+    try:
+        import redis.asyncio as aioredis
+
+        _redis = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+        await _redis.ping()
+    except Exception:
+        # Redis 불가 시엔 '실행 안 함'이 안전(중복 급여마감보다 미발화가 낫다). 복구되면 리더 획득.
+        logger.warning("scheduler: Redis 불가 → 대기(잡 미발화), 복구 시 리더 선출", exc_info=True)
+        _redis = None
+    _campaign_task = asyncio.create_task(_campaign())
+
+
+async def _campaign() -> None:
+    """리더 선출 루프 — 락을 잡으면 resume, 잃으면 pause."""
+    global _is_leader
+    while True:
+        try:
+            if _redis is not None:
+                if _is_leader:
+                    renewed = await _redis.eval(_RENEW_LUA, 1, _LOCK_KEY, _token, str(_TTL_S * 1000))
+                    if not renewed:  # 락 잃음(예: 일시 정지·네트워크) → 안전하게 멈춤
+                        _is_leader = False
+                        scheduler.pause()
+                        logger.warning("scheduler: 리더십 상실 → 일시정지")
+                if not _is_leader:
+                    got = await _redis.set(_LOCK_KEY, _token, nx=True, ex=_TTL_S)
+                    if got:
+                        _is_leader = True
+                        scheduler.resume()
+                        logger.info("scheduler: 리더 획득 → 스케줄러 실행(이 워커만 잡 발화)")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("scheduler: 리더선출 루프 오류", exc_info=True)
+        await asyncio.sleep(_RENEW_S)
+
+
+async def stop_scheduler() -> None:
+    global _campaign_task
+    if _campaign_task is not None:
+        _campaign_task.cancel()
+        try:
+            await _campaign_task
+        except Exception:
+            pass
+        _campaign_task = None
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+    if _redis is not None:
+        if _is_leader:  # 내 락이면 즉시 해제 → 다른 워커가 바로 이어받음
+            try:
+                await _redis.eval(_RELEASE_LUA, 1, _LOCK_KEY, _token)
+            except Exception:
+                pass
+        try:
+            await _redis.aclose()
+        except Exception:
+            pass
