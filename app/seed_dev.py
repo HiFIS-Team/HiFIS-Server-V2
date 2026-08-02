@@ -30,10 +30,13 @@ POLICIES = [
     (Rank.STORE_MANAGER, 2_000_000, 0.4, 0.5),
 ]
 
-# (email, password, name, rank, role)
+# (email, password, name, rank, role) — 권한 계층 순(MASTER>ADMIN>MANAGER>MEMBER)
+# ADMIN 은 어느 직급에도 자동 매핑 안 됨 → 여기서 role 을 명시 지정(rank 는 급여용, 무관).
 ACCOUNTS = [
-    ("trainer@hifis.local", "trainer1234", "테스트 트레이너", Rank.TRAINER, Role.MEMBER),
+    ("master@hifis.local", "master1234", "테스트 마스터", Rank.CEO, Role.MASTER),
+    ("admin2@hifis.local", "admin1234", "테스트 관리자", Rank.STORE_MANAGER, Role.ADMIN),
     ("manager@hifis.local", "manager1234", "테스트 점장", Rank.STORE_MANAGER, Role.MANAGER),
+    ("trainer@hifis.local", "trainer1234", "테스트 트레이너", Rank.TRAINER, Role.MEMBER),
 ]
 
 
