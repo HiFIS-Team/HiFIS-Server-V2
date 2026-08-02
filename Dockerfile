@@ -8,17 +8,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# 의존성 설치 (pyproject 기준). setuptools 빌드에 앱 소스가 필요해 함께 복사.
-COPY pyproject.toml ./
-COPY app ./app
+# 프로젝트 전체 복사
+COPY . .
+
+# 의존성 설치
 RUN pip install .
 
 EXPOSE 8000
 
-# 프로덕션 기본 실행 (§8: gunicorn + uvicorn worker).
-# 개발은 docker-compose 가 uvicorn --reload 로 command 를 override.
-CMD ["gunicorn", "app.main:app", \
-     "-k", "uvicorn.workers.UvicornWorker", \
-     "-b", "0.0.0.0:8000", \
-     "--workers", "2", \
-     "--access-logfile", "-"]
+CMD ["sh", "-c", "alembic upgrade head && gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers 2 --access-logfile -"]
