@@ -22,6 +22,7 @@ class Project(UUIDMixin, TimestampMixin, Base):
     due: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 체크리스트 있으면 완료율 자동, 없으면 수동
     assignee_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 사용자가 고른 색(null=앱이 id 해시로 생성)
     extension_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 누락(마감 초과) 알림을 보낸 시각 — 1회만 보내기 위한 멱등 표시. 마감(due) 변경 시 초기화.
     overdue_notified_at: Mapped[datetime | None] = mapped_column(

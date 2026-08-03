@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.enums import (
+    ProjectActivityKind,
     ProjectRequestStatus,
     ProjectRequestType,
     ProjectStatus,
@@ -16,13 +17,17 @@ from app.enums import (
     ScoreCategory,
 )
 from app.models.projects.project import Project
+from app.models.projects.project_activity import ProjectActivity
 from app.models.projects.project_request import ProjectRequest
 from app.models.projects.project_todo import ProjectTodo
 from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.projects.project import (
+    ProjectActivityOut,
     ProjectAwardCreate,
     ProjectAwardOut,
+    ProjectCommentCreate,
+    ProjectCommentUpdate,
     ProjectCreate,
     ProjectOut,
     ProjectTodoCreate,
@@ -64,6 +69,7 @@ def _to_out(project: Project, todo_count: int = 0, done_count: int = 0) -> Proje
         todo_count=todo_count,
         done_count=done_count,
         assignee_ids=project.assignee_ids,
+        color=project.color,
         extension_reason=project.extension_reason,
         status=_status(project),
         created_by_id=project.created_by_id,
@@ -117,6 +123,25 @@ def _can_touch(project: Project, current: Employee) -> bool:
     )
 
 
+async def _log_activity(
+    db: AsyncSession, project_id: str, actor_id: str | None, kind: ProjectActivityKind, body: str | None
+) -> None:
+    """상세 타임라인에 시스템 활동/댓글 1건 추가. commit 은 호출자."""
+    db.add(ProjectActivity(project_id=project_id, actor_id=actor_id, kind=kind, body=body))
+
+
+def _activity_out(a: ProjectActivity) -> ProjectActivityOut:
+    return ProjectActivityOut(
+        id=a.id,
+        project_id=a.project_id,
+        actor_id=a.actor_id,
+        kind=a.kind,
+        body=a.body,
+        created_at=a.created_at,
+        updated_at=a.updated_at,
+    )
+
+
 @router.get("", response_model=list[ProjectOut])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
@@ -151,9 +176,12 @@ async def create_project(
         due=payload.due,
         progress=payload.progress,
         assignee_ids=payload.assignee_ids,
+        color=payload.color,
         created_by_id=current.id,
     )
     db.add(project)
+    await db.flush()
+    await _log_activity(db, project.id, current.id, ProjectActivityKind.CREATED, "프로젝트를 만들었어요")
     await db.commit()
     await db.refresh(project)
     return _to_out(project)  # 새 프로젝트는 체크리스트 0
@@ -254,6 +282,7 @@ async def _decide_request(
             project.due = req.new_due  # 새 기한 반영
             project.extension_reason = req.reason
             project.overdue_notified_at = None  # 마감 변경 → 누락 알림 재무장
+            await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 승인 — 기한 변경")
     else:
         req.reject_reason = reason
     await notify(
@@ -448,10 +477,13 @@ async def update_project_todo(
     project = await _get_project_or_404(db, project_id)
     if not _can_touch(project, current):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    was_done = todo.done
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(todo, key, value)
     await db.flush()
     await _recompute_progress(db, project)  # 완료 토글 → 진행률 재계산
+    if todo.done and not was_done:  # 완료로 바뀜 → 타임라인
+        await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"완료: {todo.content}")
     await db.commit()
     await db.refresh(todo)
     return _todo_out(todo)
@@ -475,6 +507,80 @@ async def delete_project_todo(
     return None
 
 
+# ---------- 상세 타임라인 (활동 기록 + 댓글) ----------
+@router.get("/{project_id}/activities", response_model=list[ProjectActivityOut])
+async def list_project_activities(
+    project_id: str, db: AsyncSession = Depends(get_db)
+) -> list[ProjectActivityOut]:
+    """댓글(kind=COMMENT) + 시스템 활동을 최신순 한 타임라인으로."""
+    await _get_project_or_404(db, project_id)
+    rows = (
+        await db.execute(
+            select(ProjectActivity)
+            .where(ProjectActivity.project_id == project_id)
+            .order_by(ProjectActivity.created_at.desc())
+        )
+    ).scalars().all()
+    return [_activity_out(a) for a in rows]
+
+
+@router.post("/{project_id}/comments", response_model=ProjectActivityOut, status_code=201)
+async def create_project_comment(
+    project_id: str,
+    payload: ProjectCommentCreate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectActivityOut:
+    await _get_project_or_404(db, project_id)
+    comment = ProjectActivity(
+        project_id=project_id, actor_id=current.id, kind=ProjectActivityKind.COMMENT, body=payload.body
+    )
+    db.add(comment)
+    await db.commit()
+    await db.refresh(comment)
+    return _activity_out(comment)
+
+
+async def _get_comment_or_404(db: AsyncSession, project_id: str, comment_id: str) -> ProjectActivity:
+    c = await db.get(ProjectActivity, comment_id)
+    if c is None or c.project_id != project_id or c.kind != ProjectActivityKind.COMMENT:
+        raise HTTPException(404, detail={"code": "COMMENT_NOT_FOUND", "message": "댓글을 찾을 수 없습니다"})
+    return c
+
+
+@router.patch("/{project_id}/comments/{comment_id}", response_model=ProjectActivityOut)
+async def update_project_comment(
+    project_id: str,
+    comment_id: str,
+    payload: ProjectCommentUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectActivityOut:
+    comment = await _get_comment_or_404(db, project_id, comment_id)
+    if comment.actor_id != current.id:  # 본인 댓글만 수정
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 댓글만 수정할 수 있습니다"})
+    comment.body = payload.body
+    await db.commit()
+    await db.refresh(comment)
+    return _activity_out(comment)
+
+
+@router.delete("/{project_id}/comments/{comment_id}", status_code=204)
+async def delete_project_comment(
+    project_id: str,
+    comment_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    comment = await _get_comment_or_404(db, project_id, comment_id)
+    # 본인 댓글 또는 관리자(모더레이션)
+    if comment.actor_id != current.id and current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 댓글 또는 관리자만 삭제할 수 있습니다"})
+    await db.delete(comment)
+    await db.commit()
+    return None
+
+
 @router.patch("/{project_id}", response_model=ProjectOut)
 async def update_project(
     project_id: str,
@@ -493,10 +599,19 @@ async def update_project(
     fields = payload.model_dump(exclude_unset=True)
     if not is_manager and set(fields) - {"progress"}:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당자는 진행률만 변경할 수 있습니다"})
+    old_progress, old_due = project.progress, project.due
+    old_assignees = set(project.assignee_ids or [])
     for key, value in fields.items():
         setattr(project, key, value)
     if "due" in fields:  # 마감 변경 → 누락 알림 재무장
         project.overdue_notified_at = None
+    # 변경 타임라인 (수정된 것만)
+    if "progress" in fields and project.progress != old_progress:
+        await _log_activity(db, project_id, current.id, ProjectActivityKind.PROGRESS, f"진행률 {project.progress}%")
+    if "due" in fields and project.due != old_due:
+        await _log_activity(db, project_id, current.id, ProjectActivityKind.DUE, "기한을 변경했어요")
+    if "assignee_ids" in fields and set(project.assignee_ids or []) != old_assignees:
+        await _log_activity(db, project_id, current.id, ProjectActivityKind.ASSIGNEE, "담당자를 변경했어요")
     await db.commit()
     await db.refresh(project)
     return await _single_out(db, project)
@@ -513,9 +628,10 @@ async def delete_project(
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 삭제할 권한이 없습니다"})
-    # 자식(FK) 먼저 정리 — 체크리스트·기한변경요청
+    # 자식(FK) 먼저 정리 — 체크리스트·기한변경요청·타임라인
     await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project_id))
     await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project_id))
+    await db.execute(delete(ProjectActivity).where(ProjectActivity.project_id == project_id))
     await db.delete(project)
     await db.commit()
     return None

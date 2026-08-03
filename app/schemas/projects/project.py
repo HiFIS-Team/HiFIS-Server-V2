@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.enums import ProjectStatus
+from app.enums import ProjectActivityKind, ProjectStatus
 from app.schemas.base import CamelModel
 
 
@@ -16,6 +16,7 @@ class ProjectCreate(CamelModel):
     due: datetime
     progress: int = Field(default=0, ge=0, le=100)
     assignee_ids: list[str] = Field(default_factory=list)
+    color: str | None = None
 
 
 class ProjectUpdate(CamelModel):
@@ -27,6 +28,7 @@ class ProjectUpdate(CamelModel):
     progress: int | None = Field(default=None, ge=0, le=100)
     assignee_ids: list[str] | None = None
     extension_reason: str | None = None
+    color: str | None = None
 
 
 class ProjectOut(CamelModel):
@@ -40,10 +42,31 @@ class ProjectOut(CamelModel):
     todo_count: int = 0       # 체크리스트 전체 개수
     done_count: int = 0       # 완료 개수
     assignee_ids: list[str]
+    color: str | None = None  # null=앱이 id 해시로 생성
     extension_reason: str | None = None
     status: ProjectStatus  # 서버 파생
     created_by_id: str
     created_at: datetime
+
+
+class ProjectCommentCreate(CamelModel):
+    body: str = Field(min_length=1)
+
+
+class ProjectCommentUpdate(CamelModel):
+    body: str = Field(min_length=1)
+
+
+class ProjectActivityOut(CamelModel):
+    """타임라인 항목 — kind=COMMENT 는 사용자 댓글, 나머지는 시스템 활동."""
+
+    id: str
+    project_id: str
+    actor_id: str | None = None  # null=시스템
+    kind: ProjectActivityKind
+    body: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ProjectTodoCreate(CamelModel):

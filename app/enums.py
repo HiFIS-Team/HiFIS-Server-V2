@@ -104,6 +104,18 @@ class ProjectRequestStatus(StrEnum):
     REJECTED = "REJECTED"    # 반려 (사유 필수)
 
 
+class ProjectActivityKind(StrEnum):
+    """프로젝트 상세 타임라인 항목 종류. COMMENT=사용자 댓글 / 나머지=시스템 활동 기록.
+    native_enum=False(VARCHAR)라 종류 추가 시 마이그레이션 불필요."""
+
+    COMMENT = "COMMENT"      # 사용자가 쓴 댓글 (body 필수, 수정·삭제 가능)
+    CREATED = "CREATED"      # 프로젝트 생성
+    PROGRESS = "PROGRESS"    # 진행률 변경(수동)
+    TODO = "TODO"            # 체크리스트 완료
+    DUE = "DUE"              # 기한 변경(수정·연장 승인)
+    ASSIGNEE = "ASSIGNEE"    # 담당자 변경
+
+
 class MeetingScope(StrEnum):
     COMPANY = "COMPANY"
     PROJECT = "PROJECT"
