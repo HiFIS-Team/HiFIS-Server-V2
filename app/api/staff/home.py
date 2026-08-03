@@ -16,7 +16,8 @@ from app.core.deps import get_current_user
 from app.core.periods import KST, current_period
 from app.db.session import get_db
 from app.enums import AttendanceStatus, LeaveStatus
-from app.models.chat.notification import Notification
+from app.models.board.notice import Notice
+from app.models.board.notice_read import NoticeRead
 from app.models.projects.project import Project
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
@@ -76,14 +77,14 @@ async def my_home(
         .where(Project.assignee_ids.contains([current.id]), Project.progress < 100)
     )
 
-    # ── 안 읽은 공지 수 (공지 생성 시 전원에게 NOTICE 알림 → 미읽음 카운트) ──
+    # ── 안 읽은 공지 수 = 내 NoticeRead 가 없는 공지 (읽음 상태 기준, §6.4) ──
     unread = await db.scalar(
         select(func.count())
-        .select_from(Notification)
+        .select_from(Notice)
         .where(
-            Notification.employee_id == current.id,
-            Notification.type == "NOTICE",
-            Notification.read.is_(False),
+            ~select(NoticeRead.id)
+            .where(NoticeRead.notice_id == Notice.id, NoticeRead.employee_id == current.id)
+            .exists()
         )
     )
 

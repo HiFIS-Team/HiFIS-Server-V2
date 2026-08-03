@@ -39,12 +39,12 @@ def leave_decision(approved: bool, start_date, end_date, reason: str | None = No
 
 
 # ── 공지 ──
-def new_notice(title: str, body: str | None) -> dict:
+def new_notice(title: str, body: str | None, notice_id: str) -> dict:
     return {
         "type": "NOTICE",
         "title": f"새 공지 · {title}",
         "body": (body or "")[:120],
-        "link": "/notices",
+        "link": f"/notices/{notice_id}",  # 목록이 아니라 해당 공지로 딥링크
     }
 
 
