@@ -12,6 +12,7 @@ class ProjectCreate(CamelModel):
     title: str
     purpose: str = ""
     steps: str = ""
+    start_at: datetime | None = None
     due: datetime
     progress: int = Field(default=0, ge=0, le=100)
     assignee_ids: list[str] = Field(default_factory=list)
@@ -21,6 +22,7 @@ class ProjectUpdate(CamelModel):
     title: str | None = None
     purpose: str | None = None
     steps: str | None = None
+    start_at: datetime | None = None
     due: datetime | None = None
     progress: int | None = Field(default=None, ge=0, le=100)
     assignee_ids: list[str] | None = None
@@ -32,11 +34,38 @@ class ProjectOut(CamelModel):
     title: str
     purpose: str
     steps: str
+    start_at: datetime | None = None
     due: datetime
-    progress: int
+    progress: int             # 체크리스트 있으면 완료율 자동, 없으면 수동값
+    todo_count: int = 0       # 체크리스트 전체 개수
+    done_count: int = 0       # 완료 개수
     assignee_ids: list[str]
     extension_reason: str | None = None
     status: ProjectStatus  # 서버 파생
+    created_by_id: str
+    created_at: datetime
+
+
+class ProjectTodoCreate(CamelModel):
+    content: str
+    assignee_id: str | None = None
+    sort: int = 0
+
+
+class ProjectTodoUpdate(CamelModel):
+    content: str | None = None
+    assignee_id: str | None = None
+    done: bool | None = None
+    sort: int | None = None
+
+
+class ProjectTodoOut(CamelModel):
+    id: str
+    project_id: str
+    content: str
+    assignee_id: str | None = None
+    done: bool
+    sort: int
     created_by_id: str
     created_at: datetime
 

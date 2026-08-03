@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
@@ -17,6 +17,7 @@ from app.enums import (
 )
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
+from app.models.projects.project_todo import ProjectTodo
 from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.projects.project import (
@@ -24,6 +25,9 @@ from app.schemas.projects.project import (
     ProjectAwardOut,
     ProjectCreate,
     ProjectOut,
+    ProjectTodoCreate,
+    ProjectTodoOut,
+    ProjectTodoUpdate,
     ProjectUpdate,
 )
 from app.schemas.projects.project_request import (
@@ -48,19 +52,68 @@ def _status(project: Project) -> ProjectStatus:
     return ProjectStatus.WAITING
 
 
-def _to_out(project: Project) -> ProjectOut:
+def _to_out(project: Project, todo_count: int = 0, done_count: int = 0) -> ProjectOut:
     return ProjectOut(
         id=project.id,
         title=project.title,
         purpose=project.purpose,
         steps=project.steps,
+        start_at=project.start_at,
         due=project.due,
         progress=project.progress,
+        todo_count=todo_count,
+        done_count=done_count,
         assignee_ids=project.assignee_ids,
         extension_reason=project.extension_reason,
         status=_status(project),
         created_by_id=project.created_by_id,
         created_at=project.created_at,
+    )
+
+
+async def _todo_counts(db: AsyncSession, project_ids: list[str]) -> dict[str, tuple[int, int]]:
+    """프로젝트별 (전체, 완료) 체크리스트 개수 — 목록 N+1 없이 한 번에."""
+    if not project_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                ProjectTodo.project_id,
+                func.count(),
+                func.count().filter(ProjectTodo.done.is_(True)),
+            )
+            .where(ProjectTodo.project_id.in_(project_ids))
+            .group_by(ProjectTodo.project_id)
+        )
+    ).all()
+    return {pid: (total, done) for pid, total, done in rows}
+
+
+async def _single_out(db: AsyncSession, project: Project) -> ProjectOut:
+    total, done = (await _todo_counts(db, [project.id])).get(project.id, (0, 0))
+    return _to_out(project, total, done)
+
+
+async def _recompute_progress(db: AsyncSession, project: Project) -> None:
+    """체크리스트가 있으면 progress = 완료/전체 × 100. 없으면 수동값 유지."""
+    total = await db.scalar(
+        select(func.count()).select_from(ProjectTodo).where(ProjectTodo.project_id == project.id)
+    )
+    if total:
+        done = await db.scalar(
+            select(func.count())
+            .select_from(ProjectTodo)
+            .where(ProjectTodo.project_id == project.id, ProjectTodo.done.is_(True))
+        )
+        project.progress = round(done / total * 100)
+
+
+def _can_touch(project: Project, current: Employee) -> bool:
+    # 체크리스트 편집 = 관리자·작성자·담당자
+    return (
+        current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER)
+        or project.created_by_id == current.id
+        or current.id in (project.assignee_ids or [])
     )
 
 
@@ -77,7 +130,8 @@ async def list_projects(
     if q:
         stmt = stmt.where(Project.title.ilike(f"%{q}%"))
     projects = (await db.execute(stmt.order_by(Project.created_at.desc()))).scalars().all()
-    out = [_to_out(p) for p in projects]
+    counts = await _todo_counts(db, [p.id for p in projects])
+    out = [_to_out(p, *counts.get(p.id, (0, 0))) for p in projects]
     if status:  # 파생 상태 필터는 계산 후
         out = [o for o in out if o.status == status]
     return out
@@ -93,6 +147,7 @@ async def create_project(
         title=payload.title,
         purpose=payload.purpose,
         steps=payload.steps,
+        start_at=payload.start_at,
         due=payload.due,
         progress=payload.progress,
         assignee_ids=payload.assignee_ids,
@@ -101,7 +156,7 @@ async def create_project(
     db.add(project)
     await db.commit()
     await db.refresh(project)
-    return _to_out(project)
+    return _to_out(project)  # 새 프로젝트는 체크리스트 0
 
 
 # ---------- 프로젝트 기한 변경 요청 (연장/누락 사유 → 어드민 승인) ----------
@@ -235,7 +290,7 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)) -> Pr
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    return _to_out(project)
+    return await _single_out(db, project)
 
 
 # ---------- 프로젝트 점수(달성 평가) ----------
@@ -315,6 +370,111 @@ async def list_project_awards(
     return [_award_out(e) for e in rows]
 
 
+# ---------- 프로젝트 체크리스트 (완료율 → progress 자동) ----------
+def _todo_out(t: ProjectTodo) -> ProjectTodoOut:
+    return ProjectTodoOut(
+        id=t.id,
+        project_id=t.project_id,
+        content=t.content,
+        assignee_id=t.assignee_id,
+        done=t.done,
+        sort=t.sort,
+        created_by_id=t.created_by_id,
+        created_at=t.created_at,
+    )
+
+
+async def _get_project_or_404(db: AsyncSession, project_id: str) -> Project:
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    return project
+
+
+async def _get_todo_or_404(db: AsyncSession, project_id: str, todo_id: str) -> ProjectTodo:
+    todo = await db.get(ProjectTodo, todo_id)
+    if todo is None or todo.project_id != project_id:
+        raise HTTPException(404, detail={"code": "TODO_NOT_FOUND", "message": "체크리스트 항목을 찾을 수 없습니다"})
+    return todo
+
+
+@router.get("/{project_id}/todos", response_model=list[ProjectTodoOut])
+async def list_project_todos(project_id: str, db: AsyncSession = Depends(get_db)) -> list[ProjectTodoOut]:
+    await _get_project_or_404(db, project_id)
+    rows = (
+        await db.execute(
+            select(ProjectTodo)
+            .where(ProjectTodo.project_id == project_id)
+            .order_by(ProjectTodo.sort, ProjectTodo.created_at)
+        )
+    ).scalars().all()
+    return [_todo_out(t) for t in rows]
+
+
+@router.post("/{project_id}/todos", response_model=ProjectTodoOut, status_code=201)
+async def create_project_todo(
+    project_id: str,
+    payload: ProjectTodoCreate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectTodoOut:
+    project = await _get_project_or_404(db, project_id)
+    if not _can_touch(project, current):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    todo = ProjectTodo(
+        project_id=project_id,
+        content=payload.content,
+        assignee_id=payload.assignee_id,
+        sort=payload.sort,
+        created_by_id=current.id,
+    )
+    db.add(todo)
+    await db.flush()
+    await _recompute_progress(db, project)  # 항목 추가 → 진행률 재계산
+    await db.commit()
+    await db.refresh(todo)
+    return _todo_out(todo)
+
+
+@router.patch("/{project_id}/todos/{todo_id}", response_model=ProjectTodoOut)
+async def update_project_todo(
+    project_id: str,
+    todo_id: str,
+    payload: ProjectTodoUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectTodoOut:
+    todo = await _get_todo_or_404(db, project_id, todo_id)
+    project = await _get_project_or_404(db, project_id)
+    if not _can_touch(project, current):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(todo, key, value)
+    await db.flush()
+    await _recompute_progress(db, project)  # 완료 토글 → 진행률 재계산
+    await db.commit()
+    await db.refresh(todo)
+    return _todo_out(todo)
+
+
+@router.delete("/{project_id}/todos/{todo_id}", status_code=204)
+async def delete_project_todo(
+    project_id: str,
+    todo_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    todo = await _get_todo_or_404(db, project_id, todo_id)
+    project = await _get_project_or_404(db, project_id)
+    if not _can_touch(project, current):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    await db.delete(todo)
+    await db.flush()
+    await _recompute_progress(db, project)
+    await db.commit()
+    return None
+
+
 @router.patch("/{project_id}", response_model=ProjectOut)
 async def update_project(
     project_id: str,
@@ -339,7 +499,7 @@ async def update_project(
         project.overdue_notified_at = None
     await db.commit()
     await db.refresh(project)
-    return _to_out(project)
+    return await _single_out(db, project)
 
 
 @router.delete("/{project_id}", status_code=204)
@@ -353,6 +513,9 @@ async def delete_project(
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 삭제할 권한이 없습니다"})
+    # 자식(FK) 먼저 정리 — 체크리스트·기한변경요청
+    await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project_id))
+    await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project_id))
     await db.delete(project)
     await db.commit()
     return None
