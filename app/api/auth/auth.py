@@ -33,6 +33,7 @@ from app.schemas.auth.auth import (
     TokenResponse,
 )
 from app.schemas.staff.employee import EmployeeOut
+from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
 from app.services.password_reset import consume_reset_token, issue_code, normalize_contact, verify_code
 
@@ -64,6 +65,7 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
         rank=key.rank,
         team=key.team,
         emp_no=await unique_emp_no(db),
+        avatar_color=await next_avatar_color(db),  # 팔레트 분산 배정(§2.2)
     )
     key.status = InviteStatus.USED
     db.add(employee)

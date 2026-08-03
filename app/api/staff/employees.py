@@ -27,6 +27,7 @@ from app.schemas.staff.employee import (
     PasswordChange,
     ScheduleSet,
 )
+from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
 
 router = APIRouter(prefix="/employees", tags=["employees"])
@@ -210,7 +211,7 @@ async def create_employee(payload: EmployeeCreate, db: AsyncSession = Depends(ge
         role=payload.role,
         team=payload.team,
         phone=payload.phone,
-        avatar_color=payload.avatar_color or "#6366f1",
+        avatar_color=payload.avatar_color or await next_avatar_color(db),  # 미지정 시 팔레트 분산(§2.2)
         emp_no=await unique_emp_no(db),
     )
     db.add(employee)

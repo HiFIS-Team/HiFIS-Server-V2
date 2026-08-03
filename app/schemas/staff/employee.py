@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import Field, field_validator
 
 from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
-from app.schemas.base import CamelModel, SignedUrlOptional
+from app.schemas.base import CamelModel, SignedUrlOptional, normalize_phone
 
 
 class EmployeeCreate(CamelModel):
@@ -32,10 +32,16 @@ class EmployeeUpdate(CamelModel):
 
 class EmployeeMeUpdate(CamelModel):
     name: str | None = None
+    phone: str | None = None  # 본인 휴대폰 번호 (§2.2) — 직원이 직접 입력
     avatar_color: str | None = None
     avatar_url: str | None = None
     status_message: str | None = None
     work_status: WorkStatus | None = None
+
+    @field_validator("phone")
+    @classmethod
+    def _validate_phone(cls, v: str | None) -> str | None:
+        return normalize_phone(v) if v is not None else None
 
 
 class PasswordChange(CamelModel):
