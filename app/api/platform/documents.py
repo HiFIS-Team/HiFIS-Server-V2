@@ -12,8 +12,18 @@ from app.core.storage import save_upload
 from app.db.session import get_db
 from app.enums import Role
 from app.models.platform.document import Document, Folder
+from app.models.platform.document_favorite import DocumentFavorite
 from app.models.staff.employee import Employee
-from app.schemas.platform.document import DocumentOut, DocumentUpdate, FolderCreate, FolderOut, FolderUpdate
+from app.schemas.platform.document import (
+    DocumentOut,
+    DocumentUpdate,
+    FolderCreate,
+    FolderOut,
+    FolderTreeCreate,
+    FolderTreeNode,
+    FolderTreeNodeOut,
+    FolderUpdate,
+)
 
 router = APIRouter(tags=["documents"], dependencies=[Depends(get_current_user)])
 
@@ -24,6 +34,44 @@ def _parse_tags(raw: str | None) -> list[str]:
 
 def _forbidden() -> HTTPException:
     return HTTPException(403, detail={"code": "FORBIDDEN", "message": "작성자 또는 관리자만 가능합니다"})
+
+
+async def _descendant_folder_ids(db: AsyncSession, root_id: str) -> set[str]:
+    """root 아래 모든 하위 폴더 id (root 자신은 제외). BFS."""
+    seen: set[str] = set()
+    frontier = [root_id]
+    while frontier:
+        rows = (
+            await db.execute(select(Folder.id).where(Folder.parent_id.in_(frontier)))
+        ).scalars().all()
+        fresh = [r for r in rows if r not in seen]
+        seen.update(fresh)
+        frontier = fresh
+    return seen
+
+
+async def _docs_out(
+    db: AsyncSession, documents: list[Document], current: Employee
+) -> list[DocumentOut]:
+    """DocumentOut + favoritedByMe 배치 계산."""
+    ids = [d.id for d in documents]
+    fav: set[str] = set()
+    if ids:
+        rows = (
+            await db.execute(
+                select(DocumentFavorite.document_id).where(
+                    DocumentFavorite.document_id.in_(ids),
+                    DocumentFavorite.employee_id == current.id,
+                )
+            )
+        ).scalars().all()
+        fav = set(rows)
+    out: list[DocumentOut] = []
+    for d in documents:
+        model = DocumentOut.model_validate(d)
+        model.favorited_by_me = d.id in fav
+        out.append(model)
+    return out
 
 
 # ---------- Folder ----------
@@ -48,6 +96,8 @@ async def create_folder(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Folder:
+    if payload.parent_id and await db.get(Folder, payload.parent_id) is None:
+        raise HTTPException(400, detail={"code": "FOLDER_NOT_FOUND", "message": "상위 폴더가 존재하지 않습니다"})
     folder = Folder(
         name=payload.name,
         scope=payload.scope,
@@ -59,6 +109,40 @@ async def create_folder(
     await db.commit()
     await db.refresh(folder)
     return folder
+
+
+@router.post("/folders/tree", response_model=list[FolderTreeNodeOut], status_code=201)
+async def create_folder_tree(
+    payload: FolderTreeCreate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[FolderTreeNodeOut]:
+    """폴더째 업로드 — 폴더 트리를 한 트랜잭션으로 생성(중간 실패 시 전체 롤백).
+
+    반환은 입력과 같은 트리 구조 + 새 id → 앱이 로컬 경로별로 파일을 각 폴더에 올린다.
+    """
+    if payload.parent_id and await db.get(Folder, payload.parent_id) is None:
+        raise HTTPException(400, detail={"code": "FOLDER_NOT_FOUND", "message": "붙일 상위 폴더가 존재하지 않습니다"})
+
+    async def _create(nodes: list[FolderTreeNode], parent_id: str | None) -> list[FolderTreeNodeOut]:
+        created: list[FolderTreeNodeOut] = []
+        for node in nodes:
+            folder = Folder(
+                name=node.name,
+                scope=payload.scope,
+                space=payload.space,
+                parent_id=parent_id,
+                created_by_id=current.id,
+            )
+            db.add(folder)
+            await db.flush()  # id 확보
+            children = await _create(node.children, folder.id)
+            created.append(FolderTreeNodeOut(id=folder.id, name=folder.name, children=children))
+        return created
+
+    tree = await _create(payload.nodes, payload.parent_id)
+    await db.commit()
+    return tree
 
 
 @router.patch("/folders/{folder_id}", response_model=FolderOut)
@@ -73,7 +157,16 @@ async def update_folder(
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN) and folder.created_by_id != current.id:
         raise _forbidden()
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "parent_id" in data and data["parent_id"] is not None:
+        new_parent = data["parent_id"]
+        if new_parent == folder_id:
+            raise HTTPException(400, detail={"code": "INVALID_MOVE", "message": "폴더를 자기 자신 안으로 옮길 수 없습니다"})
+        if await db.get(Folder, new_parent) is None:
+            raise HTTPException(400, detail={"code": "FOLDER_NOT_FOUND", "message": "옮길 대상 폴더가 존재하지 않습니다"})
+        if new_parent in await _descendant_folder_ids(db, folder_id):
+            raise HTTPException(400, detail={"code": "INVALID_MOVE", "message": "폴더를 자기 하위로 옮길 수 없습니다"})
+    for key, value in data.items():
         setattr(folder, key, value)
     await db.commit()
     await db.refresh(folder)
@@ -91,8 +184,18 @@ async def delete_folder(
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN) and folder.created_by_id != current.id:
         raise _forbidden()
-    await db.execute(delete(Document).where(Document.folder_id == folder_id))  # 하위 문서 함께
-    await db.delete(folder)
+    # 서브트리 전체(자신 + 하위 폴더) — 문서·즐겨찾기·폴더 순으로 정리
+    ids = list(await _descendant_folder_ids(db, folder_id) | {folder_id})
+    docs = (await db.execute(select(Document).where(Document.folder_id.in_(ids)))).scalars().all()
+    for d in docs:
+        path = d.url.lstrip("/")
+        if os.path.exists(path):
+            os.remove(path)
+    if docs:
+        doc_ids = [d.id for d in docs]
+        await db.execute(delete(DocumentFavorite).where(DocumentFavorite.document_id.in_(doc_ids)))
+    await db.execute(delete(Document).where(Document.folder_id.in_(ids)))
+    await db.execute(delete(Folder).where(Folder.id.in_(ids)))
     await db.commit()
     return None
 
@@ -100,12 +203,14 @@ async def delete_folder(
 # ---------- Document ----------
 @router.get("/documents", response_model=list[DocumentOut])
 async def list_documents(
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     space: str | None = Query(None),
     scope: str | None = Query(None),
     folder_id: str | None = Query(None, alias="folderId"),
+    favorite: bool = Query(False),  # true → 내 즐겨찾기만
     q: str | None = Query(None),
-) -> list[Document]:
+) -> list[DocumentOut]:
     stmt = select(Document)
     if space:
         stmt = stmt.where(Document.space == space)
@@ -113,10 +218,18 @@ async def list_documents(
         stmt = stmt.where(Document.scope == scope)
     if folder_id:
         stmt = stmt.where(Document.folder_id == folder_id)
+    if favorite:
+        stmt = stmt.where(
+            Document.id.in_(
+                select(DocumentFavorite.document_id).where(
+                    DocumentFavorite.employee_id == current.id
+                )
+            )
+        )
     if q:
         stmt = stmt.where(or_(Document.name.ilike(f"%{q}%"), Document.desc.ilike(f"%{q}%")))
     result = await db.execute(stmt.order_by(Document.created_at.desc()))
-    return list(result.scalars().all())
+    return await _docs_out(db, list(result.scalars().all()), current)
 
 
 @router.post("/documents", response_model=DocumentOut, status_code=201)
@@ -130,7 +243,7 @@ async def upload_document(
     tags: str | None = Form(None),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Document:
+) -> DocumentOut:
     if folder_id and await db.get(Folder, folder_id) is None:
         raise HTTPException(400, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더가 존재하지 않습니다"})
     url, ext, size = await save_upload(file)
@@ -149,7 +262,7 @@ async def upload_document(
     db.add(document)
     await db.commit()
     await db.refresh(document)
-    return document
+    return (await _docs_out(db, [document], current))[0]
 
 
 @router.patch("/documents/{document_id}", response_model=DocumentOut)
@@ -158,17 +271,20 @@ async def update_document(
     payload: DocumentUpdate,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Document:
+) -> DocumentOut:
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN) and document.uploader_id != current.id:
         raise _forbidden()
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("folder_id") is not None and await db.get(Folder, data["folder_id"]) is None:
+        raise HTTPException(400, detail={"code": "FOLDER_NOT_FOUND", "message": "옮길 대상 폴더가 존재하지 않습니다"})
+    for key, value in data.items():
         setattr(document, key, value)
     await db.commit()
     await db.refresh(document)
-    return document
+    return (await _docs_out(db, [document], current))[0]
 
 
 @router.delete("/documents/{document_id}", status_code=204)
@@ -185,7 +301,47 @@ async def delete_document(
     path = document.url.lstrip("/")
     if os.path.exists(path):
         os.remove(path)
+    await db.execute(delete(DocumentFavorite).where(DocumentFavorite.document_id == document_id))
     await db.delete(document)
+    await db.commit()
+    return None
+
+
+@router.post("/documents/{document_id}/favorite", status_code=204)
+async def add_favorite(
+    document_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """즐겨찾기 등록 (멱등). 공지 읽음과 같은 방식."""
+    if await db.get(Document, document_id) is None:
+        raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
+    exists = (
+        await db.execute(
+            select(DocumentFavorite).where(
+                DocumentFavorite.document_id == document_id,
+                DocumentFavorite.employee_id == current.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is None:
+        db.add(DocumentFavorite(document_id=document_id, employee_id=current.id))
+        await db.commit()
+    return None
+
+
+@router.delete("/documents/{document_id}/favorite", status_code=204)
+async def remove_favorite(
+    document_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await db.execute(
+        delete(DocumentFavorite).where(
+            DocumentFavorite.document_id == document_id,
+            DocumentFavorite.employee_id == current.id,
+        )
+    )
     await db.commit()
     return None
 
