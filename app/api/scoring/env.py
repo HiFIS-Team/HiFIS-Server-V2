@@ -71,8 +71,8 @@ async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
         return
     if await db.get(Branch, branch_id) is None:  # 실재하는 지점만
         return
-    for name, points, editable in BASE_ENV_ITEMS:
-        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=editable))
+    for i, (name, points, editable) in enumerate(BASE_ENV_ITEMS):
+        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=editable, sort_order=i))
     await db.commit()
 
 
@@ -96,7 +96,7 @@ async def list_env_items(
         stmt = stmt.where(EnvItem.branch_id == scope)
     if branch_id:
         stmt = stmt.where(EnvItem.branch_id == branch_id)
-    result = await db.execute(stmt.order_by(EnvItem.points.desc(), EnvItem.name))
+    result = await db.execute(stmt.order_by(EnvItem.sort_order, EnvItem.name))  # 고정 순서(§4.2 #31)
     return list(result.scalars().all())
 
 
@@ -105,7 +105,8 @@ async def create_env_item(payload: EnvItemCreate, db: AsyncSession = Depends(get
     if await db.get(Branch, payload.branch_id) is None:
         raise HTTPException(400, detail={"code": "BRANCH_NOT_FOUND", "message": "지점이 존재하지 않습니다"})
     item = EnvItem(
-        branch_id=payload.branch_id, name=payload.name, points=payload.points, editable=payload.editable
+        branch_id=payload.branch_id, name=payload.name, points=payload.points,
+        editable=payload.editable, sort_order=payload.sort_order,
     )
     db.add(item)
     await db.commit()

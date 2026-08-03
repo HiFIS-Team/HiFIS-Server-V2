@@ -195,13 +195,18 @@ class ScoreCategory(StrEnum):
 
 
 class RankingKind(StrEnum):
-    """랭킹 탭 종류 — /scores/ranking?kind=. 표시 순서: 종합왕 → 매출왕 → 수업왕 → 친절왕 → 피드백왕."""
+    """랭킹 탭 종류 — /scores/ranking?kind=. 헤드라인 순서: 종합왕 → 매출왕 → 수업왕 → 친절왕 → 피드백왕.
+
+    PROJECT·ENV 는 앱에서 on-demand 조회용(kind 값 = ScoreCategory 동명 → kind_conditions 자동 매핑).
+    """
 
     OVERALL = "OVERALL"    # 종합왕 — 전체 점수 합
     SALES = "SALES"        # 매출왕 — 매출성과(SALES) 자동 기여도 (CONTRIB 중 sales:*)
     CLASS = "CLASS"        # 수업왕 — 수업 개수 점수
     KINDNESS = "KINDNESS"  # 친절왕 — 회원 친절도
     PEER = "PEER"          # 피드백왕 — 동료평가
+    PROJECT = "PROJECT"    # 프로젝트왕 — 프로젝트 달성 점수 (ScoreCategory.PROJECT)
+    ENV = "ENV"            # 환경왕 — 환경정비 점수 (ScoreCategory.ENV)
 
 
 class ReactionTargetType(StrEnum):

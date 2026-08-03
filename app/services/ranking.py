@@ -25,6 +25,8 @@ KIND_LABEL = {
     RankingKind.CLASS: "수업왕",
     RankingKind.KINDNESS: "친절왕",
     RankingKind.PEER: "피드백왕",
+    RankingKind.PROJECT: "프로젝트왕",
+    RankingKind.ENV: "환경왕",
 }
 
 
