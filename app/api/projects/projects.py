@@ -252,6 +252,7 @@ async def create_project_request(
     await db.refresh(req)
     # 승인권자(MASTER)에게 알림 (best-effort) — 승인·반려는 MASTER 전용
     label = "누락 사유" if payload.type == ProjectRequestType.OVERDUE else "기한 연장"
+    await _log_activity(db, project_id, current.id, ProjectActivityKind.DUE, f"{label} 신청")  # 승인 전 신청도 타임라인
     approvers = (await db.execute(select(Employee).where(Employee.role == Role.MASTER))).scalars().all()
     for approver in approvers:
         await notify(db, employee_id=approver.id, **ntext.project_request(label, project.title, current.name))
@@ -285,6 +286,8 @@ async def _decide_request(
             await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 승인 — 기한 변경")
     else:
         req.reject_reason = reason
+        if project is not None:  # 반려도 타임라인
+            await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 반려")
     await notify(
         db,
         employee_id=req.requested_by_id,
@@ -484,6 +487,8 @@ async def update_project_todo(
     await _recompute_progress(db, project)  # 완료 토글 → 진행률 재계산
     if todo.done and not was_done:  # 완료로 바뀜 → 타임라인
         await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"완료: {todo.content}")
+    elif was_done and not todo.done:  # 완료 취소 → 타임라인
+        await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"완료 취소: {todo.content}")
     await db.commit()
     await db.refresh(todo)
     return _todo_out(todo)
@@ -500,9 +505,11 @@ async def delete_project_todo(
     project = await _get_project_or_404(db, project_id)
     if not _can_touch(project, current):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    content = todo.content  # 삭제 전 스냅샷(타임라인 표시용)
     await db.delete(todo)
     await db.flush()
     await _recompute_progress(db, project)
+    await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"할 일 삭제: {content}")
     await db.commit()
     return None
 

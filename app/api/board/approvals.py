@@ -49,12 +49,15 @@ def _require_participant(approval: Approval, current: Employee) -> None:
 
 @router.get("", response_model=list[ApprovalOut])
 async def list_approvals(
-    box: str = Query(..., pattern="^(mine|inbox|decided)$"),
+    box: str = Query(..., pattern="^(mine|inbox|decided|all)$"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Approval]:
     stmt = select(Approval)
-    if box == "mine":
+    if box == "all":  # 전사 결재 전체 — 관리자만(결재선 여러 단이라 남에게 걸린 문서도 봐야 함)
+        if current.role not in (Role.MASTER, Role.ADMIN):
+            raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "전사 결재 열람은 관리자만 가능합니다"})
+    elif box == "mine":
         stmt = stmt.where(Approval.requester_id == current.id)
     elif box == "inbox":  # 내 결재 차례인 문서
         stmt = stmt.where(
