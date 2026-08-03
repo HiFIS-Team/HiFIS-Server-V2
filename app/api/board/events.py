@@ -37,8 +37,9 @@ async def list_events(
     scope: str | None = Query(None),
 ) -> list[Event]:
     stmt = select(Event)
+    # 겹침(overlap): 여러 날 걸치는 일정도 창에 걸리면 포함 — end_at>=from AND start_at<=to
     if from_:
-        stmt = stmt.where(Event.start_at >= from_)
+        stmt = stmt.where(Event.end_at >= from_)
     if to:
         stmt = stmt.where(Event.start_at <= to)
     if scope:
@@ -57,9 +58,12 @@ async def create_event(
         title=payload.title,
         start_at=payload.start_at,
         end_at=payload.end_at,
+        all_day=payload.all_day,
         category=payload.category,
         scope=payload.scope,
         color=payload.color,
+        place=payload.place,
+        attendee_ids=payload.attendee_ids,
         memo=payload.memo,
         owner_id=current.id,
     )
