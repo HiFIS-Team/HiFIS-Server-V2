@@ -13,6 +13,7 @@ from app.core.ratelimit import limiter
 from app.api.auth import auth, invite_keys
 from app.api.board import approvals, events, notices, reactions
 from app.api.chat import chat, notifications
+from app.api.legal import consents
 from app.api.members import members, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
 from app.api.platform import access_logs, accounts, dashboard, documents, files, search
@@ -83,6 +84,7 @@ app.include_router(attendance.router)
 app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
+app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회원 개인정보(§13)
 # scoring — 점수
 app.include_router(scores.router)
 app.include_router(env.router)
