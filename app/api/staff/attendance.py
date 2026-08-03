@@ -165,11 +165,21 @@ async def scan_attendance(
 
 @router.get("/attendance", response_model=list[AttendanceOut])
 async def list_attendance(
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     month: str | None = Query(None),
 ) -> list[AttendanceOut]:
+    # 권한 가드(§60) — 캘린더·연차잔여와 동일. MEMBER 는 본인 근태만(남의 employeeId·미지정 모두 본인 고정).
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        employee_id = current.id
+    elif employee_id and employee_id != current.id and current.role == Role.MANAGER:
+        target = await db.get(Employee, employee_id)
+        if target is None or target.deleted_at is not None:
+            raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+        if target.branch_id != current.branch_id:
+            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
     stmt = select(Attendance)
     if scope:
         stmt = stmt.join(Employee, Employee.id == Attendance.employee_id).where(
