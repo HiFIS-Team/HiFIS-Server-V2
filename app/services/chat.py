@@ -15,6 +15,18 @@ from app.services.notifications import send_push
 from app.ws.manager import manager
 
 
+async def muted_ids(db: AsyncSession, room_id: str) -> set[str]:
+    """이 방 알림을 꺼 둔 사람 — 푸시에서만 뺀다(대화·안읽음은 그대로)."""
+    rows = await db.scalars(
+        select(ChatRoomMember.employee_id).where(
+            ChatRoomMember.room_id == room_id,
+            ChatRoomMember.left_at.is_(None),
+            ChatRoomMember.muted.is_(True),
+        )
+    )
+    return set(rows)
+
+
 async def member_ids(db: AsyncSession, room_id: str) -> list[str]:
     """지금 방에 있는 사람만 — 나간 사람(left_at)은 뺀다."""
     rows = await db.scalars(
@@ -136,9 +148,10 @@ async def post_message(
         room_name=room.name if room else None,
         body=body,
     )
+    silent = await muted_ids(db, room_id)
     pushed = False
     for mid in members:
-        if mid == sender_id:
+        if mid == sender_id or mid in silent:
             continue
         await send_push(db, employee_id=mid, **push)
         pushed = True

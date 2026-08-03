@@ -20,6 +20,7 @@ from app.models.staff.employee import Employee
 from app.schemas.chat.chat import (
     AttachmentOut,
     ChatMemberAdd,
+    ChatMuteSet,
     ChatRoomCreate,
     ChatRoomOut,
     ChatRoomUpdate,
@@ -81,6 +82,32 @@ async def _drop_reactions(db: AsyncSession, message_ids: list[str]) -> None:
     )
 
 
+async def _rejoin(db: AsyncSession, room_id: str, employee_ids: set[str]) -> set[str]:
+    """나갔던 멤버를 되살린다(commit 은 호출부에서). 되살린 사람 id 를 돌려준다.
+
+    멤버십은 지우지 않고 `left_at` 만 찍으므로(§'최근 나간 항목'), 다시 넣을 때
+    행을 새로 만들면 유니크 제약에 걸린다. 있는 행의 `left_at` 을 지운다.
+    """
+    if not employee_ids:
+        return set()
+    rows = (
+        await db.scalars(
+            select(ChatRoomMember).where(
+                ChatRoomMember.room_id == room_id,
+                ChatRoomMember.employee_id.in_(employee_ids),
+            )
+        )
+    ).all()
+    back = set()
+    for row in rows:
+        if row.left_at is not None:
+            row.left_at = None
+        back.add(row.employee_id)
+    if rows:
+        await db.flush()
+    return back
+
+
 async def _find_dm(db: AsyncSession, a: str, b: str) -> ChatRoom | None:
     """a·b 두 사람만의 기존 DM 방(있으면 재사용)."""
     shared = (
@@ -125,6 +152,11 @@ async def create_room(
     if not payload.is_group and len(members) == 2:
         existing = await _find_dm(db, current.id, next(iter(others)))
         if existing is not None:
+            # 예전에 나간 방이면 **둘 다 되살린다.** 다시 말을 거는 순간
+            # 그 대화는 살아 있는 것이고, 안 되살리면 방금 만든 방에서
+            # 403(멤버 아님)이 난다 (실제 발생).
+            await _rejoin(db, existing.id, members)
+            await db.commit()  # flush 만 하면 요청이 끝나며 롤백된다
             return await _room_out(db, existing, current.id)
 
     room = ChatRoom(name=payload.name, is_group=payload.is_group, owner_id=current.id)
@@ -191,6 +223,31 @@ async def update_room(
     return await _room_out(db, room, current.id)
 
 
+@router.patch("/rooms/{room_id}/mute", response_model=ChatRoomOut)
+async def set_mute(
+    room_id: str,
+    payload: ChatMuteSet,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ChatRoomOut:
+    """이 방 알림 끄기/켜기 — **나에게만** 적용된다.
+
+    꺼도 메시지는 그대로 오고 안읽음도 센다. 웹푸시만 안 간다.
+    """
+    room = await _require_member(db, room_id, current.id)
+    membership = await db.scalar(
+        select(ChatRoomMember).where(
+            ChatRoomMember.room_id == room_id,
+            ChatRoomMember.employee_id == current.id,
+            ChatRoomMember.left_at.is_(None),
+        )
+    )
+    if membership is not None and membership.muted != payload.muted:
+        membership.muted = payload.muted
+        await db.commit()
+    return await _room_out(db, room, current.id)
+
+
 @router.post("/rooms/{room_id}/members", response_model=ChatRoomOut, status_code=201)
 async def add_members(
     room_id: str,
@@ -217,7 +274,10 @@ async def add_members(
     if len(people) != len(wanted):
         raise HTTPException(400, detail={"code": "MEMBER_NOT_FOUND", "message": "존재하지 않는 멤버가 있습니다"})
 
+    rejoined = await _rejoin(db, room_id, {p.id for p in people})
     for person in people:
+        if person.id in rejoined:
+            continue  # 예전에 나갔던 사람 — 행이 이미 있어서 되살리기만 한다
         db.add(ChatRoomMember(room_id=room_id, employee_id=person.id))
     if not room.is_group:
         room.is_group = True
@@ -369,11 +429,12 @@ async def mark_read(
 
 # ---------- 헬퍼 ----------
 async def _room_out(db: AsyncSession, room: ChatRoom, me: str) -> ChatRoomOut:
-    last_read = await db.scalar(
-        select(ChatRoomMember.last_read_at).where(
+    mine = await db.scalar(
+        select(ChatRoomMember).where(
             ChatRoomMember.room_id == room.id, ChatRoomMember.employee_id == me
         )
     )
+    last_read = mine.last_read_at if mine else None
     members = await member_ids(db, room.id)
     # 전송 취소한 메시지는 미리보기에도 안읽음 수에도 안 들어간다
     last_msg = await db.scalar(
@@ -402,5 +463,6 @@ async def _room_out(db: AsyncSession, room: ChatRoom, me: str) -> ChatRoomOut:
         member_ids=members,
         last_message=(await _messages_out(db, [last_msg]))[0] if last_msg else None,
         unread_count=unread or 0,
+        muted=bool(mine and mine.muted),
         updated_at=room.updated_at,
     )

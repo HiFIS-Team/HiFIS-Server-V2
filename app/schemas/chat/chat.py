@@ -21,6 +21,12 @@ class ChatRoomUpdate(CamelModel):
     name: str | None = None
 
 
+class ChatMuteSet(CamelModel):
+    """이 방 알림 끄기 — 나에게만 적용된다."""
+
+    muted: bool
+
+
 class ChatMemberAdd(CamelModel):
     member_ids: list[str] = Field(default_factory=list)
 
@@ -81,4 +87,8 @@ class ChatRoomOut(CamelModel):
     member_ids: list[str] = Field(default_factory=list)
     last_message: MessageOut | None = None
     unread_count: int = 0
+
+    # 내가 이 방 알림을 껐는지 — 사람마다 다르다
+    muted: bool = False
+
     updated_at: datetime

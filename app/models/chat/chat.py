@@ -48,6 +48,12 @@ class ChatRoomMember(UUIDMixin, TimestampMixin, Base):
     # 하고, 지워 버리면 언제 나갔는지가 사라진다. null 이면 지금 방에 있는 것.
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 이 방 알림 끄기 — **사람마다 따로다.** 켜 둔 사람에게는 그대로 간다.
+    # 꺼도 대화는 그대로 오고 안읽음도 센다. 푸시만 안 보낸다.
+    muted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
 
 class Message(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "chat_messages"
