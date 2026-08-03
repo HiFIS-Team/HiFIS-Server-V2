@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.enums import MessageKind
-from app.schemas.base import CamelModel
+from app.schemas.base import CamelModel, SignedUrl
 from app.schemas.board.reaction import ReactionAgg
 
 
@@ -23,6 +23,18 @@ class ChatRoomUpdate(CamelModel):
 
 class ChatMemberAdd(CamelModel):
     member_ids: list[str] = Field(default_factory=list)
+
+
+class AttachmentOut(CamelModel):
+    """올린 파일 한 개 — 이 `url` 을 MessageCreate.attachments 에 넣어 보낸다.
+
+    응답 직렬화에서 `/uploads/...` 가 서명 붙은 `/files/...?exp&sig` 로 바뀐다.
+    """
+
+    url: SignedUrl
+    name: str
+    ext: str
+    size: int
 
 
 class MessageCreate(CamelModel):

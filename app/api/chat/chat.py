@@ -6,17 +6,19 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.storage import save_upload
 from app.db.session import get_db
 from app.enums import MessageKind, ReactionTargetType
 from app.models.board.reaction import Reaction
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
 from app.models.staff.employee import Employee
 from app.schemas.chat.chat import (
+    AttachmentOut,
     ChatMemberAdd,
     ChatRoomCreate,
     ChatRoomOut,
@@ -137,14 +139,21 @@ async def create_room(
 
 @router.get("/rooms", response_model=list[ChatRoomOut])
 async def list_rooms(
+    left: bool = Query(False, description="true 면 내가 나간 방(최근 나간 항목)"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ChatRoomOut]:
+    """내 대화 목록. `left=true` 면 **나간 방**을 대신 준다.
+
+    나간 방도 행이 남아 있어서(§`ChatRoomMember.left_at`) 언제 나갔는지와
+    그때까지의 대화를 다시 찾아볼 수 있다.
+    """
+    membership = ChatRoomMember.left_at.isnot(None) if left else ChatRoomMember.left_at.is_(None)
     my_rooms = (
         await db.scalars(
             select(ChatRoom)
             .join(ChatRoomMember, ChatRoomMember.room_id == ChatRoom.id)
-            .where(ChatRoomMember.employee_id == current.id)
+            .where(ChatRoomMember.employee_id == current.id, membership)
         )
     ).all()
     rooms = [await _room_out(db, room, current.id) for room in my_rooms]
@@ -242,22 +251,13 @@ async def leave_room(
         )
     )
     if membership is not None:
-        await db.delete(membership)
+        # 행을 지우지 않고 나간 시각만 찍는다 — '최근 나간 항목'에서 다시 찾는다
+        membership.left_at = datetime.now(timezone.utc)
         await db.commit()
 
-    if not await member_ids(db, room_id):
-        messages = (await db.scalars(select(Message).where(Message.room_id == room_id))).all()
-        await _drop_reactions(db, [m.id for m in messages])
-        for message in messages:
-            # 답글이 서로를 가리키므로 링크를 먼저 끊어야 FK 가 안 걸린다
-            message.reply_to_id = None
-        await db.flush()
-        for message in messages:
-            await db.delete(message)
-        room = await db.get(ChatRoom, room_id)
-        if room is not None:
-            await db.delete(room)
-        await db.commit()
+    # **마지막 사람이 나가도 방을 지우지 않는다.** 지우면 나간 사람의
+    # '최근 나간 항목'에서 그 방이 통째로 사라져 다시 들여다볼 수 없다.
+    # 아무도 없는 방은 활성 목록에 안 뜨므로 걸리적거리지도 않는다.
     return None
 
 
@@ -298,6 +298,25 @@ async def send_message(
         reply_to_id=payload.reply_to_id,
     )
     return (await _messages_out(db, [message]))[0]
+
+
+@router.post("/rooms/{room_id}/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_attachment(
+    room_id: str,
+    file: UploadFile = File(...),
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttachmentOut:
+    """사내톡에 붙일 파일 올리기 — 올린 주소를 메시지 `attachments` 에 넣어 보낸다.
+
+    문서함(`POST /documents`)과 나눈 이유: 그쪽은 폴더·스코프가 필요한 **문서 관리**고,
+    대화에 붙는 사진 한 장은 그 트리에 들어갈 것이 아니다.
+    """
+    await _require_member(db, room_id, current.id)
+    url, ext, size = await save_upload(file)
+    return AttachmentOut(
+        url=url, name=file.filename or f"file.{ext}", ext=ext, size=size
+    )
 
 
 @router.delete("/rooms/{room_id}/messages/{message_id}", status_code=204)

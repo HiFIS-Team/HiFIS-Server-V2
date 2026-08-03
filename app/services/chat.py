@@ -16,8 +16,11 @@ from app.ws.manager import manager
 
 
 async def member_ids(db: AsyncSession, room_id: str) -> list[str]:
+    """지금 방에 있는 사람만 — 나간 사람(left_at)은 뺀다."""
     rows = await db.scalars(
-        select(ChatRoomMember.employee_id).where(ChatRoomMember.room_id == room_id)
+        select(ChatRoomMember.employee_id).where(
+            ChatRoomMember.room_id == room_id, ChatRoomMember.left_at.is_(None)
+        )
     )
     return list(rows)
 
@@ -25,7 +28,9 @@ async def member_ids(db: AsyncSession, room_id: str) -> list[str]:
 async def is_member(db: AsyncSession, room_id: str, employee_id: str) -> bool:
     found = await db.scalar(
         select(ChatRoomMember.id).where(
-            ChatRoomMember.room_id == room_id, ChatRoomMember.employee_id == employee_id
+            ChatRoomMember.room_id == room_id,
+            ChatRoomMember.employee_id == employee_id,
+            ChatRoomMember.left_at.is_(None),
         )
     )
     return found is not None
@@ -40,7 +45,7 @@ async def read_counts(db: AsyncSession, room_id: str, messages: list[Message]) -
     rows = (
         await db.execute(
             select(ChatRoomMember.employee_id, ChatRoomMember.last_read_at).where(
-                ChatRoomMember.room_id == room_id
+                ChatRoomMember.room_id == room_id, ChatRoomMember.left_at.is_(None)
             )
         )
     ).all()

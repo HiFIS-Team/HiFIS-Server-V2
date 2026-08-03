@@ -44,6 +44,10 @@ class ChatRoomMember(UUIDMixin, TimestampMixin, Base):
     )
     last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 나간 시각 — 행을 지우지 않고 남긴다. '최근 나간 항목'에서 다시 찾을 수 있어야
+    # 하고, 지워 버리면 언제 나갔는지가 사라진다. null 이면 지금 방에 있는 것.
+    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
 
 class Message(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "chat_messages"
