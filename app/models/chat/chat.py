@@ -2,15 +2,26 @@
 
 - 멤버십은 조인 테이블(ChatRoomMember)로 — last_read_at 로 안읽음 수 계산.
 - 메시지 반응은 공통 Reaction(targetType=MESSAGE) 재사용 (§6.12).
+- 전송 취소는 **소프트 삭제** — 목록에서 빼되 행은 남긴다.
+  답글이 가리키던 원문이 통째로 사라지면 그 답글이 뜻을 잃는다.
 """
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
+from app.enums import MessageKind
 
 
 class ChatRoom(UUIDMixin, TimestampMixin, Base):
@@ -34,7 +45,7 @@ class ChatRoomMember(UUIDMixin, TimestampMixin, Base):
     last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class Message(UUIDMixin, TimestampMixin, Base):
+class Message(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "chat_messages"
 
     room_id: Mapped[str] = mapped_column(
@@ -43,3 +54,16 @@ class Message(UUIDMixin, TimestampMixin, Base):
     sender_id: Mapped[str] = mapped_column(String(36), ForeignKey("employees.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    # 서버가 남긴 안내(초대·나가기·이름 변경)는 SYSTEM — 보낸 사람은 그 일을 한 사람이다
+    kind: Mapped[MessageKind] = mapped_column(
+        Enum(MessageKind, native_enum=False, length=16),
+        nullable=False,
+        default=MessageKind.TEXT,
+        server_default=MessageKind.TEXT.value,
+    )
+
+    # 답글 대상 — 원문이 지워져도 링크는 남긴다(앱이 '삭제된 메시지'로 그린다)
+    reply_to_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("chat_messages.id"), nullable=True
+    )

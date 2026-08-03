@@ -216,6 +216,17 @@ class ReactionTargetType(StrEnum):
     MESSAGE = "MESSAGE"  # 사내톡 메시지 (§6.11, 추후)
 
 
+class MessageKind(StrEnum):
+    """사내톡 메시지 종류 — 사람이 쓴 것과 서버가 남긴 안내를 가른다.
+
+    SYSTEM 은 앱이 말풍선이 아니라 가운데 회색 한 줄로 그린다
+    (초대·나가기·이름 변경).
+    """
+
+    TEXT = "TEXT"
+    SYSTEM = "SYSTEM"
+
+
 class AccessEvent(StrEnum):
     """접속 로그 이벤트 — 개인정보처리방침 §1-1·§8(접속 기록 보관)."""
 
