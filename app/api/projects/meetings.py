@@ -1,7 +1,7 @@
 """Meeting 라우터 — CLAUDE.md §6.3. 작성=인증, 수정/삭제=작성자/관리자."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
@@ -21,6 +21,41 @@ def _not_found() -> HTTPException:
     return HTTPException(404, detail={"code": "MEETING_NOT_FOUND", "message": "회의록을 찾을 수 없습니다"})
 
 
+def _visible_filter(current: Employee):
+    """목록 가시성 (§6.3). MASTER/ADMIN=전사 조회, 그 외=작성자·참석자·(PROJECT면)담당·COMPANY."""
+    if current.role in (Role.MASTER, Role.ADMIN):
+        return None  # 필터 없음 = 전부
+    return or_(
+        Meeting.scope == MeetingScope.COMPANY,
+        Meeting.author_id == current.id,
+        Meeting.attendee_ids.contains([current.id]),
+        and_(
+            Meeting.scope == MeetingScope.PROJECT,
+            Meeting.project_id.in_(
+                select(Project.id).where(Project.assignee_ids.contains([current.id]))
+            ),
+        ),
+    )
+
+
+async def _can_view(db: AsyncSession, meeting: Meeting, current: Employee) -> bool:
+    if current.role in (Role.MASTER, Role.ADMIN):
+        return True
+    if meeting.author_id == current.id or current.id in (meeting.attendee_ids or []):
+        return True
+    if meeting.scope == MeetingScope.COMPANY:
+        return True
+    if meeting.scope == MeetingScope.PROJECT and meeting.project_id:
+        project = await db.get(Project, meeting.project_id)
+        if project and current.id in (project.assignee_ids or []):
+            return True
+    return False
+
+
+def _forbidden_view() -> HTTPException:
+    return HTTPException(403, detail={"code": "FORBIDDEN", "message": "이 회의록을 볼 권한이 없습니다"})
+
+
 async def _to_out(db: AsyncSession, meetings: list[Meeting]) -> list[MeetingOut]:
     agg = await aggregate_for(db, ReactionTargetType.MEETING, [m.id for m in meetings])
     out = []
@@ -35,6 +70,8 @@ async def _get_owned(meeting_id: str, current: Employee, db: AsyncSession) -> Me
     meeting = await db.get(Meeting, meeting_id)
     if meeting is None:
         raise _not_found()
+    if not await _can_view(db, meeting, current):
+        raise _forbidden_view()  # 못 보는 회의록은 수정·삭제도 불가
     if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and meeting.author_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "작성자만 수정할 수 있습니다"})
     return meeting
@@ -42,12 +79,16 @@ async def _get_owned(meeting_id: str, current: Employee, db: AsyncSession) -> Me
 
 @router.get("", response_model=list[MeetingOut])
 async def list_meetings(
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     scope: MeetingScope | None = Query(None),
     q: str | None = Query(None),
     sort: str | None = Query(None),
 ) -> list[MeetingOut]:
     stmt = select(Meeting)
+    visible = _visible_filter(current)
+    if visible is not None:
+        stmt = stmt.where(visible)
     if scope:
         stmt = stmt.where(Meeting.scope == scope)
     if q:
@@ -81,10 +122,16 @@ async def create_meeting(
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)
-async def get_meeting(meeting_id: str, db: AsyncSession = Depends(get_db)) -> MeetingOut:
+async def get_meeting(
+    meeting_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MeetingOut:
     meeting = await db.get(Meeting, meeting_id)
     if meeting is None:
         raise _not_found()
+    if not await _can_view(db, meeting, current):
+        raise _forbidden_view()
     return (await _to_out(db, [meeting]))[0]
 
 
