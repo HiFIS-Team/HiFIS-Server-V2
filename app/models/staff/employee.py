@@ -39,7 +39,7 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=EmployeeStatus.ACTIVE,
     )
 
-    avatar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#6366f1")
+    avatar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2F54EB")  # 팔레트 첫 색(§2.2)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
     work_status: Mapped[WorkStatus] = mapped_column(

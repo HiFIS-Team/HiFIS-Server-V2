@@ -1,6 +1,8 @@
 """아바타 색 팔레트 — 가입/생성 시 순번대로 분산 배정 (CLAUDE.md §2.2).
 
-기존엔 모두 기본값 #6366f1 로 몰렸음 → 직원 수 기준 라운드로빈으로 골고루.
+⚠️ 이 18색은 **앱 프로필 고르개(HiFIS-App-V2 profile_screen.dart _avatarColors)와 반드시 동일**해야 한다.
+값이 어긋나면 프로필을 열어도 어느 스와치에도 체크가 안 뜬다(앱은 ARGB 정수 비교로 매칭).
+저장 포맷도 앱이 쓰는 것과 같은 `#RRGGBB` 대문자. 직원 수 % 18 로 분산.
 """
 
 from sqlalchemy import func, select
@@ -8,24 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.staff.employee import Employee
 
-# 16색 팔레트(Tailwind 계열, 첫 색 = 기존 기본값). 직원 수 % 16 으로 분산.
+# 앱 디자인 시스템 톤(무채색 베이스)에 맞춘 18색 — 앱 _avatarColors 와 1:1 동일 순서.
 AVATAR_PALETTE: list[str] = [
-    "#6366f1",  # indigo
-    "#f43f5e",  # rose
-    "#f59e0b",  # amber
-    "#10b981",  # emerald
-    "#0ea5e9",  # sky
-    "#8b5cf6",  # violet
-    "#14b8a6",  # teal
-    "#f97316",  # orange
-    "#ec4899",  # pink
-    "#06b6d4",  # cyan
-    "#84cc16",  # lime
-    "#d946ef",  # fuchsia
-    "#3b82f6",  # blue
-    "#ef4444",  # red
-    "#22c55e",  # green
-    "#a855f7",  # purple
+    "#2F54EB", "#2B6BF3", "#5A6ACF", "#3FA7E8", "#3E8FA8", "#3EBFA5",
+    "#3FA85C", "#7CA83E", "#C7952F", "#D07E2C", "#E0662B", "#CC3B33",
+    "#D03A78", "#BE3ACD", "#8E3AD0", "#6B3AD0", "#3E4A5C", "#64748B",
 ]
 
 
