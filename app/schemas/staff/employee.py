@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
+from app.enums import AttendanceStatus, DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
 from app.schemas.base import CamelModel, SignedUrlOptional, normalize_phone
 
 
@@ -65,10 +65,13 @@ class EmployeeOut(CamelModel):
     status_message: str | None = None
     work_status: WorkStatus
     joined_at: datetime
+    resigned_at: datetime | None = None  # 퇴사 시각 (§58) — null=재직 중
     last_active_at: datetime | None = None
     shift_start: str | None = None  # 기본 근무 시간 "HH:MM" (null=미설정 → 첫 로그인 시 설정 유도)
     shift_end: str | None = None
     work_days: list[int] | None = None  # 근무 요일 ISO 1(월)~7(일). null=미설정
+    # 오늘 근태 판정 (§59) — 목록(GET /employees)에서만 채움. 그 외 응답은 null.
+    today_attendance_status: AttendanceStatus | None = None
 
 
 class ScheduleSet(CamelModel):

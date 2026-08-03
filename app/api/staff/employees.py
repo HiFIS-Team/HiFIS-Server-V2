@@ -11,12 +11,14 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.staff.attendance import _attendance_status  # 오늘 근태 판정 재사용(§59, home.py와 동일)
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST
 from app.core.security import hash_password, verify_password
 from app.core.storage import save_avatar
 from app.db.session import get_db
-from app.enums import EmployeeStatus, Role, role_at_least
+from app.enums import AttendanceStatus, EmployeeStatus, LeaveStatus, Role, role_at_least
+from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.staff.employee import (
@@ -65,7 +67,47 @@ async def list_employees(
     if q:
         stmt = stmt.where(Employee.name.ilike(f"%{q}%"))
     result = await db.execute(stmt.order_by(Employee.created_at))
-    return list(result.scalars().all())
+    employees = list(result.scalars().all())
+    return await _with_today_status(db, employees)
+
+
+async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> list[EmployeeOut]:
+    """각 직원에 오늘 근태 판정을 얹어 EmployeeOut 로 반환 (§59). 기록·휴가 배치 로드로 N+1 회피."""
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    ids = [e.id for e in employees]
+    recs: dict[str, Attendance] = {}
+    leaves: dict[str, LeaveRequest] = {}
+    if ids:
+        for r in (
+            await db.execute(
+                select(Attendance).where(Attendance.employee_id.in_(ids), Attendance.date == today)
+            )
+        ).scalars():
+            recs[r.employee_id] = r
+        for lv in (
+            await db.execute(
+                select(LeaveRequest).where(
+                    LeaveRequest.employee_id.in_(ids),
+                    LeaveRequest.status == LeaveStatus.APPROVED,
+                    LeaveRequest.start_date <= today,
+                    LeaveRequest.end_date >= today,
+                )
+            )
+        ).scalars():
+            leaves.setdefault(lv.employee_id, lv)
+    out: list[EmployeeOut] = []
+    for e in employees:
+        model = EmployeeOut.model_validate(e)
+        rec = recs.get(e.id)
+        if rec is not None:
+            model.today_attendance_status = _attendance_status(rec, e.shift_start, e.shift_end, today)
+        elif e.id in leaves:
+            model.today_attendance_status = AttendanceStatus.ON_LEAVE
+        elif e.work_days and today.isoweekday() not in set(e.work_days):
+            model.today_attendance_status = AttendanceStatus.DAY_OFF
+        # else: 근무일인데 기록 없음 → 출근 전(null). 오늘은 결근 판정 안 함(home.py와 동일).
+        out.append(model)
+    return out
 
 
 @router.get("/me", response_model=EmployeeOut)
@@ -175,8 +217,10 @@ async def withdraw_me(
     user.avatar_url = None
     user.status_message = None
     # emp_no 는 유지(비PII 식별자). deleted_at 세팅으로 스캔은 자동 제외됨
+    now = datetime.now(timezone.utc)
     user.status = EmployeeStatus.RESIGNED
-    user.deleted_at = datetime.now(timezone.utc)
+    user.resigned_at = now  # 퇴사 시각(§58)
+    user.deleted_at = now
     await db.commit()
     _remove_local(old_avatar)
     return None
@@ -242,6 +286,8 @@ async def update_employee(
         await _get_branch_or_400(db, data["branch_id"])
     for key, value in data.items():
         setattr(employee, key, value)
+    if "status" in data:  # 퇴사 시각 동기화(§58) — RESIGNED 되면 기록, 복직하면 해제
+        employee.resigned_at = datetime.now(timezone.utc) if data["status"] == EmployeeStatus.RESIGNED else None
     await db.commit()
     await db.refresh(employee)
     return employee
@@ -270,6 +316,9 @@ async def delete_employee(
         )
         if not other_masters:
             raise HTTPException(409, detail={"code": "LAST_MASTER", "message": "마지막 마스터는 삭제할 수 없습니다"})
-    employee.deleted_at = datetime.now(timezone.utc)  # 소프트 삭제
+    now = datetime.now(timezone.utc)  # 소프트 삭제 = 퇴사 처리(§58)
+    employee.deleted_at = now
+    employee.status = EmployeeStatus.RESIGNED
+    employee.resigned_at = now
     await db.commit()
     return None

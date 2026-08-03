@@ -13,6 +13,7 @@ class Role(StrEnum):
 class Rank(StrEnum):
     TRAINER = "TRAINER"              # 트레이너 (권한 MEMBER)
     FC = "FC"                        # FC 정규 (권한 MEMBER)
+    MARKETER = "MARKETER"            # 마케터 (권한 MEMBER)
     TEAM_LEAD = "TEAM_LEAD"          # 팀장 (권한 MANAGER)
     STORE_MANAGER = "STORE_MANAGER"  # 점장 (권한 MANAGER)
     DEVELOPER = "DEVELOPER"          # 개발자 (권한 MASTER)
@@ -20,7 +21,7 @@ class Rank(StrEnum):
 
 
 def role_for_rank(rank: "Rank") -> "Role":
-    """직급 → 권한 매핑. FC·트레이너=MEMBER / 팀장·점장=MANAGER / 개발자·대표=MASTER.
+    """직급 → 권한 매핑. 트레이너·FC·마케터=MEMBER / 팀장·점장=MANAGER / 개발자·대표=MASTER.
 
     ※ ADMIN(전 지점 조회 전용 참관 권한)은 어느 직급에도 자동 매핑되지 않는다 —
       대표(MASTER)가 직원 수정에서 수동 지정한다.

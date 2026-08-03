@@ -51,6 +51,8 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # 퇴사 시각 — status=RESIGNED 로 바뀌거나 삭제(퇴사) 시 기록. null=재직 중 (§58)
+    resigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 급여 공제 방식 (§5) — 직원별 설정
