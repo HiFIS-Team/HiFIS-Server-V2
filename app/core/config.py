@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     smtp_from: str = ""          # 발신 표시 주소(비면 smtp_user 사용)
     smtp_starttls: bool = True
 
-    # 초기 부트스트랩 시드 (app.seed) — 첫 지점·관리자
-    seed_branch_name: str = "본사"
+    # 초기 부트스트랩 시드 (app.seed) — 첫 지점(전사 HQ)·관리자
+    seed_branch_name: str = "전체"  # HQ 지점명 (§62). 기존 HQ 는 type 으로 찾아 재사용.
     seed_admin_name: str = "관리자"
     seed_admin_email: str = "admin@hifis.local"
     seed_admin_password: str = "admin1234"

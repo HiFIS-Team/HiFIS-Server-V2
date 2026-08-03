@@ -42,9 +42,10 @@ ACCOUNTS = [
 
 async def seed_dev() -> None:
     async with SessionLocal() as db:
+        # HQ(전사) 지점은 type 으로 찾는다 — 이름이 바뀌어도(본사→전체, §62) 안전.
         branch = (
-            await db.execute(select(Branch).where(Branch.name == settings.seed_branch_name))
-        ).scalar_one_or_none()
+            await db.execute(select(Branch).where(Branch.type == "HQ"))
+        ).scalars().first()
         if branch is None:
             branch = Branch(name=settings.seed_branch_name, type="HQ")
             db.add(branch)
