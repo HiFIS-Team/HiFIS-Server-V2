@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from pydantic import Field
+
 from app.enums import ScoreCategory
 from app.schemas.base import CamelModel
 
@@ -32,6 +34,38 @@ class RankingItem(CamelModel):
     employee_id: str
     name: str
     points: int
+
+
+class RankingBoardItem(CamelModel):
+    """랭킹 화면이 사람마다 보여주는 한 줄.
+
+    앱은 이 값들로 항목별 순위를 직접 세운다 — 서버가 탭마다 따로 주면
+    같은 사람의 값이 탭마다 어긋날 수 있다.
+    """
+
+    employee_id: str
+    name: str
+    branch_id: str
+
+    # 매출 — 그 달 등록권 결제액과 신규/재등록 건수
+    revenue: int = 0
+    new_signups: int = 0
+    re_signups: int = 0
+
+    # 친절 — 점수(원장 합)와 리뷰 수·별점 평균
+    kindness: int = 0
+    reviews: int = 0
+    stars: float = 0.0
+
+    # 프로젝트 — 그 달 기한인 것 중 담당분
+    project_done: int = 0
+    project_total: int = 0
+
+    # 환경정비 수행 횟수
+    care: int = 0
+
+    # 지난달 순위 — [매출, 친절, 프로젝트, 환경, 종합]. 0 이면 순위 없음
+    last_rank: list[int] = Field(default_factory=lambda: [0, 0, 0, 0, 0])
 
 
 class ScoreSummary(CamelModel):

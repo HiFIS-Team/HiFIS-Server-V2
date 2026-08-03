@@ -9,12 +9,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.periods import current_period
 from app.db.session import get_db
 from app.enums import RankingKind, Role, ScoreCategory
 from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
-from app.schemas.scoring.score import RankingItem, ScoreCreate, ScoreEventOut, ScoreSummary
+from app.schemas.scoring.score import (
+    RankingBoardItem,
+    RankingItem,
+    ScoreCreate,
+    ScoreEventOut,
+    ScoreSummary,
+)
 from app.services.ranking import kind_conditions
+from app.services.ranking_board import build_board, rank_board
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
@@ -70,6 +78,34 @@ async def ranking(
         RankingItem(rank=i + 1, employee_id=row.id, name=row.name, points=row.points)
         for i, row in enumerate(rows)
     ]
+
+
+@router.get("/ranking/board", response_model=list[RankingBoardItem])
+async def ranking_board(
+    db: AsyncSession = Depends(get_db),
+    period: str | None = Query(None, description="YYYY-MM (없으면 이번 달)"),
+    branch_id: str | None = Query(None, alias="branchId"),
+) -> list[RankingBoardItem]:
+    """랭킹 화면 한 판 — 사람마다 항목별 값과 **지난달 순위**를 같이 준다.
+
+    `/scores/ranking` 은 kind 별 점수 합만 주는데, 앱 화면은 "신규 3 · 재등록 5"
+    같은 근거 줄과 지난달 대비 변동을 같이 보여준다. 그 값들이 등록권·설문·
+    환경정비·프로젝트에 흩어져 있어 여기서 한 번에 모은다.
+
+    순위는 **앱이 매긴다** — 지점 필터를 바꿀 때마다 다시 요청하지 않게.
+    """
+    period = period or current_period()
+    board = await build_board(db, period=period, branch_id=branch_id)
+
+    # 지난달 순위 — 같은 방식으로 지난달 판을 만들어 등수만 뽑는다
+    year, month = (int(x) for x in period.split("-"))
+    before = f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
+    last = await build_board(db, period=before, branch_id=branch_id)
+    ranks = rank_board(last)
+    for row in board:
+        row["lastRank"] = ranks.get(row["employeeId"], [0, 0, 0, 0, 0])
+
+    return [RankingBoardItem.model_validate(row) for row in board]
 
 
 @router.get("/summary", response_model=ScoreSummary)

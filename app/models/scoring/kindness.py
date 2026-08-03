@@ -5,7 +5,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, SmallInteger, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -23,6 +23,10 @@ class KindnessSurvey(UUIDMixin, TimestampMixin, Base):
     member_name: Mapped[str] = mapped_column(String(50), nullable=False)  # ④
     member_phone: Mapped[str] = mapped_column(String(30), nullable=False)
     consent: Mapped[bool] = mapped_column(Boolean, nullable=False)  # ⑤ 동의(필수)
+
+    # 별점 1~5 — **선택**이다. 앱 랭킹의 '리뷰 27건 · ★4.5' 가 이 값을 쓴다.
+    # 안 받은 설문은 null 이고 평균에서 빠진다.
+    stars: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
