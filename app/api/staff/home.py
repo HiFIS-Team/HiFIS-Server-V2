@@ -15,14 +15,16 @@ from app.api.staff.attendance import _attendance_status
 from app.core.deps import get_current_user
 from app.core.periods import KST, current_period
 from app.db.session import get_db
-from app.enums import AttendanceStatus, LeaveStatus
+from app.enums import ApprovalStatus, AttendanceStatus, LeaveStatus, PayslipStatus, Role
+from app.models.board.approval import Approval
 from app.models.board.notice import Notice
 from app.models.board.notice_read import NoticeRead
+from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
-from app.schemas.staff.home import HomeAttendanceOut, HomeSummaryOut
+from app.schemas.staff.home import HomeAttendanceOut, HomePendingOut, HomeSummaryOut
 
 router = APIRouter(tags=["home"])
 
@@ -95,10 +97,44 @@ async def my_home(
         )
     )
 
+    # ── 결재를 기다리는 것 (MASTER·ADMIN 만) ──
+    # 대표·관리자는 출근을 안 해서 홈의 출퇴근 카드가 늘 비어 있다.
+    # 그 자리에 놓을 '지금 눌러야 할 것'을 여기서 같이 실어 준다 —
+    # 앱이 따로 세면 홈 한 장에 요청이 4개가 된다.
+    pending = None
+    if current.role in (Role.MASTER, Role.ADMIN):
+        pending = HomePendingOut(
+            approvals=int(
+                await db.scalar(
+                    select(func.count())
+                    .select_from(Approval)
+                    .where(Approval.status == ApprovalStatus.IN_PROGRESS)
+                )
+                or 0
+            ),
+            payslips=int(
+                await db.scalar(
+                    select(func.count())
+                    .select_from(Payslip)
+                    .where(Payslip.status == PayslipStatus.SUBMITTED)
+                )
+                or 0
+            ),
+            leaves=int(
+                await db.scalar(
+                    select(func.count())
+                    .select_from(LeaveRequest)
+                    .where(LeaveRequest.status == LeaveStatus.PENDING)
+                )
+                or 0
+            ),
+        )
+
     return HomeSummaryOut(
         period=period,
         today_attendance=att,
         incomplete_projects=int(incomplete or 0),
         unread_notices=int(unread or 0),
         month_score=int(month_score or 0),
+        pending=pending,
     )
