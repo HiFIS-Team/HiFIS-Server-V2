@@ -46,9 +46,18 @@ router = APIRouter(tags=["attendance"])
 OFFHOURS_THRESHOLD_MIN = 60
 OFFHOURS_POINTS = 10
 
-# 야근 판정 — 퇴근 스캔이 설정 퇴근시간보다 이 분수 이상 늦으면 야근.
+# 야근 판정 — 설정 퇴근시간에서 이 분수를 넘기면 야근. 퇴근 스캔을 기다리지 않고
+# **시계로도** 잡는다(아직 일하는 중이면 '출근'이 아니라 '야근'이다).
 # 근무 외 출근 점수와 같은 값으로 둔다: 점수를 받는 날과 화면에 야근으로 뜨는 날이 갈리면 헷갈린다.
 OVERTIME_THRESHOLD_MIN = OFFHOURS_THRESHOLD_MIN
+
+# 자정을 넘겨 퇴근한 뒤 '퇴근'으로 남겨 두는 시간. 지나면 미출근으로 돌아간다.
+# (자정 전에 퇴근했으면 날짜가 바뀌는 순간 저절로 미출근이 된다)
+OVERNIGHT_GRACE_MIN = 60
+
+# 이 시각(KST) 전의 첫 스캔은 **어제 퇴근**으로 본다 — 야근이 자정을 넘긴 경우다.
+# 이보다 늦으면 평범한 출근 스캔이라 어제 기록을 건드리지 않는다.
+OVERNIGHT_CHECKOUT_BEFORE_MIN = 5 * 60
 
 
 def _hhmm_to_min(s: str) -> int:
@@ -62,28 +71,53 @@ def _kst_min(dt: datetime) -> int:
 
 
 def _attendance_status(
-    rec: Attendance, shift_start: str | None, shift_end: str | None, today: date
+    rec: Attendance, shift_start: str | None, shift_end: str | None, now_kst: datetime
 ) -> AttendanceStatus:
     """근무시간 대비 판정(§6.9) — 정상/지각/조기퇴근/야근. 근무시간 미설정이면 UNKNOWN.
 
     결근(근무일인데 기록 없음)은 근무 요일 스케줄이 없어 여기서 판정하지 않는다.
     지각과 야근이 겹치면 **지각이 이긴다** — 값이 하나뿐이고 먼저 봐야 하는 쪽이다.
+
+    아직 퇴근을 안 찍었어도 **시계가 퇴근시간을 넘기면 야근**이다. 퇴근 스캔을
+    기다리면 밤 11시까지 남은 사람이 화면에서는 그냥 '출근'으로 보인다.
     """
     if not shift_start or not shift_end or rec.check_in is None:
         return AttendanceStatus.UNKNOWN
+    end_min = _hhmm_to_min(shift_end)
     late = _kst_min(rec.check_in) > _hhmm_to_min(shift_start)
     if rec.check_out is None:
-        return AttendanceStatus.IN_PROGRESS if rec.date >= today else AttendanceStatus.NO_CHECKOUT
-    early = _kst_min(rec.check_out) < _hhmm_to_min(shift_end)
+        if rec.date < now_kst.date():
+            return AttendanceStatus.NO_CHECKOUT
+        if _kst_min(now_kst) >= end_min + OVERTIME_THRESHOLD_MIN:
+            return AttendanceStatus.OVERTIME  # 아직 안 갔고 퇴근시간을 넘겼다
+        return AttendanceStatus.IN_PROGRESS
+    # 자정을 넘겨 찍었으면 하루를 더해야 '퇴근시간보다 몇 분 이른가/늦은가'가 나온다.
+    # 안 더하면 새벽 1시 퇴근이 0시 기준 90분이 되어 **조기퇴근**으로 잡힌다.
+    out_min = _kst_min(rec.check_out) + (
+        1440 if rec.check_out.astimezone(KST).date() > rec.date else 0
+    )
+    early = out_min < end_min
     if late and early:
         return AttendanceStatus.LATE_AND_EARLY
     if late:
         return AttendanceStatus.LATE
     if early:
         return AttendanceStatus.EARLY_LEAVE
-    if _kst_min(rec.check_out) >= _hhmm_to_min(shift_end) + OVERTIME_THRESHOLD_MIN:
+    if out_min >= end_min + OVERTIME_THRESHOLD_MIN:
         return AttendanceStatus.OVERTIME
     return AttendanceStatus.NORMAL
+
+
+def _just_left_overnight(prev: Attendance | None, now_kst: datetime) -> bool:
+    """자정을 넘겨 퇴근한 직후인가 — 그 뒤 [OVERNIGHT_GRACE_MIN] 분은 '퇴근'으로 남긴다.
+
+    퇴근 스캔이 어제 기록에 붙어서, 그대로 두면 찍자마자 미출근으로 돌아간다.
+    """
+    if prev is None or prev.check_out is None:
+        return False
+    if prev.check_out.astimezone(KST).date() != now_kst.date():
+        return False  # 어제 안에 퇴근했다 — 날짜가 바뀌었으니 이미 미출근이다
+    return (now_kst - prev.check_out).total_seconds() <= OVERNIGHT_GRACE_MIN * 60
 
 
 def _absent_today(employee: Employee, now_kst: datetime) -> bool:
@@ -158,6 +192,21 @@ async def scan_attendance(
         )
     ).scalar_one_or_none()
 
+    # 야근이 자정을 넘긴 경우 — 새벽 첫 스캔은 **어제 퇴근**이다.
+    # 그냥 두면 새벽 1시 퇴근이 오늘 출근으로 잡혀 어제는 퇴근 누락으로 남는다.
+    overnight = False
+    if record is None and now_min < OVERNIGHT_CHECKOUT_BEFORE_MIN:
+        prev = (
+            await db.execute(
+                select(Attendance).where(
+                    Attendance.employee_id == target.id,
+                    Attendance.date == today - timedelta(days=1),
+                )
+            )
+        ).scalar_one_or_none()
+        if prev is not None and prev.check_in is not None and prev.check_out is None:
+            record, overnight = prev, True
+
     if record is None:  # 첫 스캔 = 출근
         record = Attendance(
             employee_id=target.id, date=today, check_in=now, source=AttendanceSource.BARCODE
@@ -172,15 +221,17 @@ async def scan_attendance(
         if record.check_in is not None:
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
         action = "퇴근"
-        # 기본 퇴근보다 1시간+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만)
-        if target.shift_end and now_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
-            await _award_offhours(db, target, today.isoformat(), "out", "초과 근무")
+        # 기본 퇴근보다 1시간+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만).
+        # 자정을 넘겼으면 하루를 더해야 '몇 분 늦었나'가 나온다. 점수는 그 근무일 몫이다.
+        out_min = now_min + (1440 if overnight else 0)
+        if target.shift_end and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
+            await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
     await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
     await db.commit()
     await db.refresh(record)
     out = AttendanceOut.model_validate(record)
-    out.status = _attendance_status(record, target.shift_start, target.shift_end, now_kst.date())
+    out.status = _attendance_status(record, target.shift_start, target.shift_end, now_kst)
     return out
 
 
@@ -224,12 +275,12 @@ async def list_attendance(
             )
         ).all():
             shifts[eid] = (ss, se)
-    today = datetime.now(timezone.utc).astimezone(KST).date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
     out: list[AttendanceOut] = []
     for r in rows:
         ss, se = shifts.get(r.employee_id, (None, None))
         o = AttendanceOut.model_validate(r)
-        o.status = _attendance_status(r, ss, se, today)
+        o.status = _attendance_status(r, ss, se, now_kst)
         out.append(o)
     return out
 
@@ -302,7 +353,7 @@ async def attendance_calendar(
             out.append(
                 AttendanceDayOut(
                     date=day,
-                    status=_attendance_status(rec, target.shift_start, target.shift_end, today),
+                    status=_attendance_status(rec, target.shift_start, target.shift_end, now_kst),
                     check_in=rec.check_in,
                     check_out=rec.check_out,
                     work_minutes=rec.work_minutes,
@@ -396,7 +447,7 @@ async def attendance_calendar_all(
             on_leave = next((lv for lv in my_leaves if lv.start_date <= day <= lv.end_date), None)
             status: AttendanceStatus | None = None
             if rec is not None:
-                status = _attendance_status(rec, emp.shift_start, emp.shift_end, today)
+                status = _attendance_status(rec, emp.shift_start, emp.shift_end, now_kst)
                 if status == AttendanceStatus.UNKNOWN:
                     status = None  # 근무시간 미설정 — 그릴 자리가 없다
             elif on_leave is not None:

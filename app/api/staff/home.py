@@ -4,14 +4,18 @@
 오늘 근태 · 내 미완료 프로젝트 수 · 안 읽은 공지 수 · 이번 달 내 점수.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 오늘 근태 판정은 근태 라우터의 로직을 재사용(정상/지각/조기퇴근 등 동일 기준)
-from app.api.staff.attendance import _absent_today, _attendance_status
+from app.api.staff.attendance import (
+    _absent_today,
+    _attendance_status,
+    _just_left_overnight,
+)
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST, current_period
 from app.db.session import get_db
@@ -59,12 +63,20 @@ async def my_home(
     att = HomeAttendanceOut()
     if rec is not None:
         att = HomeAttendanceOut(
-            status=_attendance_status(rec, current.shift_start, current.shift_end, today),
+            status=_attendance_status(rec, current.shift_start, current.shift_end, now_kst),
             check_in=rec.check_in,
             check_out=rec.check_out,
             work_minutes=rec.work_minutes,
         )
     else:
+        prev = (
+            await db.execute(
+                select(Attendance).where(
+                    Attendance.employee_id == current.id,
+                    Attendance.date == today - timedelta(days=1),
+                )
+            )
+        ).scalar_one_or_none()
         lv = (
             await db.execute(
                 select(LeaveRequest).where(
@@ -75,7 +87,15 @@ async def my_home(
                 )
             )
         ).scalars().first()
-        if lv is not None:
+        if _just_left_overnight(prev, now_kst):
+            # 자정을 넘겨 퇴근했다 — 잠깐은 '퇴근'으로 두고 그 뒤 미출근으로 돌아간다
+            att = HomeAttendanceOut(
+                status=AttendanceStatus.NORMAL,
+                check_in=prev.check_in,
+                check_out=prev.check_out,
+                work_minutes=prev.work_minutes,
+            )
+        elif lv is not None:
             att = HomeAttendanceOut(
                 status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
             )

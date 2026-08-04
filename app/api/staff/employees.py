@@ -5,7 +5,7 @@
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.staff.attendance import (  # 오늘 근태 판정 재사용(§59, home.py와 동일)
     _absent_today,
     _attendance_status,
+    _just_left_overnight,
 )
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST
@@ -80,14 +81,18 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
     today = now_kst.date()
     ids = [e.id for e in employees]
     recs: dict[str, Attendance] = {}
+    prevs: dict[str, Attendance] = {}  # 어제 기록 — 자정 넘겨 퇴근한 직후를 가리려고
     leaves: dict[str, LeaveRequest] = {}
     if ids:
         for r in (
             await db.execute(
-                select(Attendance).where(Attendance.employee_id.in_(ids), Attendance.date == today)
+                select(Attendance).where(
+                    Attendance.employee_id.in_(ids),
+                    Attendance.date.in_([today, today - timedelta(days=1)]),
+                )
             )
         ).scalars():
-            recs[r.employee_id] = r
+            (recs if r.date == today else prevs)[r.employee_id] = r
         for lv in (
             await db.execute(
                 select(LeaveRequest).where(
@@ -104,7 +109,10 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
         model = EmployeeOut.model_validate(e)
         rec = recs.get(e.id)
         if rec is not None:
-            model.today_attendance_status = _attendance_status(rec, e.shift_start, e.shift_end, today)
+            model.today_attendance_status = _attendance_status(rec, e.shift_start, e.shift_end, now_kst)
+        elif _just_left_overnight(prevs.get(e.id), now_kst):
+            # 자정을 넘겨 퇴근했다 — 잠깐은 '퇴근'으로 두고 그 뒤 미출근으로 돌아간다
+            model.today_attendance_status = AttendanceStatus.NORMAL
         elif e.id in leaves:
             model.today_attendance_status = AttendanceStatus.ON_LEAVE
         elif e.work_days and today.isoweekday() not in set(e.work_days):
