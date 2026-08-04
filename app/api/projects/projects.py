@@ -411,19 +411,23 @@ def _award_out(event: ScoreEvent) -> ProjectAwardOut:
     )
 
 
-@router.post("/{project_id}/award", response_model=ProjectAwardOut,
+@router.post("/{project_id}/award", response_model=list[ProjectAwardOut],
              dependencies=[Depends(require_role(Role.MASTER))])
 async def award_project(
     project_id: str,
     payload: ProjectAwardCreate,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> ProjectAwardOut:
-    """담당자 점수 조정 — **MASTER 만**.
+) -> list[ProjectAwardOut]:
+    """프로젝트 점수 조정 — **MASTER 만**.
 
     완료하면 자동으로 10점이 붙는다. 그 위에서 대표가 판단해 올리거나 깎는다 —
     기한 안에 힘든 걸 해냈으면 최대 100, 완료라고만 찍고 실제로 안 했으면 -100.
     여기서 주는 값이 그 사람이 이 프로젝트에서 받는 **최종 점수**다 (더해지지 않는다).
+
+    **`employeeId` 를 안 주면 담당자 전원에게 같은 점수를 매긴다.**
+    프로젝트는 다 같이 하는 일이라 보통 이쪽을 쓴다. 한 트랜잭션이라
+    중간에 실패해도 몇 명만 매겨진 상태로 남지 않는다.
 
     재부여하면 갱신된다. 한 번 사람이 손대면 진행률이 내려가도 회수되지 않는다.
     """
@@ -432,39 +436,52 @@ async def award_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    if payload.employee_id not in project.assignee_ids:
-        raise HTTPException(400, detail={"code": "NOT_ASSIGNEE", "message": "프로젝트 담당자가 아닙니다"})
-    employee = await db.get(Employee, payload.employee_id)
-    if employee is None:
-        raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원이 존재하지 않습니다"})
 
-    # 같은 프로젝트·같은 직원은 하나만 — 재부여 시 점수·코멘트 갱신(재평가)
-    existing = await db.scalar(
-        select(ScoreEvent).where(
-            ScoreEvent.category == ScoreCategory.PROJECT,
-            ScoreEvent.source_ref_id == project_id,
-            ScoreEvent.employee_id == payload.employee_id,
-        )
-    )
-    if existing is not None:
-        existing.points = payload.points
-        existing.reason = payload.comment
-        existing.created_by_id = current.id
-        event = existing
+    assignees = list(project.assignee_ids or [])
+    if payload.employee_id is None:
+        targets = assignees
+        if not targets:
+            raise HTTPException(400, detail={"code": "NO_ASSIGNEE", "message": "담당자가 없는 프로젝트입니다"})
     else:
-        event = await accrue_score(
-            db,
-            employee_id=payload.employee_id,
-            branch_id=employee.branch_id,
-            category=ScoreCategory.PROJECT,
-            points=payload.points,
-            created_by_id=current.id,
-            source_ref_id=project_id,
-            reason=payload.comment,
+        if payload.employee_id not in assignees:
+            raise HTTPException(400, detail={"code": "NOT_ASSIGNEE", "message": "프로젝트 담당자가 아닙니다"})
+        targets = [payload.employee_id]
+
+    events: list[ScoreEvent] = []
+    for employee_id in targets:
+        employee = await db.get(Employee, employee_id)
+        if employee is None:
+            raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원이 존재하지 않습니다"})
+        # 같은 프로젝트·같은 직원은 하나만 — 재부여 시 점수·코멘트 갱신(재평가)
+        existing = await db.scalar(
+            select(ScoreEvent).where(
+                ScoreEvent.category == ScoreCategory.PROJECT,
+                ScoreEvent.source_ref_id == project_id,
+                ScoreEvent.employee_id == employee_id,
+            )
         )
+        if existing is not None:
+            existing.points = payload.points
+            existing.reason = payload.comment
+            existing.created_by_id = current.id
+            events.append(existing)
+        else:
+            events.append(
+                await accrue_score(
+                    db,
+                    employee_id=employee_id,
+                    branch_id=employee.branch_id,
+                    category=ScoreCategory.PROJECT,
+                    points=payload.points,
+                    created_by_id=current.id,
+                    source_ref_id=project_id,
+                    reason=payload.comment,
+                )
+            )
     await db.commit()
-    await db.refresh(event)
-    return _award_out(event)
+    for event in events:
+        await db.refresh(event)
+    return [_award_out(event) for event in events]
 
 
 @router.get("/{project_id}/awards", response_model=list[ProjectAwardOut])
