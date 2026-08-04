@@ -112,6 +112,58 @@ async def _recompute_progress(db: AsyncSession, project: Project) -> None:
             .where(ProjectTodo.project_id == project.id, ProjectTodo.done.is_(True))
         )
         project.progress = round(done / total * 100)
+    await _settle_completion(db, project)
+
+
+# 완료하면 담당자마다 붙는 기본 점수. MASTER 가 여기서부터 올리거나 깎는다.
+PROJECT_POINTS = 10
+
+
+async def _settle_completion(db: AsyncSession, project: Project) -> None:
+    """완료(100%)에 맞춰 담당자 점수를 정리한다. commit 은 호출자가 한다.
+
+    - 100% 가 되면 담당자 **전원에게 기본 10점**. 이미 점수가 있는 사람은 건드리지
+      않는다 — 되돌렸다 다시 완료해도 두 번 쌓이지 않는다.
+    - 100% 아래로 내려가면 **자동으로 준 것만** 회수한다. MASTER 가 매긴 점수는
+      그대로 둔다 (평가는 진행률과 별개로 내린 판단이라 되돌리면 안 된다).
+
+    자동인지는 `created_by_id` 로 가른다 — 자동은 None, 사람이 준 것은 그 사람 id.
+    """
+    existing = (
+        (
+            await db.execute(
+                select(ScoreEvent).where(
+                    ScoreEvent.category == ScoreCategory.PROJECT,
+                    ScoreEvent.source_ref_id == project.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    scored = {event.employee_id for event in existing}
+
+    if project.progress >= 100:
+        for employee_id in project.assignee_ids or []:
+            if employee_id in scored:
+                continue
+            employee = await db.get(Employee, employee_id)
+            if employee is None:
+                continue
+            await accrue_score(
+                db,
+                employee_id=employee_id,
+                branch_id=employee.branch_id,
+                category=ScoreCategory.PROJECT,
+                points=PROJECT_POINTS,
+                source_ref_id=project.id,
+                reason="프로젝트 완료",
+            )
+        return
+
+    for event in existing:
+        if event.created_by_id is None:  # 사람이 매긴 점수는 남긴다
+            await db.delete(event)
 
 
 def _can_touch(project: Project, current: Employee) -> bool:
@@ -182,6 +234,7 @@ async def create_project(
     db.add(project)
     await db.flush()
     await _log_activity(db, project.id, current.id, ProjectActivityKind.CREATED, "프로젝트를 만들었어요")
+    await _settle_completion(db, project)  # 드물지만 처음부터 100% 로 만드는 경우
     await db.commit()
     await db.refresh(project)
     return _to_out(project)  # 새 프로젝트는 체크리스트 0
@@ -339,14 +392,21 @@ def _award_out(event: ScoreEvent) -> ProjectAwardOut:
 
 
 @router.post("/{project_id}/award", response_model=ProjectAwardOut,
-             dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+             dependencies=[Depends(require_role(Role.MASTER))])
 async def award_project(
     project_id: str,
     payload: ProjectAwardCreate,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectAwardOut:
-    """담당자에게 프로젝트 달성 점수 부여(기본 10, -100 ~ +100) + 코멘트. 재부여 시 갱신."""
+    """담당자 점수 조정 — **MASTER 만**.
+
+    완료하면 자동으로 10점이 붙는다. 그 위에서 대표가 판단해 올리거나 깎는다 —
+    기한 안에 힘든 걸 해냈으면 최대 100, 완료라고만 찍고 실제로 안 했으면 -100.
+    여기서 주는 값이 그 사람이 이 프로젝트에서 받는 **최종 점수**다 (더해지지 않는다).
+
+    재부여하면 갱신된다. 한 번 사람이 손대면 진행률이 내려가도 회수되지 않는다.
+    """
     if not payload.comment.strip():
         raise HTTPException(400, detail={"code": "REASON_REQUIRED", "message": "점수 부여 사유는 필수입니다"})
     project = await db.get(Project, project_id)
@@ -619,6 +679,10 @@ async def update_project(
         await _log_activity(db, project_id, current.id, ProjectActivityKind.DUE, "기한을 변경했어요")
     if "assignee_ids" in fields and set(project.assignee_ids or []) != old_assignees:
         await _log_activity(db, project_id, current.id, ProjectActivityKind.ASSIGNEE, "담당자를 변경했어요")
+    # 진행률을 손으로 바꾸거나 담당자가 늘면 완료 점수를 다시 셈한다
+    # (체크리스트 쪽은 _recompute_progress 안에서 이미 부른다)
+    if "progress" in fields or "assignee_ids" in fields:
+        await _settle_completion(db, project)
     await db.commit()
     await db.refresh(project)
     return await _single_out(db, project)
@@ -639,6 +703,14 @@ async def delete_project(
     await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project_id))
     await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project_id))
     await db.execute(delete(ProjectActivity).where(ProjectActivity.project_id == project_id))
+    # 완료 점수도 같이 지운다. `source_ref_id` 는 FK 가 아니라 그냥 두면 남는데,
+    # 없어진 프로젝트 때문에 랭킹 점수가 올라가 있고 근거를 찾을 길이 없게 된다.
+    await db.execute(
+        delete(ScoreEvent).where(
+            ScoreEvent.category == ScoreCategory.PROJECT,
+            ScoreEvent.source_ref_id == project_id,
+        )
+    )
     await db.delete(project)
     await db.commit()
     return None
