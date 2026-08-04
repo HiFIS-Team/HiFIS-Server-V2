@@ -36,6 +36,33 @@ def _forbidden() -> HTTPException:
     return HTTPException(403, detail={"code": "FORBIDDEN", "message": "작성자 또는 관리자만 가능합니다"})
 
 
+#: 개인 문서함 갈래 — 이 값이면 **올린 사람만** 보고 만진다.
+#: `scope` 는 원래 조회 필터일 뿐이었는데, 개인 문서를 담게 되면서
+#: 이 값 하나만 실제 권한이 됐다. **MASTER 도 남의 개인 문서는 못 본다.**
+PERSONAL_SCOPE = "개인"
+
+
+def _personal_blocked() -> HTTPException:
+    return HTTPException(
+        403, detail={"code": "PERSONAL_DOC", "message": "다른 사람의 개인 문서예요"}
+    )
+
+
+def _mine_only(stmt, scope_col, owner_col, current: Employee):
+    """목록에서 남의 개인 문서·폴더를 걸러 낸다.
+
+    요청자가 `?scope=` 를 뭘 넣든 상관없이 항상 건다 — 필터는 요청자가 고르는
+    값이라 그것만 믿으면 `?scope=개인` 한 번으로 전부 새어 나간다.
+    """
+    return stmt.where(or_(scope_col != PERSONAL_SCOPE, owner_col == current.id))
+
+
+def _ensure_mine(scope: str, owner_id: str, current: Employee) -> None:
+    """단건 접근 — 개인 갈래면 주인만 통과한다."""
+    if scope == PERSONAL_SCOPE and owner_id != current.id:
+        raise _personal_blocked()
+
+
 async def _descendant_folder_ids(db: AsyncSession, root_id: str) -> set[str]:
     """root 아래 모든 하위 폴더 id (root 자신은 제외). BFS."""
     seen: set[str] = set()
@@ -77,6 +104,7 @@ async def _docs_out(
 # ---------- Folder ----------
 @router.get("/folders", response_model=list[FolderOut])
 async def list_folders(
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     space: str | None = Query(None),
     scope: str | None = Query(None),
@@ -86,6 +114,7 @@ async def list_folders(
         stmt = stmt.where(Folder.space == space)
     if scope:
         stmt = stmt.where(Folder.scope == scope)
+    stmt = _mine_only(stmt, Folder.scope, Folder.created_by_id, current)
     result = await db.execute(stmt.order_by(Folder.name))
     return list(result.scalars().all())
 
@@ -155,6 +184,7 @@ async def update_folder(
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
+    _ensure_mine(folder.scope, folder.created_by_id, current)
     if current.role not in (Role.MASTER, Role.ADMIN) and folder.created_by_id != current.id:
         raise _forbidden()
     data = payload.model_dump(exclude_unset=True)
@@ -182,6 +212,7 @@ async def delete_folder(
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, detail={"code": "FOLDER_NOT_FOUND", "message": "폴더를 찾을 수 없습니다"})
+    _ensure_mine(folder.scope, folder.created_by_id, current)
     if current.role not in (Role.MASTER, Role.ADMIN) and folder.created_by_id != current.id:
         raise _forbidden()
     # 서브트리 전체(자신 + 하위 폴더) — 문서·즐겨찾기·폴더 순으로 정리
@@ -216,6 +247,7 @@ async def list_documents(
         stmt = stmt.where(Document.space == space)
     if scope:
         stmt = stmt.where(Document.scope == scope)
+    stmt = _mine_only(stmt, Document.scope, Document.uploader_id, current)
     if folder_id:
         stmt = stmt.where(Document.folder_id == folder_id)
     if favorite:
@@ -275,6 +307,7 @@ async def update_document(
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
+    _ensure_mine(document.scope, document.uploader_id, current)
     if current.role not in (Role.MASTER, Role.ADMIN) and document.uploader_id != current.id:
         raise _forbidden()
     data = payload.model_dump(exclude_unset=True)
@@ -296,6 +329,7 @@ async def delete_document(
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
+    _ensure_mine(document.scope, document.uploader_id, current)
     if current.role not in (Role.MASTER, Role.ADMIN) and document.uploader_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "업로더 또는 관리자만 삭제할 수 있습니다"})
     path = document.url.lstrip("/")
@@ -314,8 +348,10 @@ async def add_favorite(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """즐겨찾기 등록 (멱등). 공지 읽음과 같은 방식."""
-    if await db.get(Document, document_id) is None:
+    document = await db.get(Document, document_id)
+    if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
+    _ensure_mine(document.scope, document.uploader_id, current)
     exists = (
         await db.execute(
             select(DocumentFavorite).where(
@@ -347,10 +383,15 @@ async def remove_favorite(
 
 
 @router.get("/documents/{document_id}/download")
-async def download_document(document_id: str, db: AsyncSession = Depends(get_db)) -> FileResponse:
+async def download_document(
+    document_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다"})
+    _ensure_mine(document.scope, document.uploader_id, current)
     path = document.url.lstrip("/")
     if not os.path.exists(path):
         raise HTTPException(404, detail={"code": "FILE_MISSING", "message": "파일이 존재하지 않습니다"})
