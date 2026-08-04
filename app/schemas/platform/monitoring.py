@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from pydantic import Field
+
 from app.enums import AnomalyKind
 from app.schemas.base import CamelModel
 
@@ -60,3 +62,20 @@ class AnomalyOut(CamelModel):
     resolved_at: datetime | None = None
     resolved_by_id: str | None = None
     created_at: datetime
+
+
+class CaptureReport(CamelModel):
+    """앱이 '화면이 캡처됐다'고 알려 오는 것 — 본문은 활동 로그에 그대로 남는다.
+
+    막을 수 있는 플랫폼(안드로이드·macOS·윈도우)에서는 애초에 캡처가 안 되므로
+    **실제로는 iOS 만 보낸다.** 애플이 스크린샷을 막는 API 를 안 준다.
+    """
+
+    # ios · android · macos · windows — 어디서 왔는지
+    platform: str = Field(max_length=20)
+
+    # 무엇이 찍혔나 (`급여`·`조직도` 같은 화면 이름). 모르면 비운다
+    screen: str | None = Field(default=None, max_length=60)
+
+    # screenshot(찍힘) · recording(녹화·미러링 시작)
+    kind: str = Field(default="screenshot", max_length=20)

@@ -276,3 +276,4 @@ class AnomalyKind(StrEnum):
     NEW_DEVICE = "NEW_DEVICE"            # 그 사람이 안 쓰던 IP·기기에서 로그인
     BULK_DELETE = "BULK_DELETE"          # 짧은 시간에 대량 삭제
     READ_BURST = "READ_BURST"            # 남의 대화·기록 열람 급증
+    SCREEN_CAPTURE = "SCREEN_CAPTURE"    # 짧은 시간에 화면 캡처 반복 (iOS — 막을 수 없어 세기만 한다)

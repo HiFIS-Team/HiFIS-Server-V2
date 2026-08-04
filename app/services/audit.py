@@ -216,6 +216,8 @@ LABELS: dict[tuple[str, str], str] = {
     ("POST", "/folders/tree"): "폴더 통째로 올리기",
     ("PATCH", "/folders/{id}"): "폴더 수정",
     ("DELETE", "/folders/{id}"): "폴더 삭제",
+    # 보안
+    ("POST", "/security/capture"): "화면 캡처",
     # 열람 (READ_LOGGED)
     ("GET", "/access-logs"): "접속 기록 열람",
     ("GET", "/audit-logs"): "활동 기록 열람",

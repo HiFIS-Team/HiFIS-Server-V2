@@ -35,6 +35,7 @@ LOGIN_FAIL_MIN = 5  # 로그인 실패
 FORBIDDEN_MIN = 5  # 권한 없는 요청(403)
 DELETE_MIN = 10  # 삭제
 READ_MIN = 20  # 남의 대화·기록 열람
+CAPTURE_MIN = 5  # 화면 캡처 — 한두 장은 필요해서 찍은 것이고, 다섯 장은 다른 뜻이다
 
 # 처음 보는 IP 를 가릴 때 얼마나 거슬러 보나 — 이 기간에 없던 곳이면 새 곳이다
 KNOWN_IP_DAYS = 30
@@ -183,11 +184,13 @@ async def _new_device(db: AsyncSession, since: datetime) -> list[Found]:
 
 
 async def _bursts(db: AsyncSession, since: datetime) -> list[Found]:
-    """짧은 시간에 대량 삭제 · 남의 대화 열람 급증"""
+    """짧은 시간에 대량 삭제 · 남의 대화 열람 급증 · 화면 캡처 반복"""
     found: list[Found] = []
     for kind, condition, floor, label in (
         (AnomalyKind.BULK_DELETE, AuditLog.method == "DELETE", DELETE_MIN, "삭제"),
         (AnomalyKind.READ_BURST, AuditLog.route.in_(_READ_ROUTES), READ_MIN, "남의 대화 열람"),
+        # 막을 수 있는 플랫폼은 캡처 자체가 안 되므로 이건 사실상 iOS 만 걸린다
+        (AnomalyKind.SCREEN_CAPTURE, AuditLog.route == "/security/capture", CAPTURE_MIN, "화면 캡처"),
     ):
         rows = (
             await db.execute(
@@ -293,6 +296,7 @@ _TITLES = {
     AnomalyKind.NEW_DEVICE: "새로운 곳에서 로그인",
     AnomalyKind.BULK_DELETE: "짧은 시간에 대량 삭제",
     AnomalyKind.READ_BURST: "대화 열람 급증",
+    AnomalyKind.SCREEN_CAPTURE: "화면 캡처 반복",
 }
 
 

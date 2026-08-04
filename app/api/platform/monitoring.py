@@ -19,6 +19,7 @@ from app.models.staff.employee import Employee
 from app.schemas.platform.monitoring import (
     AnomalyOut,
     ApiMetricsOut,
+    CaptureReport,
     MetricPointOut,
     SlowRouteOut,
 )
@@ -210,3 +211,26 @@ async def resolve_anomaly(
         await db.commit()
         await db.refresh(anomaly)
     return anomaly
+
+
+# ---------------------------------------------------------------------------
+# 화면 캡처 신고 — **전 직원이 부른다** (위의 조회들과 달리 권한 게이트가 없다)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/security/capture", status_code=204)
+async def report_capture(
+    body: CaptureReport,
+    current: Employee = Depends(get_current_user),
+) -> Response:
+    """앱이 '화면이 찍혔다'고 알려 온다 — 받아 두기만 하면 된다.
+
+    **여기서 따로 저장하지 않는다.** 쓰기 요청이라 `AuditMiddleware` 가
+    이미 본문째 활동 로그에 남기고, `anomaly_scan` 이 그 줄을 세어
+    짧은 시간에 여러 장 찍은 사람을 이상 징후로 올린다.
+
+    막을 수 있는 플랫폼에서는 캡처가 아예 안 되므로 실제로는 iOS 만 부른다.
+    MASTER 는 앱이 캡처 방지를 안 걸므로 신고도 안 보낸다.
+    """
+    del body, current  # 미들웨어가 다 적는다 — 여기서 쓸 일이 없다
+    return Response(status_code=204)
