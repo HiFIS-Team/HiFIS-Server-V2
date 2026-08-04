@@ -28,6 +28,8 @@ from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
     AttendanceDayOut,
     AttendanceOut,
+    AttendanceRosterDayOut,
+    AttendanceRosterGroupOut,
     AttendanceScanRequest,
     LeaveBalanceOut,
     LeaveReject,
@@ -323,6 +325,100 @@ async def attendance_calendar(
         # work_days 미설정이면 기록 없는 날은 판정 불가 → 생략
         day += timedelta(days=1)
     return out
+
+
+@router.get(
+    "/attendance/calendar/all",
+    response_model=list[AttendanceRosterDayOut],
+    dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))],
+)
+async def attendance_calendar_all(
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
+    month: str = Query(...),
+) -> list[AttendanceRosterDayOut]:
+    """전사 월 캘린더 — 하루마다 **누가 어떤 상태였는지**를 이름으로 묶어 준다.
+
+    사람별 캘린더(`/attendance/calendar`)와 **같은 판정**을 전 직원에게 돌린 것이다.
+    사람마다 부르면 인원수만큼 요청이 나가서 여기서 한 번에 준다.
+    휴무·판정불가는 담지 않는다 — 대표 달력이 그릴 자리가 없다.
+    MANAGER 는 branch_scope 가 자기 지점으로 좁혀 준다.
+    """
+    start, end = period_range(month)
+    start_d, end_d = start.date(), end.date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    today = now_kst.date()
+    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(사람별 캘린더와 같다)
+
+    emp_stmt = select(Employee).where(Employee.deleted_at.is_(None))
+    if scope:
+        emp_stmt = emp_stmt.where(Employee.branch_id == scope)
+    employees = list((await db.execute(emp_stmt)).scalars().all())
+    if not employees:
+        return []
+    emp_ids = [e.id for e in employees]
+
+    # 기록·휴가를 통째로 한 번씩 받아 사람별로 나눈다 (사람마다 질의하지 않는다)
+    recs: dict[str, dict[date, Attendance]] = {eid: {} for eid in emp_ids}
+    for r in (
+        await db.execute(
+            select(Attendance).where(
+                Attendance.employee_id.in_(emp_ids),
+                Attendance.date >= start_d,
+                Attendance.date < end_d,
+            )
+        )
+    ).scalars().all():
+        recs[r.employee_id][r.date] = r
+
+    leaves: dict[str, list[LeaveRequest]] = {eid: [] for eid in emp_ids}
+    for lv in (
+        await db.execute(
+            select(LeaveRequest).where(
+                LeaveRequest.employee_id.in_(emp_ids),
+                LeaveRequest.status == LeaveStatus.APPROVED,
+                LeaveRequest.start_date < end_d,
+                LeaveRequest.end_date >= start_d,
+            )
+        )
+    ).scalars().all():
+        leaves[lv.employee_id].append(lv)
+
+    # 날짜 → 상태 → 이름들. 화면 순서는 앱이 정하므로 여기서는 만난 순으로 담는다.
+    board: dict[date, dict[AttendanceStatus, list[str]]] = {}
+    for emp in employees:
+        mine = recs[emp.id]
+        my_leaves = leaves[emp.id]
+        work_days = set(emp.work_days or [])
+        day = start_d
+        while day < limit_d:
+            rec = mine.get(day)
+            on_leave = next((lv for lv in my_leaves if lv.start_date <= day <= lv.end_date), None)
+            status: AttendanceStatus | None = None
+            if rec is not None:
+                status = _attendance_status(rec, emp.shift_start, emp.shift_end, today)
+                if status == AttendanceStatus.UNKNOWN:
+                    status = None  # 근무시간 미설정 — 그릴 자리가 없다
+            elif on_leave is not None:
+                status = AttendanceStatus.ON_LEAVE
+            elif work_days and day.isoweekday() in work_days:
+                if day < today or _absent_today(emp, now_kst):
+                    status = AttendanceStatus.ABSENT
+                # 오늘 근무시간 안 → 미출근. 캘린더에는 안 담는다(카드가 보여준다)
+            if status is not None:
+                board.setdefault(day, {}).setdefault(status, []).append(emp.name)
+            day += timedelta(days=1)
+
+    return [
+        AttendanceRosterDayOut(
+            date=day,
+            groups=[
+                AttendanceRosterGroupOut(status=status, names=names)
+                for status, names in board[day].items()
+            ],
+        )
+        for day in sorted(board)
+    ]
 
 
 # ---------- 휴가 ----------
