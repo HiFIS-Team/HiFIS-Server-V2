@@ -12,10 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # 오늘 근태 판정은 근태 라우터의 로직을 재사용(정상/지각/조기퇴근 등 동일 기준)
 from app.api.staff.attendance import _attendance_status
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_role
 from app.core.periods import KST, current_period
 from app.db.session import get_db
-from app.enums import ApprovalStatus, AttendanceStatus, LeaveStatus, PayslipStatus, Role
+from app.enums import (
+    ApprovalStatus,
+    AttendanceStatus,
+    InboxKind,
+    LeaveStatus,
+    LeaveType,
+    PayslipStatus,
+    Role,
+)
 from app.models.board.approval import Approval
 from app.models.board.notice import Notice
 from app.models.board.notice_read import NoticeRead
@@ -24,7 +32,7 @@ from app.models.projects.project import Project
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
-from app.schemas.staff.home import HomeAttendanceOut, HomePendingOut, HomeSummaryOut
+from app.schemas.staff.home import HomeAttendanceOut, HomeSummaryOut, InboxItemOut
 
 router = APIRouter(tags=["home"])
 
@@ -97,44 +105,95 @@ async def my_home(
         )
     )
 
-    # ── 결재를 기다리는 것 (MASTER·ADMIN 만) ──
-    # 대표·관리자는 출근을 안 해서 홈의 출퇴근 카드가 늘 비어 있다.
-    # 그 자리에 놓을 '지금 눌러야 할 것'을 여기서 같이 실어 준다 —
-    # 앱이 따로 세면 홈 한 장에 요청이 4개가 된다.
-    pending = None
-    if current.role in (Role.MASTER, Role.ADMIN):
-        pending = HomePendingOut(
-            approvals=int(
-                await db.scalar(
-                    select(func.count())
-                    .select_from(Approval)
-                    .where(Approval.status == ApprovalStatus.IN_PROGRESS)
-                )
-                or 0
-            ),
-            payslips=int(
-                await db.scalar(
-                    select(func.count())
-                    .select_from(Payslip)
-                    .where(Payslip.status == PayslipStatus.SUBMITTED)
-                )
-                or 0
-            ),
-            leaves=int(
-                await db.scalar(
-                    select(func.count())
-                    .select_from(LeaveRequest)
-                    .where(LeaveRequest.status == LeaveStatus.PENDING)
-                )
-                or 0
-            ),
-        )
-
     return HomeSummaryOut(
         period=period,
         today_attendance=att,
         incomplete_projects=int(incomplete or 0),
         unread_notices=int(unread or 0),
         month_score=int(month_score or 0),
-        pending=pending,
     )
+
+
+# 월차 종류를 화면 말로 — 앱의 신청 화면과 같은 이름을 쓴다
+_LEAVE_LABEL = {
+    LeaveType.ANNUAL: "연차",
+    LeaveType.HALF: "반차",
+    LeaveType.SICK: "병가",
+    LeaveType.FIELD: "외근",
+    LeaveType.ETC: "기타",
+}
+
+
+@router.get(
+    "/me/inbox",
+    response_model=list[InboxItemOut],
+    dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
+)
+async def my_inbox(db: AsyncSession = Depends(get_db)) -> list[InboxItemOut]:
+    """결재를 기다리는 것 — 급여·월차·전자결재를 한 목록으로 (홈 카드).
+
+    **전사 기준이다.** ADMIN 은 결재선에 없어서 '내 차례'로 세면 늘 비는데,
+    지켜보는 자리라 목록은 같이 봐야 한다. 승인·반려 버튼만 앱이 MASTER 에게 낸다.
+
+    올린 지 오래된 것부터 준다 — 오래 묵은 게 먼저 처리돼야 한다.
+    """
+    items: list[InboxItemOut] = []
+
+    for slip in (
+        await db.scalars(
+            select(Payslip).where(Payslip.status == PayslipStatus.SUBMITTED)
+        )
+    ).all():
+        year, month = slip.year_month.split("-")
+        items.append(
+            InboxItemOut(
+                kind=InboxKind.PAYSLIP,
+                id=slip.id,
+                employee_id=slip.employee_id,
+                title=f"{year}년 {int(month)}월 급여",
+                detail=f"실수령 {slip.net:,}원",
+                created_at=slip.updated_at,  # 제출한 시각(마지막 상태 변경)
+            )
+        )
+
+    for leave in (
+        await db.scalars(
+            select(LeaveRequest).where(LeaveRequest.status == LeaveStatus.PENDING)
+        )
+    ).all():
+        span = (
+            f"{leave.start_date.month}.{leave.start_date.day}"
+            if leave.start_date == leave.end_date
+            else f"{leave.start_date.month}.{leave.start_date.day}"
+            f" ~ {leave.end_date.month}.{leave.end_date.day}"
+        )
+        days = int(leave.days) if leave.days == int(leave.days) else leave.days
+        items.append(
+            InboxItemOut(
+                kind=InboxKind.LEAVE,
+                id=leave.id,
+                employee_id=leave.employee_id,
+                title=_LEAVE_LABEL.get(leave.type, "월차"),
+                detail=f"{span} · {days}일",
+                created_at=leave.created_at,
+            )
+        )
+
+    for doc in (
+        await db.scalars(
+            select(Approval).where(Approval.status == ApprovalStatus.IN_PROGRESS)
+        )
+    ).all():
+        items.append(
+            InboxItemOut(
+                kind=InboxKind.APPROVAL,
+                id=doc.id,
+                employee_id=doc.requester_id,
+                title=doc.kind,
+                detail=doc.title,
+                created_at=doc.created_at,
+            )
+        )
+
+    items.sort(key=lambda item: item.created_at)
+    return items

@@ -239,6 +239,14 @@ class MessageKind(StrEnum):
     SYSTEM = "SYSTEM"
 
 
+class InboxKind(StrEnum):
+    """홈 결재함 한 줄의 출처 — 승인·반려를 어느 엔드포인트로 보낼지 가른다."""
+
+    PAYSLIP = "PAYSLIP"    # POST /payslips/{id}/approve|reject
+    LEAVE = "LEAVE"        # POST /leaves/{id}/approve|reject
+    APPROVAL = "APPROVAL"  # POST /approvals/{id}/approve|reject
+
+
 class AccessEvent(StrEnum):
     """접속 로그 이벤트 — 개인정보처리방침 §1-1·§8(접속 기록 보관)."""
 

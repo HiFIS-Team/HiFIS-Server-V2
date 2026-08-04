@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from app.enums import AttendanceStatus, HalfPeriod, LeaveType
+from app.enums import AttendanceStatus, HalfPeriod, InboxKind, LeaveType
 from app.schemas.base import CamelModel
 
 
@@ -17,21 +17,6 @@ class HomeAttendanceOut(CamelModel):
     half_period: HalfPeriod | None = None  # 반차면 오전/오후
 
 
-class HomePendingOut(CamelModel):
-    """결재를 기다리는 것 — **MASTER · ADMIN 에게만 실린다.**
-
-    대표·관리자는 출근을 안 해서 홈의 출퇴근 카드가 늘 비어 있다.
-    그 자리에 '지금 눌러야 할 것'을 대신 놓으려고 만든 묶음이다.
-
-    셋 다 **전사 기준**이다 — ADMIN 은 승인 권한이 없어서 '내 차례'로 세면
-    늘 0이 된다. 건수는 같이 보고 승인·반려 버튼만 MASTER 에게 나간다.
-    """
-
-    approvals: int = 0  # 아직 안 끝난 전자결재(IN_PROGRESS)
-    payslips: int = 0   # 제출된 급여(SUBMITTED)
-    leaves: int = 0     # 대기중 월차(PENDING)
-
-
 class HomeSummaryOut(CamelModel):
     period: str                           # "YYYY-MM" (이번 달)
     today_attendance: HomeAttendanceOut
@@ -39,5 +24,21 @@ class HomeSummaryOut(CamelModel):
     unread_notices: int                   # 안 읽은 공지 수
     month_score: int                      # 이번 달 내 점수 합
 
-    # MASTER·ADMIN 이 아니면 null — 나머지 직원 홈은 모양이 그대로다
-    pending: HomePendingOut | None = None
+
+class InboxItemOut(CamelModel):
+    """결재를 기다리는 것 한 줄 — GET /me/inbox (MASTER·ADMIN).
+
+    급여·월차·전자결재는 테이블이 따로인데 홈 카드에서는 **한 목록**으로 선다.
+    앱이 셋을 각각 받아 합치면 홈 첫 화면에서만 요청이 세 개 더 나가서,
+    서버가 미리 합쳐 준다.
+
+    `title`·`detail` 은 화면에 그대로 찍는 문장이다. 종류마다 꺼낼 필드가
+    달라서(급여는 달·실수령, 월차는 기간·일수) 앱에서 만들면 분기만 늘어난다.
+    """
+
+    kind: InboxKind
+    id: str                  # 그 종류의 승인·반려 엔드포인트에 넘길 id
+    employee_id: str         # 올린 사람
+    title: str               # `2026년 7월 급여` · `연차` · `외근·출장`
+    detail: str              # 한 줄 요약
+    created_at: datetime
