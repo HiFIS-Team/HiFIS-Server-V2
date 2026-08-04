@@ -177,6 +177,21 @@ def _can_touch(project: Project, current: Employee) -> bool:
     )
 
 
+def _ensure_open(project: Project, current: Employee) -> None:
+    """완료된 프로젝트는 **MASTER 만** 손댈 수 있다.
+
+    완료가 곧 점수라(`_settle_completion`) 되돌리면 담당자 점수도 같이 흔들린다.
+    됐다 안 됐다 하는 걸 막으려고 잠그고, 실수로 완료한 것만 대표가 풀어 준다.
+
+    댓글과 점수 부여(`award`)는 잠기지 않는다 — 완료 뒤에 판단해서 매기는 값이다.
+    """
+    if project.progress >= 100 and current.role != Role.MASTER:
+        raise HTTPException(
+            403,
+            detail={"code": "PROJECT_DONE", "message": "완료된 프로젝트는 수정할 수 없습니다"},
+        )
+
+
 async def _log_activity(
     db: AsyncSession, project_id: str, actor_id: str | None, kind: ProjectActivityKind, body: str | None
 ) -> None:
@@ -288,6 +303,7 @@ async def create_project_request(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    _ensure_open(project, current)
     # 프로젝트당 대기 요청은 하나만 (중복 방지)
     existing = await db.scalar(
         select(ProjectRequest).where(
@@ -517,6 +533,7 @@ async def create_project_todo(
     project = await _get_project_or_404(db, project_id)
     if not _can_touch(project, current):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    _ensure_open(project, current)
     todo = ProjectTodo(
         project_id=project_id,
         content=payload.content,
@@ -544,6 +561,7 @@ async def update_project_todo(
     project = await _get_project_or_404(db, project_id)
     if not _can_touch(project, current):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    _ensure_open(project, current)
     was_done = todo.done
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(todo, key, value)
@@ -569,6 +587,7 @@ async def delete_project_todo(
     project = await _get_project_or_404(db, project_id)
     if not _can_touch(project, current):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    _ensure_open(project, current)
     content = todo.content  # 삭제 전 스냅샷(타임라인 표시용)
     await db.delete(todo)
     await db.flush()
@@ -667,6 +686,7 @@ async def update_project(
     is_assignee = current.id in (project.assignee_ids or [])
     if not (is_manager or is_assignee):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 수정할 권한이 없습니다"})
+    _ensure_open(project, current)
     fields = payload.model_dump(exclude_unset=True)
     if not is_manager and set(fields) - {"progress"}:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당자는 진행률만 변경할 수 있습니다"})
@@ -703,6 +723,7 @@ async def delete_project(
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 삭제할 권한이 없습니다"})
+    _ensure_open(project, current)
     # 자식(FK) 먼저 정리 — 체크리스트·기한변경요청·타임라인
     await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project_id))
     await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project_id))
