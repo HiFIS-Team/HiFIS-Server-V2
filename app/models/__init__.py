@@ -2,6 +2,7 @@
 
 from app.models.platform.access_log import AccessLog
 from app.models.platform.account import Account, AccountAccessLog
+from app.models.platform.audit_log import AuditLog
 from app.models.board.approval import Approval
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
 from app.models.staff.attendance import Attendance, LeaveRequest
@@ -32,6 +33,7 @@ from app.models.projects.todo import Todo
 __all__ = [
     "Account",
     "AccountAccessLog",
+    "AuditLog",
     "Approval",
     "ChatRoom",
     "ChatRoomMember",

@@ -16,10 +16,20 @@ from app.api.chat import chat, notifications
 from app.api.legal import consents
 from app.api.members import members, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
-from app.api.platform import access_logs, accounts, dashboard, documents, files, search
+from app.api.platform import (
+    access_logs,
+    accounts,
+    audit_logs,
+    chat_audit,
+    dashboard,
+    documents,
+    files,
+    search,
+)
 from app.api.projects import meetings, projects, todos
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees, home
+from app.core.audit_middleware import AuditMiddleware
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler
@@ -72,6 +82,8 @@ if settings.environment == "development":
         r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$"
     )
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
+# 활동 로그 — 쓰기 요청을 받아 적는다(§8). CORS 다음에 등록해 프리플라이트(OPTIONS)는 안 탄다
+app.add_middleware(AuditMiddleware)
 
 # org — 조직·인사
 app.include_router(auth.router)
@@ -108,6 +120,8 @@ app.include_router(ws_chat_router)  # WS /ws/chat
 # platform — 문서·계정·검색·대시보드
 app.include_router(accounts.router)
 app.include_router(access_logs.router)
+app.include_router(audit_logs.router)
+app.include_router(chat_audit.router)  # 사내톡 열람(관리자 이상)
 app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(dashboard.router)
