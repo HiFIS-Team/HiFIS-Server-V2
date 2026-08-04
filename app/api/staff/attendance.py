@@ -29,6 +29,7 @@ from app.schemas.staff.attendance import (
     AttendanceDayOut,
     AttendanceOut,
     AttendanceScanRequest,
+    AttendanceSummaryOut,
     LeaveBalanceOut,
     LeaveReject,
     LeaveRequestCreate,
@@ -301,6 +302,118 @@ async def attendance_calendar(
         # work_days 미설정이면 기록 없는 날은 판정 불가 → 생략
         day += timedelta(days=1)
     return out
+
+
+@router.get(
+    "/attendance/summary",
+    response_model=AttendanceSummaryOut,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))],
+)
+async def attendance_summary(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
+    month: str = Query(...),
+) -> AttendanceSummaryOut:
+    """한 달 근태를 전 직원 합계로 — 대표는 자기 출퇴근이 없어서 이 값을 본다.
+
+    캘린더(/attendance/calendar)와 **같은 판정**을 전원에게 돌린 합계다.
+    사람마다 캘린더를 부르면 인원수만큼 요청이 나가서 여기서 한 번에 준다.
+    MANAGER 는 branch_scope 가 자기 지점으로 좁혀 준다.
+    """
+    start, end = period_range(month)
+    start_d, end_d = start.date(), end.date()
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(캘린더와 같다)
+
+    emp_stmt = select(Employee).where(Employee.deleted_at.is_(None))
+    if scope:
+        emp_stmt = emp_stmt.where(Employee.branch_id == scope)
+    employees = list((await db.execute(emp_stmt)).scalars().all())
+    emp_ids = [e.id for e in employees]
+    if not emp_ids:
+        return AttendanceSummaryOut(
+            month=month,
+            people=0,
+            worked_days=0,
+            work_minutes=0,
+            late=0,
+            early_leave=0,
+            absent=0,
+            day_off=0,
+            leave_days=0.0,
+        )
+
+    # 기록·휴가를 통째로 한 번씩 받아 사람별로 나눈다 (사람마다 질의하지 않는다)
+    recs: dict[str, dict[date, Attendance]] = {eid: {} for eid in emp_ids}
+    for r in (
+        await db.execute(
+            select(Attendance).where(
+                Attendance.employee_id.in_(emp_ids),
+                Attendance.date >= start_d,
+                Attendance.date < end_d,
+            )
+        )
+    ).scalars().all():
+        recs[r.employee_id][r.date] = r
+
+    leaves: dict[str, list[LeaveRequest]] = {eid: [] for eid in emp_ids}
+    for lv in (
+        await db.execute(
+            select(LeaveRequest).where(
+                LeaveRequest.employee_id.in_(emp_ids),
+                LeaveRequest.status == LeaveStatus.APPROVED,
+                LeaveRequest.start_date < end_d,
+                LeaveRequest.end_date >= start_d,
+            )
+        )
+    ).scalars().all():
+        leaves[lv.employee_id].append(lv)
+
+    worked_days = work_minutes = late = early_leave = absent = day_off = 0
+    leave_days = 0.0
+    for emp in employees:
+        mine = recs[emp.id]
+        my_leaves = leaves[emp.id]
+        work_days = set(emp.work_days or [])
+        day = start_d
+        while day < limit_d:
+            rec = mine.get(day)
+            on_leave = next((lv for lv in my_leaves if lv.start_date <= day <= lv.end_date), None)
+            if rec is not None:
+                # 4번째 인자는 '오늘' 이다 — 퇴근 기록이 없을 때 근무중/퇴근누락을 가른다
+                status = _attendance_status(rec, emp.shift_start, emp.shift_end, today)
+                worked_days += 1
+                work_minutes += rec.work_minutes or 0
+                if status in (AttendanceStatus.LATE, AttendanceStatus.LATE_AND_EARLY):
+                    late += 1
+                if status in (
+                    AttendanceStatus.EARLY_LEAVE,
+                    AttendanceStatus.LATE_AND_EARLY,
+                    AttendanceStatus.NO_CHECKOUT,
+                ):
+                    early_leave += 1
+            elif on_leave is not None:
+                # 반차는 0.5 라 날짜 수가 아니라 신청의 일수를 나눠 담는다
+                leave_days += 0.5 if on_leave.type == LeaveType.HALF else 1.0
+            elif work_days:
+                if day.isoweekday() not in work_days:
+                    day_off += 1
+                elif day < today:
+                    absent += 1
+            day += timedelta(days=1)
+
+    return AttendanceSummaryOut(
+        month=month,
+        people=len(employees),
+        worked_days=worked_days,
+        work_minutes=work_minutes,
+        late=late,
+        early_leave=early_leave,
+        absent=absent,
+        day_off=day_off,
+        leave_days=leave_days,
+    )
 
 
 # ---------- 휴가 ----------
