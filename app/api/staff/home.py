@@ -15,6 +15,7 @@ from app.api.staff.attendance import (
     _absent_today,
     _attendance_status,
     _just_left_overnight,
+    _still_overnight,
 )
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST, current_period
@@ -87,7 +88,14 @@ async def my_home(
                 )
             )
         ).scalars().first()
-        if _just_left_overnight(prev, now_kst):
+        if _still_overnight(prev, now_kst):
+            # 자정을 넘겨서도 안 갔다 — 계속 야근이다
+            att = HomeAttendanceOut(
+                status=AttendanceStatus.OVERTIME,
+                check_in=prev.check_in,
+                work_minutes=prev.work_minutes,
+            )
+        elif _just_left_overnight(prev, now_kst):
             # 자정을 넘겨 퇴근했다 — 잠깐은 '퇴근'으로 두고 그 뒤 미출근으로 돌아간다
             att = HomeAttendanceOut(
                 status=AttendanceStatus.NORMAL,

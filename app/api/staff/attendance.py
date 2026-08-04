@@ -51,6 +51,10 @@ OFFHOURS_POINTS = 10
 # 근무 외 출근 점수와 같은 값으로 둔다: 점수를 받는 날과 화면에 야근으로 뜨는 날이 갈리면 헷갈린다.
 OVERTIME_THRESHOLD_MIN = OFFHOURS_THRESHOLD_MIN
 
+# 조기퇴근 유예 — 퇴근시간보다 이 분수까지 일찍 찍은 건 그냥 퇴근으로 본다.
+# 정리하고 나오느라 몇 분 이른 사람까지 조기퇴근으로 부르면 매일 걸린다.
+EARLY_LEAVE_GRACE_MIN = 20
+
 # 자정을 넘겨 퇴근한 뒤 '퇴근'으로 남겨 두는 시간. 지나면 미출근으로 돌아간다.
 # (자정 전에 퇴근했으면 날짜가 바뀌는 순간 저절로 미출근이 된다)
 OVERNIGHT_GRACE_MIN = 60
@@ -96,7 +100,7 @@ def _attendance_status(
     out_min = _kst_min(rec.check_out) + (
         1440 if rec.check_out.astimezone(KST).date() > rec.date else 0
     )
-    early = out_min < end_min
+    early = out_min < end_min - EARLY_LEAVE_GRACE_MIN
     if late and early:
         return AttendanceStatus.LATE_AND_EARLY
     if late:
@@ -106,6 +110,18 @@ def _attendance_status(
     if out_min >= end_min + OVERTIME_THRESHOLD_MIN:
         return AttendanceStatus.OVERTIME
     return AttendanceStatus.NORMAL
+
+
+def _still_overnight(prev: Attendance | None, now_kst: datetime) -> bool:
+    """자정을 넘겨서도 아직 안 갔는가 — 그러면 오늘도 계속 **야근**이다.
+
+    날짜만 보고 미출근으로 밀면 밤새 일하는 사람이 자정에 사라진다.
+    [OVERNIGHT_CHECKOUT_BEFORE_MIN] 까지만 이어 준다 — 그 뒤의 스캔은 새 출근이라
+    (스캔 규칙과 같은 경계다) 계속 야근으로 두면 퇴근을 잊은 사람이 종일 남는다.
+    """
+    if prev is None or prev.check_in is None or prev.check_out is not None:
+        return False
+    return _kst_min(now_kst) < OVERNIGHT_CHECKOUT_BEFORE_MIN
 
 
 def _just_left_overnight(prev: Attendance | None, now_kst: datetime) -> bool:

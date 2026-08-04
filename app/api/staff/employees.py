@@ -15,6 +15,7 @@ from app.api.staff.attendance import (  # 오늘 근태 판정 재사용(§59, h
     _absent_today,
     _attendance_status,
     _just_left_overnight,
+    _still_overnight,
 )
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST
@@ -110,6 +111,9 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
         rec = recs.get(e.id)
         if rec is not None:
             model.today_attendance_status = _attendance_status(rec, e.shift_start, e.shift_end, now_kst)
+        elif _still_overnight(prevs.get(e.id), now_kst):
+            # 자정을 넘겨서도 안 갔다 — 계속 야근이다
+            model.today_attendance_status = AttendanceStatus.OVERTIME
         elif _just_left_overnight(prevs.get(e.id), now_kst):
             # 자정을 넘겨 퇴근했다 — 잠깐은 '퇴근'으로 두고 그 뒤 미출근으로 돌아간다
             model.today_attendance_status = AttendanceStatus.NORMAL
