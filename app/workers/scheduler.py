@@ -20,6 +20,8 @@ from app.workers.payday_reminder import payday_deadline_reminders, payday_remind
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
 from app.workers.ranking_jobs import announce_monthly_winners, ranking_change_scan
+from app.workers.anomaly_scan import anomaly_scan
+from app.workers.metrics_flush import flush_metrics
 from app.workers.retention import purge_old_access_logs
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ _HB_KEY = "hifis:scheduler:hb"  # 하트비트(단일 실행 검증용) — SCHE
 _token = uuid.uuid4().hex  # 이 워커의 락 소유 토큰
 _redis = None
 _campaign_task: asyncio.Task | None = None
+_flush_task: asyncio.Task | None = None
 _is_leader = False
 
 # get==token 일 때만 연장/삭제(다른 워커 락을 건드리지 않도록 CAS)
@@ -72,6 +75,9 @@ def _register_jobs() -> None:
     # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
     scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
                       id="access_log_purge", replace_existing=True)
+    # 5분마다 — 이상행동 감지(로그인 반복 실패·권한 없는 요청·새 기기·대량 삭제/열람)
+    scheduler.add_job(anomaly_scan, CronTrigger(minute="*/5"),
+                      id="anomaly_scan", replace_existing=True)
     # 검증용 하트비트 — 환경변수로만 켬(운영 기본 꺼짐). 멀티워커 단일실행 확인에 사용.
     if os.getenv("SCHED_HEARTBEAT_TEST"):
         scheduler.add_job(_heartbeat, CronTrigger(second="*/2"),
@@ -79,12 +85,29 @@ def _register_jobs() -> None:
     # TODO(§9.5): 세션 만료 스캔, 점수 기간 롤오버 잡 추가
 
 
+async def _flush_loop() -> None:
+    """응답 지표 내려쓰기 — **리더와 무관하게 모든 워커가 돈다.**
+
+    버퍼는 워커 메모리에 따로 쌓인다. 스케줄러 잡으로 넣으면 리더 한 대만
+    내려써서 나머지 워커가 받은 요청이 통째로 사라진다.
+    """
+    while True:
+        try:
+            await asyncio.sleep(60)
+            await flush_metrics()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("scheduler: 응답 지표 기록 실패", exc_info=True)
+
+
 async def start_scheduler(redis_url: str | None) -> None:
     """스케줄러 기동. Redis 있으면 리더 락으로 단일 워커만 실행, 없으면 바로 실행."""
-    global _redis, _campaign_task
+    global _redis, _campaign_task, _flush_task
     if scheduler.running:
         return
     _register_jobs()
+    _flush_task = asyncio.create_task(_flush_loop())
 
     if not redis_url:
         scheduler.start()  # 단일 프로세스 — 바로 실행
@@ -130,7 +153,15 @@ async def _campaign() -> None:
 
 
 async def stop_scheduler() -> None:
-    global _campaign_task
+    global _campaign_task, _flush_task
+    if _flush_task is not None:
+        _flush_task.cancel()
+        _flush_task = None
+        # 마지막 1분치를 흘리지 않는다
+        try:
+            await flush_metrics()
+        except Exception:
+            logger.warning("scheduler: 종료 시 응답 지표 기록 실패", exc_info=True)
     if _campaign_task is not None:
         _campaign_task.cancel()
         try:

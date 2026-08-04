@@ -20,6 +20,7 @@ from app.api.platform import (
     access_logs,
     accounts,
     audit_logs,
+    monitoring,
     chat_audit,
     dashboard,
     documents,
@@ -30,6 +31,7 @@ from app.api.projects import meetings, projects, todos
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees, home
 from app.core.audit_middleware import AuditMiddleware
+from app.core.metrics_middleware import MetricsMiddleware
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler
@@ -84,6 +86,8 @@ if settings.environment == "development":
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
 # 활동 로그 — 쓰기 요청을 받아 적는다(§8). CORS 다음에 등록해 프리플라이트(OPTIONS)는 안 탄다
 app.add_middleware(AuditMiddleware)
+# 응답 시간 계측 — 활동 로그보다 바깥이라 로그 기록 시간까지 포함해 잰다
+app.add_middleware(MetricsMiddleware)
 
 # org — 조직·인사
 app.include_router(auth.router)
@@ -121,6 +125,7 @@ app.include_router(ws_chat_router)  # WS /ws/chat
 app.include_router(accounts.router)
 app.include_router(access_logs.router)
 app.include_router(audit_logs.router)
+app.include_router(monitoring.router)  # 성능 지표·이상행동 감지
 app.include_router(chat_audit.router)  # 사내톡 열람(관리자 이상)
 app.include_router(documents.router)
 app.include_router(search.router)

@@ -1,6 +1,8 @@
 """모델 등록 지점 — Alembic autogenerate 가 metadata 를 인식하도록 여기서 import."""
 
 from app.models.platform.access_log import AccessLog
+from app.models.platform.anomaly import Anomaly
+from app.models.platform.api_metric import ApiMetric
 from app.models.platform.account import Account, AccountAccessLog
 from app.models.platform.audit_log import AuditLog
 from app.models.board.approval import Approval
@@ -33,6 +35,8 @@ from app.models.projects.todo import Todo
 __all__ = [
     "Account",
     "AccountAccessLog",
+    "Anomaly",
+    "ApiMetric",
     "AuditLog",
     "Approval",
     "ChatRoom",

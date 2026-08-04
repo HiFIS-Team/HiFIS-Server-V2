@@ -266,3 +266,13 @@ class AccessEvent(StrEnum):
 
     LOGIN_SUCCESS = "LOGIN_SUCCESS"
     LOGIN_FAIL = "LOGIN_FAIL"
+
+
+class AnomalyKind(StrEnum):
+    """이상행동 종류 — 접속·활동 로그를 5분마다 훑어 찾는다 (모니터링 '이상 징후')."""
+
+    BRUTE_FORCE = "BRUTE_FORCE"          # 같은 계정·IP 로 로그인 반복 실패
+    FORBIDDEN_BURST = "FORBIDDEN_BURST"  # 권한 없는 요청 반복 — 앱에 없는 걸 직접 부름
+    NEW_DEVICE = "NEW_DEVICE"            # 그 사람이 안 쓰던 IP·기기에서 로그인
+    BULK_DELETE = "BULK_DELETE"          # 짧은 시간에 대량 삭제
+    READ_BURST = "READ_BURST"            # 남의 대화·기록 열람 급증
