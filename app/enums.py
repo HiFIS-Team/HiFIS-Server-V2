@@ -158,6 +158,18 @@ class HalfPeriod(StrEnum):
     PM = "PM"  # 오후 반차
 
 
+class ComplaintStatus(StrEnum):
+    """친절 설문의 '개선했으면 하는 부분' 처리 단계 (§4.5).
+
+    설문에 개선 의견이 적혀 있으면 그게 컴플레인이다. 해결하면 DONE 이 되고,
+    매장 TV 화면이 그것만 골라 '해결 완료' 로 띄운다.
+    """
+
+    PENDING = "PENDING"  # 미처리
+    WORKING = "WORKING"  # 해결중
+    DONE = "DONE"        # 해결 완료
+
+
 class LeaveStatus(StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
