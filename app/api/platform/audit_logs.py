@@ -4,8 +4,10 @@
 전 지점 보안 데이터이므로 지점 스코프는 적용하지 않는다.
 """
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role
@@ -19,17 +21,47 @@ router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
 @router.get("", response_model=list[AuditLogOut], dependencies=[Depends(require_role(Role.ADMIN))])
 async def list_audit_logs(
+    response: Response,
     employee_id: str | None = Query(None, alias="employeeId"),
     route: str | None = Query(None, description="정규화된 주소 — 예: /notices/{id}"),
     failed_only: bool = Query(False, alias="failedOnly", description="막힌 시도만"),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, description="번호 페이지 — limit 의 배수로 넘긴다"),
+    before: datetime | None = Query(
+        None, description="이 시각까지만 — 장을 넘기는 동안 기준선을 고정한다"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditLog]:
-    stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
-    if employee_id:
-        stmt = stmt.where(AuditLog.employee_id == employee_id)
-    if route:
-        stmt = stmt.where(AuditLog.route == route)
+    """번호 페이지로 준다. 몇 장인지는 응답 헤더로 알려 준다.
+
+    `X-Total-Count`  막힌 시도 여부를 빼고 센 전체 건수 (탭 라벨 '전체 N')
+    `X-Failed-Count` 그중 막힌 것 (탭 라벨 '막힌 시도 N')
+
+    페이지 수는 지금 필터에 걸린 쪽 = `failedOnly` 면 Failed, 아니면 Total 이다.
+
+    **`before` 를 같이 보내야 장이 안 밀린다.** 이 조회 자체가 활동 로그로
+    남기 때문에(READ_LOGGED) 장을 넘길 때마다 앞에 새 줄이 끼어들어, 기준선을
+    안 고정하면 같은 줄이 두 장에 걸쳐 나온다 (실제로 장마다 1건씩 겹쳤다).
+    """
+
+    def narrowed(stmt):  # 실패 여부를 뺀 공통 조건 — 두 세기와 목록이 같이 쓴다
+        if employee_id:
+            stmt = stmt.where(AuditLog.employee_id == employee_id)
+        if before is not None:
+            stmt = stmt.where(AuditLog.created_at <= before)
+        if route:
+            stmt = stmt.where(AuditLog.route == route)
+        return stmt
+
+    total = await db.scalar(narrowed(select(func.count()).select_from(AuditLog)))
+    failed = await db.scalar(
+        narrowed(select(func.count()).select_from(AuditLog)).where(AuditLog.status >= 400)
+    )
+    response.headers["X-Total-Count"] = str(total or 0)
+    response.headers["X-Failed-Count"] = str(failed or 0)
+
+    stmt = narrowed(select(AuditLog))
     if failed_only:
         stmt = stmt.where(AuditLog.status >= 400)
+    stmt = stmt.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
     return list((await db.scalars(stmt)).all())
