@@ -345,7 +345,12 @@ async def list_leaves(
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     status: LeaveStatus | None = Query(None),
+    current: Employee = Depends(get_current_user),
 ) -> list[LeaveRequest]:
+    # 일반 직원은 **본인 것만** — 남의 휴가 사유까지 보이면 안 된다.
+    # `/attendance` 와 같은 규칙이다 (403 대신 조용히 본인으로 고정).
+    if current.role == Role.MEMBER:
+        employee_id = current.id
     stmt = select(LeaveRequest)
     if scope:
         stmt = stmt.join(Employee, Employee.id == LeaveRequest.employee_id).where(

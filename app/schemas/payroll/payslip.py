@@ -1,6 +1,8 @@
 """Payslip DTO — CLAUDE.md §5."""
 
-from datetime import datetime
+from datetime import date, datetime
+
+from pydantic import computed_field
 
 from app.enums import DeductionMethod, PayslipStatus, Rank
 from app.schemas.base import CamelModel
@@ -66,3 +68,16 @@ class PayslipOut(CamelModel):
     decided_at: datetime | None = None
     decided_by_id: str | None = None
     paid_at: datetime | None = None
+
+    @computed_field
+    @property
+    def payday(self) -> date:
+        """지급 예정일 — `year_month` 에서 나온다 (지금은 전 지점 말일).
+
+        결재하는 쪽이 "언제 나갈 돈인지"를 보고 승인하므로 명세서마다 싣는다.
+        앱이 규칙을 따로 들고 있으면 여기가 바뀔 때 어긋난다 (실제로 앱
+        폴백이 '익월 10일' 로 잘못 박혀 있었다).
+        """
+        from app.services.payroll import compute_payday
+
+        return compute_payday(self.year_month)
