@@ -135,6 +135,7 @@ class AttendanceStatus(StrEnum):
     LATE = "LATE"                      # 지각
     EARLY_LEAVE = "EARLY_LEAVE"        # 조기퇴근
     LATE_AND_EARLY = "LATE_AND_EARLY"  # 지각 + 조기퇴근
+    OVERTIME = "OVERTIME"              # 야근 — 퇴근 스캔이 설정 퇴근시간보다 1시간+ 늦음
     IN_PROGRESS = "IN_PROGRESS"        # 출근했고 아직 퇴근 전(당일)
     NO_CHECKOUT = "NO_CHECKOUT"        # 지난 날인데 퇴근 기록 없음
     ABSENT = "ABSENT"                  # 결근 — 근무일인데 과거·기록 없음·휴가 없음

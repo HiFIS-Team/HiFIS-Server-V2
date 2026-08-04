@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 오늘 근태 판정은 근태 라우터의 로직을 재사용(정상/지각/조기퇴근 등 동일 기준)
-from app.api.staff.attendance import _attendance_status
+from app.api.staff.attendance import _absent_today, _attendance_status
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST, current_period
 from app.db.session import get_db
@@ -44,7 +44,8 @@ async def my_home(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> HomeSummaryOut:
-    today = datetime.now(timezone.utc).astimezone(KST).date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    today = now_kst.date()
     period = current_period()
 
     # ── 오늘 근태: 기록 있으면 판정 / 없으면 휴가·휴무 / 그래도 없으면 '출근 전'(status=null) ──
@@ -80,7 +81,10 @@ async def my_home(
             )
         elif current.work_days and today.isoweekday() not in set(current.work_days):
             att = HomeAttendanceOut(status=AttendanceStatus.DAY_OFF)
-        # else: 근무일인데 아직 기록 없음 → 출근 전(status=null). 오늘은 결근 판정 안 함.
+        elif current.work_days and _absent_today(current, now_kst):
+            # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근
+            att = HomeAttendanceOut(status=AttendanceStatus.ABSENT)
+        # else: 아직 근무 시간 안이다 → 미출근(status=null)
 
     # ── 내 미완료 프로젝트 수 (담당자에 나 포함 & progress<100) ──
     incomplete = await db.scalar(

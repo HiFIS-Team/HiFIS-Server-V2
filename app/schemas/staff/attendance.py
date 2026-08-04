@@ -25,24 +25,6 @@ class AttendanceOut(CamelModel):
     status: AttendanceStatus | None = None  # 서버 판정(정상/지각/조기퇴근 등) — 근무시간 대비
 
 
-class AttendanceSummaryOut(CamelModel):
-    """전사(또는 지점) 한 달 근태 집계 — 대표 근태 화면의 달 요약이 쓴다.
-
-    캘린더와 **같은 판정**(_attendance_status + 결근/휴무 규칙)을 전 직원에게 돌린 합계라
-    사람별 화면과 숫자가 갈리지 않는다. 날 수는 연인원(사람×날)이다.
-    """
-
-    month: str
-    people: int  # 집계에 든 재직자 수
-    worked_days: int  # 근무한 날 (정상·지각·조기퇴근·근무중)
-    work_minutes: int  # 총 근무 분
-    late: int
-    early_leave: int
-    absent: int
-    day_off: int
-    leave_days: float  # 승인 월차 일수 (반차 0.5)
-
-
 class AttendanceDayOut(CamelModel):
     """캘린더 하루 상태 — 기록 없는 날(결근/휴가/휴무)까지 포함해 서버가 판정."""
 

@@ -11,7 +11,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.staff.attendance import _attendance_status  # 오늘 근태 판정 재사용(§59, home.py와 동일)
+from app.api.staff.attendance import (  # 오늘 근태 판정 재사용(§59, home.py와 동일)
+    _absent_today,
+    _attendance_status,
+)
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST
 from app.core.security import hash_password, verify_password
@@ -73,7 +76,8 @@ async def list_employees(
 
 async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> list[EmployeeOut]:
     """각 직원에 오늘 근태 판정을 얹어 EmployeeOut 로 반환 (§59). 기록·휴가 배치 로드로 N+1 회피."""
-    today = datetime.now(timezone.utc).astimezone(KST).date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    today = now_kst.date()
     ids = [e.id for e in employees]
     recs: dict[str, Attendance] = {}
     leaves: dict[str, LeaveRequest] = {}
@@ -105,7 +109,10 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
             model.today_attendance_status = AttendanceStatus.ON_LEAVE
         elif e.work_days and today.isoweekday() not in set(e.work_days):
             model.today_attendance_status = AttendanceStatus.DAY_OFF
-        # else: 근무일인데 기록 없음 → 출근 전(null). 오늘은 결근 판정 안 함(home.py와 동일).
+        elif e.work_days and _absent_today(e, now_kst):
+            # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근
+            model.today_attendance_status = AttendanceStatus.ABSENT
+        # else: 아직 근무 시간 안이다 → 미출근(null)
         out.append(model)
     return out
 
