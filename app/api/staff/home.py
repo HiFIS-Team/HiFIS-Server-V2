@@ -18,6 +18,7 @@ from app.db.session import get_db
 from app.enums import (
     ApprovalStatus,
     AttendanceStatus,
+    EventStatus,
     InboxKind,
     LeaveStatus,
     LeaveType,
@@ -25,6 +26,7 @@ from app.enums import (
     Role,
 )
 from app.models.board.approval import Approval
+from app.models.board.event import Event
 from app.models.board.notice import Notice
 from app.models.board.notice_read import NoticeRead
 from app.models.payroll.payslip import Payslip
@@ -130,7 +132,7 @@ _LEAVE_LABEL = {
     dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
 )
 async def my_inbox(db: AsyncSession = Depends(get_db)) -> list[InboxItemOut]:
-    """결재를 기다리는 것 — 급여·월차·전자결재를 한 목록으로 (홈 카드).
+    """결재를 기다리는 것 — 급여·월차·전자결재·일정을 한 목록으로 (홈 카드).
 
     **전사 기준이다.** ADMIN 은 결재선에 없어서 '내 차례'로 세면 늘 비는데,
     지켜보는 자리라 목록은 같이 봐야 한다. 승인·반려 버튼만 앱이 MASTER 에게 낸다.
@@ -192,6 +194,27 @@ async def my_inbox(db: AsyncSession = Depends(get_db)) -> list[InboxItemOut]:
                 title=doc.kind,
                 detail=doc.title,
                 created_at=doc.created_at,
+            )
+        )
+
+    for event in (
+        await db.scalars(select(Event).where(Event.status == EventStatus.PENDING))
+    ).all():
+        start = event.start_at.astimezone(KST)
+        end = event.end_at.astimezone(KST)
+        span = (
+            f"{start.month}.{start.day}"
+            if start.date() == end.date()
+            else f"{start.month}.{start.day} ~ {end.month}.{end.day}"
+        )
+        items.append(
+            InboxItemOut(
+                kind=InboxKind.EVENT,
+                id=event.id,
+                employee_id=event.owner_id,
+                title=event.title,
+                detail=f"{span} · {event.category}",
+                created_at=event.created_at,
             )
         )
 

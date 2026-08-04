@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
+from app.enums import EventStatus
 from app.schemas.base import CamelModel
 
 
@@ -46,5 +47,6 @@ class EventOut(CamelModel):
     attendee_ids: list[str]
     memo: str | None = None
     owner_id: str
+    status: EventStatus  # 요청자가 못 정한다 — 올린 사람의 권한이 정한다
     created_at: datetime
     updated_at: datetime

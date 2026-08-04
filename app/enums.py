@@ -239,12 +239,25 @@ class MessageKind(StrEnum):
     SYSTEM = "SYSTEM"
 
 
+class EventStatus(StrEnum):
+    """일정 승인 상태.
+
+    MASTER·ADMIN 이 올린 것은 바로 APPROVED, 나머지는 PENDING 으로 들어간다.
+    **반려하면 행을 지우므로 REJECTED 는 없다** — 달력이 유일한 목록이라
+    죽은 일정이 남으면 칸만 어지럽힌다. 신청자에게는 알림으로 알린다.
+    """
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+
+
 class InboxKind(StrEnum):
     """홈 결재함 한 줄의 출처 — 승인·반려를 어느 엔드포인트로 보낼지 가른다."""
 
     PAYSLIP = "PAYSLIP"    # POST /payslips/{id}/approve|reject
     LEAVE = "LEAVE"        # POST /leaves/{id}/approve|reject
     APPROVAL = "APPROVAL"  # POST /approvals/{id}/approve|reject
+    EVENT = "EVENT"        # POST /events/{id}/approve|reject
 
 
 class AccessEvent(StrEnum):

@@ -190,6 +190,8 @@ LABELS: dict[tuple[str, str], str] = {
     ("POST", "/events"): "일정 추가",
     ("PATCH", "/events/{id}"): "일정 수정",
     ("DELETE", "/events/{id}"): "일정 삭제",
+    ("POST", "/events/{id}/approve"): "일정 승인",
+    ("POST", "/events/{id}/reject"): "일정 반려",
     ("POST", "/reactions"): "이모지 반응",
     # 전자결재
     ("POST", "/approvals"): "결재 올리기",

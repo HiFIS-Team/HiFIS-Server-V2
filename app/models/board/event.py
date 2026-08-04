@@ -2,11 +2,12 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.enums import EventStatus
 
 
 class Event(UUIDMixin, TimestampMixin, Base):
@@ -23,3 +24,10 @@ class Event(UUIDMixin, TimestampMixin, Base):
     attendee_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # 참석자
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("employees.id"), nullable=False)
+    # 승인 상태 — MASTER·ADMIN 이 올린 것만 바로 APPROVED
+    status: Mapped[EventStatus] = mapped_column(
+        Enum(EventStatus, name="eventstatus"),
+        nullable=False,
+        default=EventStatus.APPROVED,
+        index=True,
+    )
