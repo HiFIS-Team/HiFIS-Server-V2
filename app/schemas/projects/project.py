@@ -16,6 +16,8 @@ class ProjectCreate(CamelModel):
     due: datetime
     progress: int = Field(default=0, ge=0, le=100)
     assignee_ids: list[str] = Field(default_factory=list)
+    # 맡을 사람 — 안 주면 만든 사람이 담당이 된다
+    owner_id: str | None = None
     color: str | None = None
 
 
@@ -27,6 +29,7 @@ class ProjectUpdate(CamelModel):
     due: datetime | None = None
     progress: int | None = Field(default=None, ge=0, le=100)
     assignee_ids: list[str] | None = None
+    owner_id: str | None = None
     extension_reason: str | None = None
     color: str | None = None
 
@@ -42,6 +45,7 @@ class ProjectOut(CamelModel):
     todo_count: int = 0       # 체크리스트 전체 개수
     done_count: int = 0       # 완료 개수
     assignee_ids: list[str]
+    owner_id: str          # 맡은 사람 — 안 정했으면 만든 사람으로 채워서 준다
     color: str | None = None  # null=앱이 id 해시로 생성
     extension_reason: str | None = None
     status: ProjectStatus  # 서버 파생

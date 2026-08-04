@@ -69,6 +69,8 @@ def _to_out(project: Project, todo_count: int = 0, done_count: int = 0) -> Proje
         todo_count=todo_count,
         done_count=done_count,
         assignee_ids=project.assignee_ids,
+        # 이 컬럼이 생기기 전 프로젝트는 담당이 비어 있다 — 만든 사람으로 읽는다
+        owner_id=project.owner_id or project.created_by_id,
         color=project.color,
         extension_reason=project.extension_reason,
         status=_status(project),
@@ -228,6 +230,8 @@ async def create_project(
         due=payload.due,
         progress=payload.progress,
         assignee_ids=payload.assignee_ids,
+        # 안 주면 만든 사람이 담당 — 직원·점장은 자기 일을 자기가 올린다
+        owner_id=payload.owner_id or current.id,
         color=payload.color,
         created_by_id=current.id,
     )
