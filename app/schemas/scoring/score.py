@@ -57,15 +57,21 @@ class RankingBoardItem(CamelModel):
     reviews: int = 0
     stars: float = 0.0
 
-    # 프로젝트 — 그 달 기한인 것 중 담당분
+    # 프로젝트 — 점수(원장 합)와 그 달 기한인 것 중 담당분
+    project_score: int = 0
     project_done: int = 0
     project_total: int = 0
 
-    # 환경정비 수행 횟수
+    # 환경정비 — 점수(원장 합)와 수행 횟수
+    care_score: int = 0
     care: int = 0
 
-    # 지난달 순위 — [매출, 친절, 프로젝트, 환경, 종합]. 0 이면 순위 없음
-    last_rank: list[int] = Field(default_factory=lambda: [0, 0, 0, 0, 0])
+    # 수업 — 그 달 수행한 세션 수와 그것으로 쌓인 점수
+    lessons: int = 0
+    lesson_score: int = 0
+
+    # 지난달 순위 — [매출, 친절, 프로젝트, 환경, 수업, 종합]. 0 이면 순위 없음
+    last_rank: list[int] = Field(default_factory=lambda: [0, 0, 0, 0, 0, 0])
 
 
 class ScoreSummary(CamelModel):

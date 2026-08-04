@@ -22,7 +22,7 @@ from app.schemas.scoring.score import (
     ScoreSummary,
 )
 from app.services.ranking import kind_conditions
-from app.services.ranking_board import build_board, rank_board
+from app.services.ranking_board import METRICS, build_board, rank_board
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
@@ -103,7 +103,7 @@ async def ranking_board(
     last = await build_board(db, period=before, branch_id=branch_id)
     ranks = rank_board(last)
     for row in board:
-        row["lastRank"] = ranks.get(row["employeeId"], [0, 0, 0, 0, 0])
+        row["lastRank"] = ranks.get(row["employeeId"], [0] * len(METRICS))
 
     return [RankingBoardItem.model_validate(row) for row in board]
 
