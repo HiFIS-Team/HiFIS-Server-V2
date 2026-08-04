@@ -52,10 +52,9 @@ class RankingBoardItem(CamelModel):
     new_signups: int = 0
     re_signups: int = 0
 
-    # 친절 — 점수(원장 합)와 리뷰 수·별점 평균
+    # 친절 — 점수(원장 합)와 받은 설문 수
     kindness: int = 0
     reviews: int = 0
-    stars: float = 0.0
 
     # 프로젝트 — 점수(원장 합)와 그 달 기한인 것 중 담당분
     project_score: int = 0

@@ -12,7 +12,7 @@
 인원수만큼 요청이 늘어난다.
 """
 
-from sqlalchemy import Float, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import period_range
@@ -47,7 +47,6 @@ def _blank(employee: Employee) -> dict:
         "reSignups": 0,
         "kindness": 0,
         "reviews": 0,
-        "stars": 0.0,
         "projectScore": 0,
         "projectDone": 0,
         "projectTotal": 0,
@@ -118,14 +117,10 @@ async def build_board(
             continue
         row[_SCORE_FIELD[category]] = int(points or 0)
 
-    # 친절 근거 — 리뷰 수와 별점 평균 (점수는 위 원장에서 왔다)
+    # 친절 근거 — 받은 설문 수 (점수는 위 원장에서 왔다)
     rows = (
         await db.execute(
-            select(
-                KindnessSurvey.praised_employee_id,
-                func.count(),
-                func.coalesce(func.avg(cast(KindnessSurvey.stars, Float)), 0.0),
-            )
+            select(KindnessSurvey.praised_employee_id, func.count())
             .where(
                 KindnessSurvey.submitted_at >= start,
                 KindnessSurvey.submitted_at < end,
@@ -133,12 +128,9 @@ async def build_board(
             .group_by(KindnessSurvey.praised_employee_id)
         )
     ).all()
-    for employee_id, count, stars in rows:
-        row = board.get(employee_id)
-        if row is None:
-            continue
-        row["reviews"] = count
-        row["stars"] = round(float(stars or 0), 1)
+    for employee_id, count in rows:
+        if employee_id in board:
+            board[employee_id]["reviews"] = count
 
     # 환경정비 근거 — 그 달 수행 횟수
     rows = (
