@@ -1,6 +1,6 @@
 """활동 로그 조회 — 누가 무엇을 바꿨는지 (개인정보처리방침 §8).
 
-읽기 전용. `[ADMIN]` 게이트라 MASTER 도 자동 통과 — 접속 로그와 같은 기준이다.
+읽기 전용. **MASTER 전용** — 접속 로그·사내톡 열람과 같은 기준이다 (ADMIN 도 403).
 전 지점 보안 데이터이므로 지점 스코프는 적용하지 않는다.
 """
 
@@ -29,7 +29,7 @@ def _is_read(stmt_col=AuditLog):
     return and_(stmt_col.method == "GET", stmt_col.route.in_(_READ_ROUTES))
 
 
-@router.get("", response_model=list[AuditLogOut], dependencies=[Depends(require_role(Role.ADMIN))])
+@router.get("", response_model=list[AuditLogOut], dependencies=[Depends(require_role(Role.MASTER))])
 async def list_audit_logs(
     response: Response,
     employee_id: str | None = Query(None, alias="employeeId"),

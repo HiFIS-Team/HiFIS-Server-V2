@@ -1,7 +1,11 @@
 """성능 지표·이상행동 조회 — 모니터링 화면 (개인정보처리방침 §8).
 
-`[ADMIN]` 게이트라 MASTER 도 자동 통과 — 접속·활동 로그와 같은 기준이다.
+**MASTER 전용이다.** 접속·활동 로그·사내톡 열람과 같은 기준으로,
+남의 활동과 대화를 들여다보는 자리라 대표 한 사람만 연다 (ADMIN 도 403).
 전 지점 보안 데이터이므로 지점 스코프는 적용하지 않는다.
+
+단 아래의 `POST /security/capture` 는 예외다 — 앱이 '화면이 찍혔다'고
+알려 오는 자리라 **전 직원이 부른다.**
 """
 
 from datetime import datetime, timedelta, timezone
@@ -55,7 +59,7 @@ def _percentile(counts: list[int], total: int, ratio: float, max_ms: int) -> int
 @router.get(
     "/metrics/summary",
     response_model=ApiMetricsOut,
-    dependencies=[Depends(require_role(Role.ADMIN))],
+    dependencies=[Depends(require_role(Role.MASTER))],
 )
 async def metrics_summary(
     minutes: int = Query(60, ge=5, le=1440, description="최근 몇 분을 볼지"),
@@ -156,7 +160,7 @@ async def metrics_summary(
 @router.get(
     "/anomalies",
     response_model=list[AnomalyOut],
-    dependencies=[Depends(require_role(Role.ADMIN))],
+    dependencies=[Depends(require_role(Role.MASTER))],
 )
 async def list_anomalies(
     response: Response,

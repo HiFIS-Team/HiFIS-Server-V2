@@ -23,7 +23,7 @@ from app.schemas.platform.chat_audit import ChatAuditMessageOut, ChatAuditRoomOu
 router = APIRouter(
     prefix="/audit/chat",
     tags=["audit-chat"],
-    dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
+    dependencies=[Depends(require_role(Role.MASTER))],  # 대표만 — ADMIN 도 못 본다
 )
 
 
