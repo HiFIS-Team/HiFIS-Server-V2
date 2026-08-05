@@ -100,17 +100,28 @@ h1 em{font-style:normal;color:var(--primary)}
 }
 .hero-note b{color:var(--g700);font-weight:600}
 
-/* ── 선택 칩 ── */
-.chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{
-  padding:12px 16px;border-radius:14px;background:var(--surface);
-  border:1px solid var(--g100);font-size:15px;font-weight:500;color:var(--g700);
-  transition:border-color .14s,background .14s,color .14s;
+/* ── 계기 고르기 ──
+   흘려 쌓으면(flex-wrap) 글자 길이가 제각각이라 오른쪽이 들쭉날쭉하다.
+   여섯 개라 2열이 딱 떨어진다 — 앱의 결재 종류 카드와 같은 모양이다. */
+.motives{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.motive{
+  height:92px;border-radius:16px;background:var(--surface);
+  border:1px solid var(--g100);color:var(--g700);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
+  transition:border-color .14s,background .14s,color .14s,transform .14s;
 }
-.chip[aria-pressed="true"]{
-  background:var(--primary-light);border-color:var(--primary);
-  color:var(--primary);font-weight:700;
+.motive:active{transform:scale(.97)}
+.motive svg{
+  width:24px;height:24px;fill:none;stroke:var(--g400);stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round;transition:stroke .14s;
 }
+.motive span{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.motive[aria-pressed="true"]{
+  background:var(--primary-light);border-color:var(--primary);border-width:1.5px;
+  color:var(--primary);
+}
+.motive[aria-pressed="true"] svg{stroke:var(--primary)}
+.motive[aria-pressed="true"] span{font-weight:700}
 
 /* ── 직원 고르기 ── */
 .people{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -263,14 +274,11 @@ textarea{min-height:132px;line-height:1.6}
       </div>
     </section>
 
-    <!-- 1. 방문 동기 -->
+    <!-- 1. 운동을 시작하게 된 계기 -->
     <section class="card" data-step="1">
-      <h1>어떻게 저희를<br><em>알고 오셨나요?</em></h1>
+      <h1>운동을 시작하게 된<br><em>계기가 무엇인가요?</em></h1>
       <p class="sub">가장 가까운 것 하나만 골라주세요.</p>
-      <div class="chips" id="motiveChips"></div>
-      <div class="field" id="motiveEtcWrap" style="display:none;margin-top:14px">
-        <input type="text" id="motiveEtc" maxlength="40" placeholder="어떻게 알고 오셨는지 적어주세요">
-      </div>
+      <div class="motives" id="motiveChips"></div>
     </section>
 
     <!-- 2. 직원 고르기 -->
@@ -369,8 +377,17 @@ textarea{min-height:132px;line-height:1.6}
 // QR 이 담은 지점 토큰 — 주소 마지막 칸이다
 var TOKEN = location.pathname.replace(/\/+$/,'').split('/').pop();
 
-// 방문 동기 보기 — **여기만 고치면 화면이 따라간다**
-var MOTIVES = ['지인 소개','온라인 검색','SNS·블로그','간판 보고','전단지','다시 등록','기타'];
+// 운동을 시작하게 된 계기 — **여기만 고치면 화면이 따라간다.**
+// 서버에는 `label` 이 그대로 저장된다 (`motivation`).
+// 짝수로 두는 게 좋다 — 2열이라 홀수면 마지막 줄 오른쪽이 빈다.
+var MOTIVES = [
+  {label:'체중 감량', icon:'<polyline points="3 7 9 13 13 9 21 17"/><polyline points="21 11 21 17 15 17"/>'},
+  {label:'근육 증가', icon:'<path d="M6.5 8v8M4 10.5v3M17.5 8v8M20 10.5v3M6.5 12h11"/>'},
+  {label:'건강 개선', icon:'<path d="M12 20s-7-4.3-9-8.4A5 5 0 0 1 12 6.2 5 5 0 0 1 21 11.6c-2 4.1-9 8.4-9 8.4z"/>'},
+  {label:'스트레스 해소', icon:'<circle cx="12" cy="12" r="9"/><path d="M8.4 14.4c.9 1.2 2.1 1.9 3.6 1.9s2.7-.7 3.6-1.9"/><path d="M9 9.6h.01M15 9.6h.01"/>'},
+  {label:'외모 변화', icon:'<path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8L12 3.5z"/><path d="M18.4 15.6l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6.6-1.6z"/>'},
+  {label:'주변 권유', icon:'<path d="M15.5 19.5V18a3.5 3.5 0 0 0-3.5-3.5H7A3.5 3.5 0 0 0 3.5 18v1.5"/><circle cx="9.5" cy="7.5" r="3"/><path d="M20.5 19.5V18a3.5 3.5 0 0 0-2.6-3.4"/><path d="M15.5 4.7a3 3 0 0 1 0 5.6"/>'}
+];
 
 var STEPS = ['intro','1','2','3','4','5'];
 var i = 0;                       // 지금 단계
@@ -424,10 +441,7 @@ function syncCta(){
   $('cta').disabled = !ok || sending;
 }
 
-function motiveValue(){
-  if (pick.motive === '기타') return $('motiveEtc').value.trim();
-  return pick.motive;
-}
+function motiveValue(){ return pick.motive; }
 
 function phoneDigits(){ return $('phone').value.replace(/[^0-9]/g,''); }
 
@@ -454,15 +468,15 @@ function drawMotives(){
   var box = $('motiveChips');
   MOTIVES.forEach(function(m){
     var b = document.createElement('button');
-    b.className = 'chip'; b.type = 'button'; b.textContent = m;
+    b.className = 'motive'; b.type = 'button';
     b.setAttribute('aria-pressed','false');
+    b.innerHTML = '<svg viewBox="0 0 24 24">' + m.icon + '</svg>'
+                + '<span>' + esc(m.label) + '</span>';
     b.onclick = function(){
-      pick.motive = m;
+      pick.motive = m.label;
       [].forEach.call(box.children, function(c){
         c.setAttribute('aria-pressed', String(c === b));
       });
-      $('motiveEtcWrap').style.display = (m === '기타') ? 'block' : 'none';
-      if (m === '기타') $('motiveEtc').focus();
       syncCta();
     };
     box.appendChild(b);
@@ -543,7 +557,6 @@ $('skip').onclick = function(){ $('improve').value = ''; next(); };
 
 $('praise').oninput = function(){ $('praiseCount').textContent = this.value.length; syncCta(); };
 $('improve').oninput = function(){ $('improveCount').textContent = this.value.length; };
-$('motiveEtc').oninput = syncCta;
 $('name').oninput = syncCta;
 
 $('phone').oninput = function(){
