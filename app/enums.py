@@ -50,6 +50,17 @@ class PayslipStatus(StrEnum):
     REJECTED = "REJECTED"    # 반려
 
 
+class EmploymentType(StrEnum):
+    """고용 형태 — 재직 상태(EmployeeStatus)와 **다른 축**이다.
+
+    알바가 그만두면 `status=RESIGNED` 로 가고 고용 형태는 그대로 남는다.
+    한 사람이 알바로 시작해 정규직이 되는 경우도 이 값만 바꾸면 된다.
+    """
+
+    FULL_TIME = "FULL_TIME"  # 정규직 — 직급별 기본급 + 인센티브
+    PART_TIME = "PART_TIME"  # 알바 — 시급제만 (직급과 무관하게 인센티브 없음)
+
+
 class EmployeeStatus(StrEnum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"

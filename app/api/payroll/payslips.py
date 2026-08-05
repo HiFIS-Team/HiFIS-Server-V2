@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
-from app.enums import PayslipStatus, Role
+from app.enums import EmploymentType, PayslipStatus, Role
 from app.models.staff.employee import Employee
 from app.models.payroll.payslip import Payslip
 from app.schemas.payroll.payslip import (
@@ -26,8 +26,11 @@ from app.schemas.payroll.payslip import (
 from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.payroll import (
+    NoScheduleError,
+    build_hourly_payslip_data,
     build_payslip_data,
     generate_branch_payslips,
+    get_hourly_wage,
     get_rank_policy,
     payday_window,
 )
@@ -91,10 +94,20 @@ async def submit_my_payslip(
     ).scalar_one_or_none()
     if payslip is None:
         start, _ = period_range(payload.year_month)
-        policy = await get_rank_policy(db, current.rank, current.branch_id, start)
-        if policy is None:
-            raise HTTPException(400, detail={"code": "NO_RANK_POLICY", "message": "직급 급여 정책이 없어 신청할 수 없어요"})
-        data = await build_payslip_data(db, current, payload.year_month, policy)
+        if current.employment_type == EmploymentType.PART_TIME:
+            # 알바는 시급제 — 신청·결재 절차는 정규직과 같고 계산만 다르다
+            wage = await get_hourly_wage(db, current.branch_id, start)
+            if wage is None:
+                raise HTTPException(400, detail={"code": "NO_HOURLY_WAGE", "message": "시급 정책이 없어 신청할 수 없어요"})
+            try:
+                data = await build_hourly_payslip_data(db, current, payload.year_month, wage)
+            except NoScheduleError:
+                raise HTTPException(400, detail={"code": "NO_SCHEDULE", "message": "근무 시간을 설정해야 급여를 신청할 수 있어요"})
+        else:
+            policy = await get_rank_policy(db, current.rank, current.branch_id, start)
+            if policy is None:
+                raise HTTPException(400, detail={"code": "NO_RANK_POLICY", "message": "직급 급여 정책이 없어 신청할 수 없어요"})
+            data = await build_payslip_data(db, current, payload.year_month, policy)
         payslip = Payslip(employee_id=current.id, year_month=payload.year_month, **data)
         db.add(payslip)
         await db.flush()

@@ -24,6 +24,7 @@ from app.models.payroll.payslip import Payslip
 from app.models.scoring.peer_review import PeerReview
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
+from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.scoring.ranking_snapshot import RankingSnapshot
 from app.models.board.reaction import Reaction
@@ -64,6 +65,7 @@ __all__ = [
     "PeerReview",
     "Project",
     "ProjectRequest",
+    "HourlyWagePolicy",
     "RankPolicy",
     "RankingSnapshot",
     "Reaction",

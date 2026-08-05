@@ -9,7 +9,7 @@ from sqlalchemy import ARRAY, DateTime, Enum as SAEnum, ForeignKey, Integer, Str
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
-from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
+from app.enums import DeductionMethod, EmployeeStatus, EmploymentType, Rank, Role, WorkStatus
 
 
 class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -37,6 +37,14 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         SAEnum(EmployeeStatus, native_enum=False, length=20),
         nullable=False,
         default=EmployeeStatus.ACTIVE,
+    )
+
+    # 고용 형태 — 정규직은 직급별 기본급, 알바는 시급제 (재직 상태와 다른 축)
+    employment_type: Mapped[EmploymentType] = mapped_column(
+        SAEnum(EmploymentType, native_enum=False, length=20),
+        nullable=False,
+        default=EmploymentType.FULL_TIME,
+        server_default=EmploymentType.FULL_TIME.value,
     )
 
     avatar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2F54EB")  # 팔레트 첫 색(§2.2)

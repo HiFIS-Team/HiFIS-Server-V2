@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from app.enums import AttendanceStatus, DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
+from app.enums import AttendanceStatus, DeductionMethod, EmployeeStatus, EmploymentType, Rank, Role, WorkStatus
 from app.schemas.base import CamelModel, SignedUrlOptional, normalize_phone
 
 
@@ -22,6 +22,8 @@ class EmployeeCreate(CamelModel):
 
 class EmployeeUpdate(CamelModel):
     rank: Rank | None = None
+    # 정규직 ↔ 알바 — 급여 계산 방식이 갈린다
+    employment_type: EmploymentType | None = None
     role: Role | None = None
     status: EmployeeStatus | None = None
     team: str | None = None
@@ -60,6 +62,7 @@ class EmployeeOut(CamelModel):
     role: Role
     team: str | None = None
     status: EmployeeStatus
+    employment_type: EmploymentType
     avatar_color: str
     avatar_url: SignedUrlOptional = None
     status_message: str | None = None
