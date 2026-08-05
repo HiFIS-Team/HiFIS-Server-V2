@@ -55,6 +55,28 @@ class SurveyLinkOut(CamelModel):
     url: str
 
 
+#: 어느 화면의 주소인가 — (URL 앞자리, 토큰을 담은 컬럼 이름)
+_LINKS = {"survey": "survey_token", "tv": "tv_token"}
+
+
+async def _link(branch: Branch, kind: str, db: AsyncSession, *, reset: bool) -> SurveyLinkOut:
+    """지점의 공개 주소를 만들어 준다 — 없거나 [reset] 이면 새로 발급한다."""
+    field = _LINKS[kind]
+    if reset or not getattr(branch, field):
+        setattr(branch, field, secrets.token_urlsafe(12))
+        await db.commit()
+        await db.refresh(branch)
+    base = settings.public_base_url.rstrip("/")
+    return SurveyLinkOut(branch_name=branch.name, url=f"{base}/{kind}/{getattr(branch, field)}")
+
+
+async def _branch_or_404(branch_id: str, db: AsyncSession) -> Branch:
+    branch = await db.get(Branch, branch_id)
+    if branch is None:
+        raise _not_found()
+    return branch
+
+
 @router.get("/{branch_id}/survey-link", response_model=SurveyLinkOut)
 async def branch_survey_link(
     branch_id: str,
@@ -64,19 +86,8 @@ async def branch_survey_link(
     """매장에 붙일 회원 설문 QR 주소 — **MASTER·ADMIN 만**.
 
     토큰이 곧 그 지점 설문의 열쇠라, 전 직원에게 보이면 아무나 대신 낼 수 있다.
-    토큰이 아직 없는 지점(마이그레이션 뒤에 생긴 곳)은 여기서 만들어 붙인다.
     """
-    branch = await db.get(Branch, branch_id)
-    if branch is None:
-        raise _not_found()
-    if not branch.survey_token:
-        branch.survey_token = secrets.token_urlsafe(12)
-        await db.commit()
-        await db.refresh(branch)
-    return SurveyLinkOut(
-        branch_name=branch.name,
-        url=f"{settings.public_base_url.rstrip('/')}/survey/{branch.survey_token}",
-    )
+    return await _link(await _branch_or_404(branch_id, db), "survey", db, reset=False)
 
 
 @router.post("/{branch_id}/survey-link/reset", response_model=SurveyLinkOut)
@@ -90,16 +101,30 @@ async def reset_branch_survey_link(
     토큰을 지점 id 가 아니라 따로 둔 이유가 이것이다. 주소가 새어 나가
     엉뚱한 설문이 쌓이면 여기서 갈아 끼우고 QR 만 다시 뽑아 붙이면 된다.
     """
-    branch = await db.get(Branch, branch_id)
-    if branch is None:
-        raise _not_found()
-    branch.survey_token = secrets.token_urlsafe(12)
-    await db.commit()
-    await db.refresh(branch)
-    return SurveyLinkOut(
-        branch_name=branch.name,
-        url=f"{settings.public_base_url.rstrip('/')}/survey/{branch.survey_token}",
-    )
+    return await _link(await _branch_or_404(branch_id, db), "survey", db, reset=True)
+
+
+@router.get("/{branch_id}/tv-link", response_model=SurveyLinkOut)
+async def branch_tv_link(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> SurveyLinkOut:
+    """매장 TV 에 띄울 주소 — **MASTER·ADMIN 만**.
+
+    TV 브라우저를 전체화면으로 열어 두면 해결된 컴플레인이 돌아간다.
+    **설문 주소와 다른 토큰이다** — 설문 쪽은 글을 쓰는 열쇠라 벽에 띄우면 안 된다.
+    """
+    return await _link(await _branch_or_404(branch_id, db), "tv", db, reset=False)
+
+
+@router.post("/{branch_id}/tv-link/reset", response_model=SurveyLinkOut)
+async def reset_branch_tv_link(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> SurveyLinkOut:
+    return await _link(await _branch_or_404(branch_id, db), "tv", db, reset=True)
 
 
 @router.patch("/{branch_id}", response_model=BranchOut, dependencies=[Depends(require_role(Role.ADMIN))])

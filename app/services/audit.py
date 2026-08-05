@@ -18,12 +18,13 @@ def normalize(path: str) -> str:
     """`/projects/abc-…/todos/def-…` → `/projects/{id}/todos/{id}`
 
     **uuid 가 아닌 식별자도 접어야 한다.** 회원 설문(`/survey/{지점토큰}`)이
-    그렇다 — 토큰이 `secrets.token_urlsafe` 라 uuid 모양이 아니어서, 안 접으면
+    와 매장 TV(`/tv/{TV토큰}`)가 그렇다 — 토큰이 `secrets.token_urlsafe` 라
+    uuid 모양이 아니어서, 안 접으면
     지점마다 다른 주소로 남고 SKIP·NO_PAYLOAD·LABELS 가 하나도 안 걸린다.
     그러면 **손님의 이름·연락처가 본문째 로그에 쌓인다.**
     """
     parts = [("{id}" if _UUID.match(seg) else seg) for seg in path.split("/")]
-    if len(parts) > 2 and parts[1] == "survey":
+    if len(parts) > 2 and parts[1] in ("survey", "tv"):
         parts[2] = "{id}"
     return "/".join(parts)
 

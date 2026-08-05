@@ -19,3 +19,12 @@ class Branch(UUIDMixin, TimestampMixin, Base):
     survey_token: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )
+
+    #: 매장 TV 가 여는 주소 — `/tv/{tv_token}`.
+    #:
+    #: **설문 토큰과 따로 둔다.** 설문 토큰은 글을 *쓰는* 열쇠라, TV 주소창에
+    #: 띄워 두면 그 앞을 지나는 누구나 가짜 칭찬을 넣을 수 있다.
+    #: 이건 읽기만 하는 값이라 새어도 화면이 한 장 더 보이는 것뿐이다.
+    tv_token: Mapped[str | None] = mapped_column(
+        String(32), unique=True, index=True, nullable=True
+    )
