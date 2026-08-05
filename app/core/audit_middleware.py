@@ -17,7 +17,14 @@ from app.core.ratelimit import client_key
 from app.core.security import decode_token
 from app.db.session import SessionLocal
 from app.models.platform.audit_log import AuditLog
-from app.services.audit import NO_PAYLOAD, READ_LOGGED, SKIP, mask, normalize
+from app.services.audit import (
+    NO_PAYLOAD,
+    NO_PAYLOAD_NOTE,
+    READ_LOGGED,
+    SKIP,
+    mask,
+    normalize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +78,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         request._receive = replay  # noqa: SLF001 — Starlette 가 열어 둔 유일한 길
 
         if (request.method, route) in NO_PAYLOAD:
-            return {"_note": "대화 내용은 사내톡 열람에서 봐요"}
+            return {"_note": NO_PAYLOAD_NOTE.get(route, "본문은 안 남겨요")}
         if not body:
             return None
         if len(body) > _MAX_BODY:

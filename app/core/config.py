@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # 외부 웹훅 (네이버폼 등 회원 친절도 설문 수신) 시크릿 (§4.5)
     kindness_webhook_secret: str = "change-me-webhook-secret"
 
+    # 밖에서 이 서버를 부르는 주소 — **회원 설문 QR 에 찍히는 값**이다.
+    # 매장 벽에 붙는 것이라 `localhost` 가 들어가면 아무도 못 연다.
+    public_base_url: str = "https://api.hifis.app"
+
     # 계정관리 비번 암호화 마스터 키 (§9.6) — AES-256, 64 hex(32 byte). openssl rand -hex 32
     account_master_key: str = "00" * 32
 

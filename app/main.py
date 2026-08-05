@@ -28,6 +28,7 @@ from app.api.platform import (
     search,
 )
 from app.api.projects import meetings, projects, todos
+from app.api.public import survey as public_survey
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees, home
 from app.core.audit_middleware import AuditMiddleware
@@ -129,6 +130,7 @@ app.include_router(monitoring.router)  # 성능 지표·이상행동 감지
 app.include_router(chat_audit.router)  # 사내톡 열람(관리자 이상)
 app.include_router(documents.router)
 app.include_router(search.router)
+app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
 app.include_router(dashboard.router)
 app.include_router(files.router)  # 서명 URL 파일 서빙(/files) — 정적 /uploads 공개 대체(§H2)
 

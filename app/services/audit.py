@@ -15,8 +15,16 @@ _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
 
 
 def normalize(path: str) -> str:
-    """`/projects/abc-…/todos/def-…` → `/projects/{id}/todos/{id}`"""
+    """`/projects/abc-…/todos/def-…` → `/projects/{id}/todos/{id}`
+
+    **uuid 가 아닌 식별자도 접어야 한다.** 회원 설문(`/survey/{지점토큰}`)이
+    그렇다 — 토큰이 `secrets.token_urlsafe` 라 uuid 모양이 아니어서, 안 접으면
+    지점마다 다른 주소로 남고 SKIP·NO_PAYLOAD·LABELS 가 하나도 안 걸린다.
+    그러면 **손님의 이름·연락처가 본문째 로그에 쌓인다.**
+    """
     parts = [("{id}" if _UUID.match(seg) else seg) for seg in path.split("/")]
+    if len(parts) > 2 and parts[1] == "survey":
+        parts[2] = "{id}"
     return "/".join(parts)
 
 
@@ -48,8 +56,17 @@ SKIP: frozenset[tuple[str, str]] = frozenset(
 NO_PAYLOAD: frozenset[tuple[str, str]] = frozenset(
     {
         ("POST", "/chat/rooms/{id}/messages"),
+        # 회원 설문 — 손님의 이름·연락처가 본문에 있다. 설문 표에 이미 들어가 있고
+        # 여기까지 담으면 **직원이 아닌 사람의 개인정보가 두 벌**로 쌓인다
+        ("POST", "/survey/{id}"),
     }
 )
+
+#: 본문 대신 남길 한 줄 — **왜 안 남겼는지**가 보여야 나중에 안 헷갈린다
+NO_PAYLOAD_NOTE: dict[str, str] = {
+    "/chat/rooms/{id}/messages": "대화 내용은 사내톡 열람에서 봐요",
+    "/survey/{id}": "회원 개인정보라 본문은 설문 목록에서만 봐요",
+}
 
 
 # GET 인데도 남기는 것 — **감시하는 쪽을 감시한다.**
@@ -164,6 +181,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("POST", "/peer-reviews"): "동료 평가 제출",
     ("PATCH", "/kindness-surveys/{id}/status"): "컴플레인 처리 단계 변경",
     ("POST", "/webhooks/kindness-survey"): "회원 설문 접수",
+    ("POST", "/survey/{id}"): "회원 설문 접수(매장 QR)",
     # 프로젝트
     ("POST", "/projects"): "프로젝트 만들기",
     ("PATCH", "/projects/{id}"): "프로젝트 수정",

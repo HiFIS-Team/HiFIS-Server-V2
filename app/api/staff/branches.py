@@ -6,14 +6,18 @@
 만들기·고치기는 그대로 ADMIN 전용이다.
 """
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Role
 from app.models.staff.branch import Branch
+from app.schemas.base import CamelModel
 from app.schemas.staff.branch import BranchCreate, BranchOut, BranchUpdate
 
 router = APIRouter(prefix="/branches", tags=["branches"])
@@ -44,6 +48,58 @@ async def get_branch(branch_id: str, db: AsyncSession = Depends(get_db)) -> Bran
     if branch is None:
         raise _not_found()
     return branch
+
+
+class SurveyLinkOut(CamelModel):
+    branch_name: str
+    url: str
+
+
+@router.get("/{branch_id}/survey-link", response_model=SurveyLinkOut)
+async def branch_survey_link(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> SurveyLinkOut:
+    """매장에 붙일 회원 설문 QR 주소 — **MASTER·ADMIN 만**.
+
+    토큰이 곧 그 지점 설문의 열쇠라, 전 직원에게 보이면 아무나 대신 낼 수 있다.
+    토큰이 아직 없는 지점(마이그레이션 뒤에 생긴 곳)은 여기서 만들어 붙인다.
+    """
+    branch = await db.get(Branch, branch_id)
+    if branch is None:
+        raise _not_found()
+    if not branch.survey_token:
+        branch.survey_token = secrets.token_urlsafe(12)
+        await db.commit()
+        await db.refresh(branch)
+    return SurveyLinkOut(
+        branch_name=branch.name,
+        url=f"{settings.public_base_url.rstrip('/')}/survey/{branch.survey_token}",
+    )
+
+
+@router.post("/{branch_id}/survey-link/reset", response_model=SurveyLinkOut)
+async def reset_branch_survey_link(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> SurveyLinkOut:
+    """설문 주소를 새로 발급한다 — **옛 QR 은 그 즉시 안 열린다.**
+
+    토큰을 지점 id 가 아니라 따로 둔 이유가 이것이다. 주소가 새어 나가
+    엉뚱한 설문이 쌓이면 여기서 갈아 끼우고 QR 만 다시 뽑아 붙이면 된다.
+    """
+    branch = await db.get(Branch, branch_id)
+    if branch is None:
+        raise _not_found()
+    branch.survey_token = secrets.token_urlsafe(12)
+    await db.commit()
+    await db.refresh(branch)
+    return SurveyLinkOut(
+        branch_name=branch.name,
+        url=f"{settings.public_base_url.rstrip('/')}/survey/{branch.survey_token}",
+    )
 
 
 @router.patch("/{branch_id}", response_model=BranchOut, dependencies=[Depends(require_role(Role.ADMIN))])
