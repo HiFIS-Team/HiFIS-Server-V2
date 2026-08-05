@@ -35,6 +35,7 @@ class FolderOut(CamelModel):
 class DocumentUpdate(CamelModel):
     name: str | None = None
     desc: str | None = None
+    tags: list[str] | None = None  # 통째로 갈아끼운다 (빈 배열=태그 없음)
     folder_id: str | None = None  # 이동 — 다른 폴더로 (null=최상위)
 
 
