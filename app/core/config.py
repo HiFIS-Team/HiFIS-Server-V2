@@ -39,13 +39,22 @@ class Settings(BaseSettings):
     vapid_subject: str = "mailto:admin@hifis.local"
 
     # 이메일 발송(비밀번호 재설정 인증번호 등, §2.3) — smtp_host 비면 로그 스텁으로 폴백(개발).
-    # 무료 SMTP 계정 하나면 충분(예: Gmail/Naver 587 STARTTLS). 문자(SMS)는 후순위.
+    # 무료 SMTP 계정 하나면 충분(예: Gmail/Naver 587 STARTTLS).
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = ""          # 발신 표시 주소(비면 smtp_user 사용)
     smtp_starttls: bool = True
+
+    # 문자(SMS) 발송 — 솔라피. **셋이 다 채워져야** 실제로 나가고, 하나라도 비면 로그 폴백.
+    #
+    # solapi_sender 는 **솔라피 콘솔에 사전등록·인증이 끝난 번호**여야 한다 (전기통신사업법).
+    # 등록 안 된 번호를 넣으면 발송이 통째로 거부된다.
+    # HiFIS v1 이 쓰던 계정·발신번호를 그대로 넣으면 된다 (같은 회사·같은 번호).
+    solapi_api_key: str = ""
+    solapi_api_secret: str = ""
+    solapi_sender: str = ""
 
     # 초기 부트스트랩 시드 (app.seed) — 첫 지점(전사 HQ)·관리자
     seed_branch_name: str = "전체"  # HQ 지점명 (§62). 기존 HQ 는 type 으로 찾아 재사용.
