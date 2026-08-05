@@ -6,6 +6,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
@@ -13,9 +14,11 @@ from app.core.periods import current_period
 from app.db.session import get_db
 from app.enums import RankingKind, Role, ScoreCategory
 from app.models.staff.employee import Employee
+from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.score import (
     RankingBoardItem,
+    RankOvertakeOut,
     RankingItem,
     ScoreCreate,
     ScoreEventOut,
@@ -155,3 +158,57 @@ async def create_score(
     await db.commit()
     await db.refresh(event)
     return event
+
+
+@router.get(
+    "/overtakes",
+    response_model=list[RankOvertakeOut],
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def list_overtakes(
+    db: AsyncSession = Depends(get_db),
+    period: str | None = Query(None, description="YYYY-MM (없으면 이번 달)"),
+    metric: str | None = Query(None, description="revenue·kindness·project·care·lesson·overall"),
+    limit: int = Query(20, ge=1, le=100),
+) -> list[RankOvertakeOut]:
+    """누가 누구를 무슨 차이로 앞질렀나 — 최근 것부터.
+
+    5분마다 도는 `board_overtake_scan` 이 채운다. 랭킹은 볼 때마다 다시
+    계산하는 값이라 서버가 찍어 두지 않으면 '언제 바뀌었나'를 알 수 없다.
+
+    **`GET /scores/ranking/board` 와 같은 판을 본다** — 화면에 뜬 등수와
+    어긋나면 "추월했다는데 순위는 그대로"가 된다.
+    """
+    if metric is not None and metric not in METRICS:
+        raise HTTPException(
+            400, detail={"code": "BAD_METRIC", "message": "없는 항목이에요"}
+        )
+
+    mover = aliased(Employee)
+    passed = aliased(Employee)
+    stmt = (
+        select(RankOvertake, mover, passed)
+        .join(mover, mover.id == RankOvertake.mover_id)
+        .join(passed, passed.id == RankOvertake.passed_id)
+        .where(RankOvertake.period == (period or current_period()))
+    )
+    if metric:
+        stmt = stmt.where(RankOvertake.metric == metric)
+    stmt = stmt.order_by(RankOvertake.created_at.desc()).limit(limit)
+
+    return [
+        RankOvertakeOut(
+            id=row.id,
+            period=row.period,
+            metric=row.metric,
+            mover_id=row.mover_id,
+            mover_name=m.name,
+            mover_branch_id=m.branch_id,
+            passed_id=row.passed_id,
+            passed_name=p.name,
+            gap=row.gap,
+            rank=row.rank,
+            created_at=row.created_at,
+        )
+        for row, m, p in (await db.execute(stmt)).all()
+    ]

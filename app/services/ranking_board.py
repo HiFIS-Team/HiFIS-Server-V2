@@ -199,6 +199,14 @@ def _value(row: dict, metric: str, pool: list[dict]) -> float:
     return total / len(parts)
 
 
+def metric_value(row: dict, metric: str, pool: list[dict]) -> float:
+    """항목별 값 — 밖에서 쓰는 이름 ([_value] 와 같다).
+
+    추월 스캔이 '무슨 차이로 넘었나'를 재는 데 쓴다.
+    """
+    return _value(row, metric, pool)
+
+
 def rank_board(board: list[dict]) -> dict[str, list[int]]:
     """사람별 항목 순위 — `{employeeId: [매출, 친절, 프로젝트, 환경, 수업, 종합]}`.
 

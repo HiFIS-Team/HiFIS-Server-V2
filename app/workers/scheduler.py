@@ -19,7 +19,11 @@ from app.workers.event_reminders import event_reminders
 from app.workers.payday_reminder import payday_deadline_reminders, payday_reminders
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
-from app.workers.ranking_jobs import announce_monthly_winners, ranking_change_scan
+from app.workers.ranking_jobs import (
+    announce_monthly_winners,
+    board_overtake_scan,
+    ranking_change_scan,
+)
 from app.workers.anomaly_scan import anomaly_scan
 from app.workers.metrics_flush import flush_metrics
 from app.workers.retention import purge_old_access_logs
@@ -72,6 +76,10 @@ def _register_jobs() -> None:
     # 5분마다 — 순위 변동 감지(밀려난 본인 + 어드민 알림)
     scheduler.add_job(ranking_change_scan, CronTrigger(minute="*/5"),
                       id="ranking_change", replace_existing=True)
+    # 5분마다 — 랭킹판(매출·친절·…) 추월 기록. 위 잡과 보는 값이 달라 따로 돈다
+    # (저쪽은 점수 원장, 이쪽은 앱 랭킹 화면이 그리는 판). 알림은 저쪽만 보낸다.
+    scheduler.add_job(board_overtake_scan, CronTrigger(minute="*/5"),
+                      id="board_overtake", replace_existing=True)
     # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
     scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
                       id="access_log_purge", replace_existing=True)

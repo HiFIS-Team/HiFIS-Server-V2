@@ -26,6 +26,7 @@ from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
 from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.rank_policy import RankPolicy
+from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.ranking_snapshot import RankingSnapshot
 from app.models.board.reaction import Reaction
 from app.models.members.registration import Registration
@@ -67,6 +68,7 @@ __all__ = [
     "ProjectRequest",
     "HourlyWagePolicy",
     "RankPolicy",
+    "RankOvertake",
     "RankingSnapshot",
     "Reaction",
     "Registration",

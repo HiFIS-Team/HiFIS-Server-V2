@@ -78,3 +78,24 @@ class ScoreSummary(CamelModel):
     period: str | None = None
     total: int
     by_category: dict[str, int]
+
+
+class RankOvertakeOut(CamelModel):
+    """랭킹판에서 자리가 바뀐 한 건 — 대표·관리자 랭킹 화면이 읽는다.
+
+    `gap` 은 **항목마다 단위가 다르다** (매출이면 원, 수업이면 개수, 나머지는 점).
+    서버가 단위를 붙이지 않는 건 화면이 이미 어느 탭인지 알기 때문이다.
+    """
+
+    id: str
+    period: str
+    metric: str
+    mover_id: str
+    mover_name: str
+    # 앞지른 사람의 지점 — 화면의 지점 필터가 쓴다
+    mover_branch_id: str | None = None
+    passed_id: str
+    passed_name: str
+    gap: float
+    rank: int
+    created_at: datetime
