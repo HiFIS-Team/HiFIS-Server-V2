@@ -39,10 +39,25 @@ class SaleItem(CamelModel):
     amount: int
 
 
+class HourlyBasis(CamelModel):
+    """알바(시급제) 명세서의 근거 — 정규직 명세서에는 없다(null).
+
+    앱은 **이 자리가 채워졌는지**로 시급제 명세서인지를 가른다. 사람의 지금
+    고용 형태가 아니라 그 명세서를 뽑을 때 무엇이었는지라, 알바로 일하다
+    정규직이 돼도 지난 달 명세서는 시급 그대로 남는다.
+    """
+
+    wage: int
+    minutes_per_day: int
+    work_days: int
+    total_minutes: int
+
+
 class PayslipBasis(CamelModel):
     new_sales: list[SaleItem]
     renewal_sales: list[SaleItem]
     session_signs: int
+    hourly: HourlyBasis | None = None
 
 
 class PayslipOut(CamelModel):
