@@ -172,9 +172,19 @@ async def list_payslips(
     db: AsyncSession = Depends(get_db),
     branch_id: str | None = Query(None, alias="branchId"),
     year_month: str | None = Query(None, alias="yearMonth"),
+    employee_id: str | None = Query(None, alias="employeeId"),
+    # `YYYY-MM` 범위 (양끝 포함) — 한 사람의 최근 몇 달을 한 번에 받을 때
+    from_month: str | None = Query(None, alias="from"),
+    to_month: str | None = Query(None, alias="to"),
     box: str | None = Query(None),
 ) -> list[Payslip]:
     stmt = select(Payslip)
+    if employee_id:
+        stmt = stmt.where(Payslip.employee_id == employee_id)
+    if from_month:
+        stmt = stmt.where(Payslip.year_month >= from_month)
+    if to_month:
+        stmt = stmt.where(Payslip.year_month <= to_month)
     # box=inbox → 결재 대기(SUBMITTED). box=decided → 처리 내역(승인/반려).
     if box == "inbox":
         stmt = stmt.where(Payslip.status == PayslipStatus.SUBMITTED)
