@@ -17,6 +17,7 @@ from app.enums import EmploymentType, PayslipStatus, Role
 from app.models.staff.employee import Employee
 from app.models.payroll.payslip import Payslip
 from app.schemas.payroll.payslip import (
+    AccruedOut,
     PaydayWindowOut,
     PayslipGenerateRequest,
     PayslipOut,
@@ -29,10 +30,15 @@ from app.services.payroll import (
     NoScheduleError,
     build_hourly_payslip_data,
     build_payslip_data,
+    compute_payday,
     generate_branch_payslips,
     get_hourly_wage,
+    get_payday_policy,
     get_rank_policy,
     payday_window,
+    payroll_month_of,
+    payroll_started,
+    payroll_window,
 )
 
 router = APIRouter(prefix="/payslips", tags=["payslips"])
@@ -71,9 +77,67 @@ async def my_payslip(
 async def my_payday_window(
     year_month: str = Query(..., alias="yearMonth"),
     current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> PaydayWindowOut:
-    """급여 신청 창(지급일 여부). 지급일 당일만 신청 가능."""
-    return PaydayWindowOut(**payday_window(year_month, date.today()))
+    """급여 신청 창(지급일 여부). 지급일 당일만 신청 가능.
+
+    지급일은 **지점×직급마다 다르다** — 화순·FC 는 말일, 동광주·첨단 트레이너는 익월 10일.
+    """
+    start, _ = period_range(year_month)
+    payday = await get_payday_policy(db, current.branch_id, current.rank, start)
+    return PaydayWindowOut(**payday_window(year_month, date.today(), payday))
+
+
+@router.get("/me/accrued", response_model=AccruedOut)
+async def my_accrued(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AccruedOut:
+    """이번 주기에 **지금까지 쌓인 PT 커미션** — 기본급은 빼고 커미션만.
+
+    확정 명세서는 지급일에 나오는데, 그 전까지는 얼마 쌓였는지 볼 길이 없었다.
+    세션 싸인을 찍을 때마다 바로 오르고 주기가 넘어가면 0 부터 다시 센다.
+
+    알바(시급제)와 요율 정책이 없는 직급은 커미션 자체가 없어 0 으로 돌아간다.
+    """
+    today = date.today()
+    now = datetime.now(timezone.utc)
+    payday = await get_payday_policy(db, current.branch_id, current.rank, now)
+    year_month = payroll_month_of(today, payday)
+    start, end = payroll_window(year_month, payday)
+    empty = AccruedOut(
+        year_month=year_month,
+        period_start=start.date(),
+        period_end=end.date(),
+        payday=compute_payday(year_month, payday),
+        incentive_new=0,
+        incentive_renewal=0,
+        total=0,
+        session_signs=0,
+        new_sessions=0,
+        renewal_sessions=0,
+    )
+    # 아직 재기 시작 전이면 0 이다 — 앱을 켜기 전 실적을 쌓아 보여주면 안 된다
+    if not payroll_started(year_month, payday):
+        return empty
+    if current.employment_type == EmploymentType.PART_TIME:
+        return empty  # 알바는 시급제 — PT 커미션이 없다
+    policy = await get_rank_policy(db, current.rank, current.branch_id, start)
+    if policy is None:
+        return empty
+    data = await build_payslip_data(db, current, year_month, policy, payday)
+    return AccruedOut(
+        year_month=year_month,
+        period_start=start.date(),
+        period_end=end.date(),
+        payday=compute_payday(year_month, payday),
+        incentive_new=data["incentive_new"],
+        incentive_renewal=data["incentive_renewal"],
+        total=data["incentive_new"] + data["incentive_renewal"],
+        session_signs=data["basis"]["session_signs"],
+        new_sessions=len(data["basis"]["new_sales"]),
+        renewal_sessions=len(data["basis"]["renewal_sales"]),
+    )
 
 
 @router.post("/me/submit", response_model=PayslipOut)
@@ -83,8 +147,12 @@ async def submit_my_payslip(
     db: AsyncSession = Depends(get_db),
 ) -> Payslip:
     """본인 급여 신청(제출). 지급일 당일만 가능 → DRAFT/REJECTED → SUBMITTED. 명세서 없으면 즉석 산출."""
-    if not payday_window(payload.year_month, date.today())["is_open"]:
+    start, _ = period_range(payload.year_month)
+    payday = await get_payday_policy(db, current.branch_id, current.rank, start)
+    if not payday_window(payload.year_month, date.today(), payday)["is_open"]:
         raise HTTPException(403, detail={"code": "NOT_PAYDAY", "message": "급여 지급일에만 신청할 수 있어요"})
+    if not payroll_started(payload.year_month, payday):
+        raise HTTPException(400, detail={"code": "PAYROLL_NOT_STARTED", "message": "아직 급여를 재기 시작한 기간이 아니에요"})
     payslip = (
         await db.execute(
             select(Payslip).where(
@@ -93,21 +161,20 @@ async def submit_my_payslip(
         )
     ).scalar_one_or_none()
     if payslip is None:
-        start, _ = period_range(payload.year_month)
         if current.employment_type == EmploymentType.PART_TIME:
             # 알바는 시급제 — 신청·결재 절차는 정규직과 같고 계산만 다르다
             wage = await get_hourly_wage(db, current.branch_id, start)
             if wage is None:
                 raise HTTPException(400, detail={"code": "NO_HOURLY_WAGE", "message": "시급 정책이 없어 신청할 수 없어요"})
             try:
-                data = await build_hourly_payslip_data(db, current, payload.year_month, wage)
+                data = await build_hourly_payslip_data(db, current, payload.year_month, wage, payday)
             except NoScheduleError:
                 raise HTTPException(400, detail={"code": "NO_SCHEDULE", "message": "근무 시간을 설정해야 급여를 신청할 수 있어요"})
         else:
             policy = await get_rank_policy(db, current.rank, current.branch_id, start)
             if policy is None:
                 raise HTTPException(400, detail={"code": "NO_RANK_POLICY", "message": "직급 급여 정책이 없어 신청할 수 없어요"})
-            data = await build_payslip_data(db, current, payload.year_month, policy)
+            data = await build_payslip_data(db, current, payload.year_month, policy, payday)
         payslip = Payslip(employee_id=current.id, year_month=payload.year_month, **data)
         db.add(payslip)
         await db.flush()
