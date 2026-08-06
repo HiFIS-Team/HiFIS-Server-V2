@@ -3,6 +3,9 @@
 - announce_monthly_winners: 매월 1일, 전월 5개 분야 1등에게 축하 + 전원에게 통합 발표.
 - ranking_change_scan: 5분마다, 이번 달 5개 분야 순위를 스냅샷과 비교 →
   밀려난 본인 + 어드민에게 순위 변동 알림. (write 경로 안 건드리는 폴링 diff)
+
+**안정화 전에는 알림을 안 보낸다** — `RANKING_NOTIFY_FROM` 참고.
+스캔·스냅샷은 그대로 돌아서, 다시 켜는 날 그동안 쌓인 변동이 터지지 않는다.
 """
 
 from datetime import date, datetime, timezone
@@ -19,6 +22,22 @@ from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.ranking import KIND_LABEL, RANKING_KINDS, compute_ranking
 from app.services.ranking_board import METRICS, build_board, metric_value, rank_board
+
+
+#: 랭킹 알림을 다시 켜는 날 (KST). 이 날부터 나간다.
+#
+# 쓰기 시작한 초반에는 점수가 몇 점만 들어와도 등수가 계속 뒤집혀서
+# **5분마다 알림이 쏟아진다.** 자리가 잡힐 때까지 두 주 막아 둔다
+# (2026-08-06 결정 — 안정화되면 그때 시작).
+#
+# **알림만 막고 스캔은 계속 돈다.** 스캔까지 멈추면 다시 켜는 날 첫 스캔이
+# 2주치 변동을 한꺼번에 터뜨린다 — 막아 둔 뜻이 없어진다.
+RANKING_NOTIFY_FROM = date(2026, 8, 20)
+
+
+def ranking_notify_open(today: date) -> bool:
+    """오늘 랭킹 알림을 보내도 되는가 — 더 미루려면 위 날짜만 옮기면 된다."""
+    return today >= RANKING_NOTIFY_FROM
 
 
 def _prev_period(today: date) -> str:
@@ -38,7 +57,10 @@ async def _active_ids(db, *, roles: tuple[Role, ...] | None = None) -> list[str]
 async def announce_monthly_winners(now: datetime | None = None) -> None:
     """매월 1일 — 전월 5개 분야 1등 발표(전사 통합)."""
     now_utc = now or datetime.now(timezone.utc)
-    period = _prev_period(now_utc.astimezone(KST).date())
+    today = now_utc.astimezone(KST).date()
+    if not ranking_notify_open(today):
+        return  # 안정화 전 — 랭킹 알림을 아예 안 보낸다
+    period = _prev_period(today)
     async with SessionLocal() as db:
         winners: list[tuple[str, str]] = []       # (라벨, 이름)
         congrats: list[tuple[str, str]] = []       # (employee_id, 라벨)
@@ -65,6 +87,9 @@ async def ranking_change_scan(now: datetime | None = None) -> None:
     """5분마다 — 이번 달 순위 변동(누가 나를 앞질렀나) 감지 → 본인 + 어드민 알림."""
     now_utc = now or datetime.now(timezone.utc)
     period = now_utc.astimezone(KST).strftime("%Y-%m")
+    # 안정화 전에는 **알림만** 건너뛴다 — 스캔과 스냅샷 갱신은 그대로 돈다.
+    # 스캔까지 멈추면 다시 켜는 날 그동안 쌓인 변동이 한꺼번에 터진다.
+    notify_open = ranking_notify_open(now_utc.astimezone(KST).date())
     async with SessionLocal() as db:
         admin_ids = await _active_ids(db, roles=(Role.MASTER, Role.ADMIN))
         for kind in RANKING_KINDS:
@@ -97,19 +122,20 @@ async def ranking_change_scan(now: datetime | None = None) -> None:
                     if overtakers:
                         changes.append((b, overtakers, ob, nb))
 
-                # 밀려난 본인 알림
-                for b, overtakers, ob, nb in changes:
-                    who = ", ".join(overtakers[:3]) + ("…" if len(overtakers) > 3 else "")
-                    await notify(db, employee_id=b, **ntext.ranking_drop(label, who, ob, nb))
-                # 어드민 요약(변동 있을 때만)
-                if changes:
-                    lines = [
-                        f"{names.get(b, '?')} {ob}→{nb}위(↑{overtakers[0]})"
-                        for b, overtakers, ob, nb in changes
-                    ]
-                    body = " / ".join(lines[:6])
-                    for aid in admin_ids:
-                        await notify(db, employee_id=aid, **ntext.ranking_change_admin(label, body))
+                if notify_open:
+                    # 밀려난 본인 알림
+                    for b, overtakers, ob, nb in changes:
+                        who = ", ".join(overtakers[:3]) + ("…" if len(overtakers) > 3 else "")
+                        await notify(db, employee_id=b, **ntext.ranking_drop(label, who, ob, nb))
+                    # 어드민 요약(변동 있을 때만)
+                    if changes:
+                        lines = [
+                            f"{names.get(b, '?')} {ob}→{nb}위(↑{overtakers[0]})"
+                            for b, overtakers, ob, nb in changes
+                        ]
+                        body = " / ".join(lines[:6])
+                        for aid in admin_ids:
+                            await notify(db, employee_id=aid, **ntext.ranking_change_admin(label, body))
 
             # 스냅샷 갱신(교체)
             await db.execute(
