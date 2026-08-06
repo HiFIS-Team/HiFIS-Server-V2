@@ -8,7 +8,6 @@ gross = 기본급 + PT 커미션(세션 싸인당 한 회 단가 × 요율).
 ⚠️ 4대보험 요율은 연도별 변동 — §7 요율 미확정. 확정 시 아래 상수 갱신.
 """
 
-from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, or_, select
@@ -27,6 +26,7 @@ from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.payroll.payslip import Payslip
 from app.models.payroll.hourly_wage import HourlyWagePolicy
+from app.models.payroll.payday_policy import PaydayPolicy
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
@@ -90,30 +90,146 @@ def _last_day(year: int, month: int) -> int:
     return nxt.day
 
 
-def compute_payday(year_month: str) -> date:
-    """해당 월 급여 지급일. 기본 = **말일**.
-    ⚠️ 지점×직급별 규칙(화순=말일 / 동광주·첨단: FC 말일·트레이너 익월10일)은 실제 지점 등록 후
-    지점 설정으로 확장할 것 — 현재는 전 지점·전 직급 말일 기본.
+async def get_payday_policy(
+    db: AsyncSession, branch_id: str | None, rank, as_of: datetime
+) -> PaydayPolicy | None:
+    """지급일 규칙 — **좁은 쪽이 이긴다** (지점+직급 > 지점 > 직급 > 전사 기본).
+
+    같은 첨단 안에서도 FC 는 말일, 트레이너는 익월 10일이라 지점만으로는 안 갈린다.
+    """
+    stmt = (
+        select(PaydayPolicy)
+        .where(
+            PaydayPolicy.effective_from <= as_of,
+            or_(PaydayPolicy.branch_id == branch_id, PaydayPolicy.branch_id.is_(None)),
+            or_(PaydayPolicy.rank == rank, PaydayPolicy.rank.is_(None)),
+        )
+        .order_by(
+            PaydayPolicy.branch_id.isnot(None).desc(),
+            PaydayPolicy.rank.isnot(None).desc(),
+            PaydayPolicy.effective_from.desc(),
+        )
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+def compute_payday(year_month: str, policy: PaydayPolicy | None = None) -> date:
+    """그 명세서의 지급일.
+
+    - 말일형(당월) — 그 달 말일에 준다. 화순 전원·동광주·첨단 FC.
+    - 익월 D형 — 그 달 D 일에 준다. 동광주·첨단 트레이너(10일).
+
+    `policy` 가 없으면 예전처럼 말일이다 (규칙이 아직 안 깔린 곳).
     """
     y, m = int(year_month[:4]), int(year_month[5:7])
+    if policy is not None and policy.next_month and policy.day:
+        return date(y, m, min(policy.day, _last_day(y, m)))
     return date(y, m, _last_day(y, m))
 
 
-def payday_window(year_month: str, today: date) -> dict:
+def payroll_window(year_month: str, policy: PaydayPolicy | None = None) -> tuple[datetime, datetime]:
+    """그 명세서가 덮는 **근무 기간** `[start, end)` — 달력 월이 아니다.
+
+    - 말일형 — `[그달 1일, 다음달 1일)`. 지급일이 그 주기의 마지막 날이다.
+    - 익월 D형 — `[전월 D일, 그달 D일)`. 9/10 에 받는 돈이 8/10~9/9 것이라는 뜻이다.
+
+    점수·랭킹은 이 창을 안 쓴다 (`period_range` 그대로 달력 월). 급여만 옮긴다.
+    """
+    y, m = int(year_month[:4]), int(year_month[5:7])
+    if policy is not None and policy.next_month and policy.day:
+        day = policy.day
+        prev_y, prev_m = (y - 1, 12) if m == 1 else (y, m - 1)
+        start = datetime(prev_y, prev_m, min(day, _last_day(prev_y, prev_m)), tzinfo=timezone.utc)
+        end = datetime(y, m, min(day, _last_day(y, m)), tzinfo=timezone.utc)
+        return start, end
+    return period_range(year_month)
+
+
+def payroll_started(year_month: str, policy: PaydayPolicy | None) -> bool:
+    """이 달 명세서를 만들어도 되는가 — 주기 시작이 측정 개시일 이후여야 한다.
+
+    앱을 켜기 전 실적까지 급여로 잡으면 **안 준 돈이 생긴 것처럼** 보인다.
+    """
+    if policy is None:
+        return True
+    start, _ = payroll_window(year_month, policy)
+    return start.date() >= policy.starts_on
+
+
+def payday_window(year_month: str, today: date, policy: PaydayPolicy | None = None) -> dict:
     """급여 신청 창 — 지급일 당일만 열림(전날까지 막힘)."""
-    payday = compute_payday(year_month)
+    payday = compute_payday(year_month, policy)
     return {"year_month": year_month, "payday": payday.isoformat(), "is_open": today == payday}
 
 
-def due_year_month(today: date) -> str | None:
-    """오늘이 지급일인 급여 월(YYYY-MM). 기본(말일): 오늘이 그 달 말일이면 그 달.
-    (익월10일 규칙 대비 지난 달도 후보 — compute_payday 가 지점×직급 규칙으로 확장되면 그대로 반영.)"""
+def payroll_month_of(today: date, policy: PaydayPolicy | None = None) -> str:
+    """오늘이 속한 **진행 중 주기**의 명세서 월 (YYYY-MM).
+
+    말일형이면 오늘 그 달이고, 익월 D형이면 D 일 전에는 이번 달·이후에는 다음 달이다
+    (9/9 는 9월 명세서, 9/10 은 10월 명세서 주기의 첫날).
+    """
+    y, m = today.year, today.month
+    if policy is not None and policy.next_month and policy.day and today.day >= policy.day:
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return f"{y:04d}-{m:02d}"
+
+
+def due_year_month(today: date, policy: PaydayPolicy | None = None) -> str | None:
+    """오늘이 지급일인 급여 월(YYYY-MM) — 아니면 None.
+
+    말일형이면 오늘이 말일일 때 그 달, 익월 10일형이면 오늘이 10일일 때 그 달이다.
+    지난 달도 후보로 둔다 (규칙이 바뀌는 달에 어느 쪽으로도 걸릴 수 있다)."""
     y, m = today.year, today.month
     prev = f"{y - 1:04d}-12" if m == 1 else f"{y:04d}-{m - 1:02d}"
     for cand in (f"{y:04d}-{m:02d}", prev):
-        if compute_payday(cand) == today:
+        if compute_payday(cand, policy) == today:
             return cand
     return None
+
+
+def can_adjust_incentive(employee: Employee, policy: RankPolicy | None) -> bool:
+    """본인이 PT 커미션을 고쳐서 신청할 수 있는 사람인가.
+
+    자동 집계가 빠뜨린 수업(대타·기록 누락)을 바로잡으라고 연 자리다.
+    **알바는 시급제라 커미션이 없고, FC 는 요율이 0** 이라 고칠 것이 없다.
+    """
+    if employee.employment_type == EmploymentType.PART_TIME:
+        return False
+    if policy is None:
+        return False
+    return policy.new_rate > 0 or policy.renewal_rate > 0
+
+
+def apply_incentive_override(
+    data: dict,
+    employee: Employee,
+    incentive_new: int | None,
+    incentive_renewal: int | None,
+) -> dict:
+    """본인이 고친 커미션을 얹고 총액·공제를 다시 센다.
+
+    `incentive_*_auto` 는 **안 건드린다** — 원래 계산값이 남아야 결재하는 쪽이
+    얼마를 고쳤는지 본다. 기본급은 직급 정책에서 나오는 값이라 손대지 않는다.
+    """
+    if incentive_new is None and incentive_renewal is None:
+        return data
+    if incentive_new is not None:
+        data["incentive_new"] = incentive_new
+    if incentive_renewal is not None:
+        data["incentive_renewal"] = incentive_renewal
+    gross = (
+        data["base_salary"]
+        + data["incentive_new"]
+        + data["incentive_renewal"]
+        + data["other_allowances"]
+    )
+    deductions = _deductions(gross, employee.deduction_method)
+    total_deduction = sum(line["amount"] for line in deductions)
+    data["gross"] = gross
+    data["deductions"] = deductions
+    data["total_deduction"] = total_deduction
+    data["net"] = gross - total_deduction
+    return data
 
 
 def _deductions(gross: int, method: DeductionMethod) -> list[dict]:
@@ -189,16 +305,22 @@ def _shift_minutes(employee: Employee) -> int:
     return end - start
 
 
-def _work_day_count(employee: Employee, year_month: str) -> int:
-    """그달에 본인 근무 요일이 몇 번 오는가 (Employee.work_days 는 ISO 1~7)"""
+def _work_day_count(employee: Employee, start: datetime, end: datetime) -> int:
+    """급여 주기 `[start, end)` 안에 본인 근무 요일이 몇 번 오는가 (work_days 는 ISO 1~7)
+
+    달력 월이 아니라 주기로 센다 — 익월 10일 지점은 8/10~9/9 가 한 달치다.
+    """
     if not employee.work_days:
         return 0
-    year, month = int(year_month[:4]), int(year_month[5:7])
-    days = monthrange(year, month)[1]
     wanted = set(employee.work_days)
-    return sum(
-        1 for day in range(1, days + 1) if date(year, month, day).isoweekday() in wanted
-    )
+    day = start.date()
+    last = end.date()
+    count = 0
+    while day < last:
+        if day.isoweekday() in wanted:
+            count += 1
+        day += timedelta(days=1)
+    return count
 
 
 class NoScheduleError(Exception):
@@ -210,7 +332,11 @@ class NoScheduleError(Exception):
 
 
 async def build_hourly_payslip_data(
-    db: AsyncSession, employee: Employee, year_month: str, wage: int
+    db: AsyncSession,
+    employee: Employee,
+    year_month: str,
+    wage: int,
+    payday: PaydayPolicy | None = None,
 ) -> dict:
     """알바(PART_TIME) 명세서 — **시급만.** 직급 기본급·PT 인센티브가 없다.
 
@@ -218,7 +344,8 @@ async def build_hourly_payslip_data(
     출퇴근 스캔 실적이 아니라서 스캔을 빼먹어도 급여가 비지 않는다.
     """
     per_day = _shift_minutes(employee)
-    day_count = _work_day_count(employee, year_month)
+    win_start, win_end = payroll_window(year_month, payday)
+    day_count = _work_day_count(employee, win_start, win_end)
     total_minutes = per_day * day_count
     if total_minutes <= 0:
         raise NoScheduleError
@@ -229,10 +356,13 @@ async def build_hourly_payslip_data(
 
     return {
         "rank": employee.rank,
+        "pay_date": compute_payday(year_month, payday),
         # 알바는 직급 기본급이 없다 — 시급으로 계산한 값이 통째로 기본급 자리에 온다
         "base_salary": gross,
         "incentive_new": 0,
         "incentive_renewal": 0,
+        "incentive_new_auto": 0,
+        "incentive_renewal_auto": 0,
         "other_allowances": 0,
         "gross": gross,
         "deduction_method": employee.deduction_method,
@@ -255,9 +385,14 @@ async def build_hourly_payslip_data(
 
 
 async def build_payslip_data(
-    db: AsyncSession, employee: Employee, year_month: str, policy: RankPolicy
+    db: AsyncSession,
+    employee: Employee,
+    year_month: str,
+    policy: RankPolicy,
+    payday: PaydayPolicy | None = None,
 ) -> dict:
-    start, end = period_range(year_month)
+    # 달력 월이 아니라 **그 사람의 급여 주기**로 센다 (익월 10일이면 전월10~당월9)
+    start, end = payroll_window(year_month, payday)
     # PT 커미션 = 이 트레이너가 **수행한 세션 싸인마다** (한 회 단가 × 요율).
     # 한 회 단가 = 등록 결제액 ÷ 총 회차. 지인소개(회원 소개자 있음)면 무조건 재등록요율(50%),
     # 아니면 워크인(NEW)=신규요율(40%) / 재등록(RENEWAL)=재등록요율(50%).
@@ -317,9 +452,13 @@ async def build_payslip_data(
 
     return {
         "rank": employee.rank,
+        "pay_date": compute_payday(year_month, payday),
         "base_salary": policy.base_salary,
         "incentive_new": incentive_new,
         "incentive_renewal": incentive_renewal,
+        # 신청할 때 본인이 고칠 수 있어서 원래 계산값을 따로 남긴다 (§76)
+        "incentive_new_auto": incentive_new,
+        "incentive_renewal_auto": incentive_renewal,
         "other_allowances": other_allowances,
         "gross": gross,
         "deduction_method": employee.deduction_method,
@@ -368,20 +507,33 @@ async def generate_branch_payslips(
 
     generated: list[Payslip] = []
     for employee in employees:
+        # 지급일 규칙이 사람마다 다르다 — 급여 주기와 측정 개시일이 여기서 갈린다
+        payday = await get_payday_policy(db, employee.branch_id, employee.rank, start)
+        if not payroll_started(year_month, payday):
+            # 측정 개시 전 주기 — 앱을 켜기 전 실적은 급여로 안 친다.
+            #
+            # **매출 기여 점수(SALES)도 같이 빠진다** (적립이 이 루프 아래에 있다).
+            # 곁가지가 아니라 **그렇게 하기로 정한 것이다 (2026-08-06)** —
+            # 매출성과 점수는 돈에서 나온 값이라 급여와 같은 날부터 시작한다.
+            # 개시 전 매출도 점수로 쌓고 싶어지면 이 적립을 마감 밖으로 빼야 한다.
+            #
+            # 랭킹의 '매출' 탭은 영향이 없다 — 거기는 점수 원장이 아니라
+            # 등록권 결제액을 직접 합산한다 (`ranking_board.py`).
+            continue
         if employee.employment_type == EmploymentType.PART_TIME:
             # 알바는 시급제 — 직급 정책을 안 탄다 (PT 인센티브도 없다)
             wage = await get_hourly_wage(db, employee.branch_id, start)
             if wage is None:
                 continue  # 시급 정책이 없으면 뽑을 근거가 없다
             try:
-                data = await build_hourly_payslip_data(db, employee, year_month, wage)
+                data = await build_hourly_payslip_data(db, employee, year_month, wage, payday)
             except NoScheduleError:
                 continue  # 근무 설정 전이면 건너뛴다 (0원 명세서를 만들지 않는다)
         else:
             policy = await get_rank_policy(db, employee.rank, employee.branch_id, start)
             if policy is None:
                 continue  # 요율 정책 없는 직급은 건너뜀
-            data = await build_payslip_data(db, employee, year_month, policy)
+            data = await build_payslip_data(db, employee, year_month, policy, payday)
         payslip = Payslip(employee_id=employee.id, year_month=year_month, **data)
         db.add(payslip)
         generated.append(payslip)

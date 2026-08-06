@@ -1,8 +1,9 @@
-"""알림 서비스 — 앱 내 알림 저장 + 웹푸시 발송 (CLAUDE.md §6.10, §9.4).
+"""알림 서비스 — 앱 내 알림 저장 + 푸시 발송 (CLAUDE.md §6.10, §9.4).
 
-- notify(): Notification 원장 1건 추가(+구독 있으면 best-effort 웹푸시). commit 은 호출자.
-- 웹푸시는 VAPID 미설정/pywebpush 미설치면 조용히 스킵 — 앱 내 알림은 항상 남는다.
-- 만료 구독(404/410)은 같은 세션에서 삭제 예약(호출자 commit 시 정리).
+- notify(): Notification 원장 1건 추가(+ best-effort 푸시). commit 은 호출자.
+- 푸시는 **두 갈래를 다 태운다** — 브라우저는 웹푸시(VAPID), 앱은 APNs.
+  둘 중 설정 안 된 쪽은 조용히 스킵한다. 앱 내 알림은 언제나 남는다.
+- 죽은 구독·토큰(404/410/BadDeviceToken)은 같은 세션에서 삭제 예약(호출자 commit 시 정리).
 """
 
 import json
@@ -13,7 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.chat.device_token import DeviceToken
 from app.models.chat.notification import Notification, PushSubscription
+from app.services import apns
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +47,7 @@ async def notify(
     )
     db.add(notification)
 
-    if _push_enabled():
-        await _push(db, employee_id, {"type": type, "title": title, "body": body, "link": link})
+    await _fanout(db, employee_id, {"type": type, "title": title, "body": body, "link": link})
     return notification
 
 
@@ -62,8 +64,34 @@ async def send_push(
 
     만료 구독 정리(_push)가 db.delete 를 예약할 수 있어 commit 은 호출자 책임.
     """
+    await _fanout(db, employee_id, {"type": type, "title": title, "body": body, "link": link})
+
+
+async def _fanout(db: AsyncSession, employee_id: str, payload: dict) -> None:
+    """웹푸시와 앱 푸시를 둘 다 태운다 — 한쪽이 실패해도 다른 쪽은 간다"""
     if _push_enabled():
-        await _push(db, employee_id, {"type": type, "title": title, "body": body, "link": link})
+        await _push(db, employee_id, payload)
+    if apns.enabled():
+        await _push_apns(db, employee_id, payload)
+
+
+async def _push_apns(db: AsyncSession, employee_id: str, payload: dict) -> None:
+    devices = (
+        await db.scalars(select(DeviceToken).where(DeviceToken.employee_id == employee_id))
+    ).all()
+    for device in devices:
+        dead = await apns.send(
+            token=device.token,
+            sandbox=device.sandbox,
+            title=payload["title"],
+            body=payload.get("body"),
+            link=payload.get("link"),
+            type=payload["type"],
+        )
+        # 앱을 지웠거나 토큰이 무효다 — 안 지우면 계속 보내다 애플이 막는다
+        if dead:
+            logger.info("apns 토큰 정리(%s): %s", dead, device.token[:12])
+            await db.delete(device)
 
 
 async def _push(db: AsyncSession, employee_id: str, payload: dict) -> None:

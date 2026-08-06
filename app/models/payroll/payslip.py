@@ -4,10 +4,11 @@
 (employee_id, year_month) 유니크 — 재생성 시 교체.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    Date,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -34,6 +35,16 @@ class Payslip(UUIDMixin, TimestampMixin, Base):
     base_salary: Mapped[int] = mapped_column(Integer, nullable=False)
     incentive_new: Mapped[int] = mapped_column(Integer, nullable=False)
     incentive_renewal: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: 서버가 계산한 원래 커미션 — 위 두 값과 다르면 본인이 고쳐서 신청한 것이다.
+    #:
+    #: 고친 값으로 덮어써 버리면 **무엇을 승인하는지 아무도 모른다.**
+    #: 자동 집계가 빠뜨린 수업(대타·기록 누락)을 바로잡으라고 연 자리라,
+    #: 원래 값이 남아야 결재하는 쪽이 차이를 보고 판단한다.
+    #: (null = 이 규칙이 생기기 전에 만들어진 명세서)
+    incentive_new_auto: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    incentive_renewal_auto: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     other_allowances: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     gross: Mapped[int] = mapped_column(Integer, nullable=False)
     deduction_method: Mapped[DeductionMethod] = mapped_column(
@@ -43,6 +54,13 @@ class Payslip(UUIDMixin, TimestampMixin, Base):
     total_deduction: Mapped[int] = mapped_column(Integer, nullable=False)
     net: Mapped[int] = mapped_column(Integer, nullable=False)
     basis: Mapped[dict] = mapped_column(JSON, nullable=False)  # {new_sales, renewal_sales, session_signs}
+
+    #: 실제 지급일 — 만들 때 그 사람의 규칙(PaydayPolicy)으로 찍어 둔다.
+    #:
+    #: `year_month` 에서 다시 계산하면 **나중에 규칙이 바뀌었을 때 옛 명세서의
+    #: 날짜까지 따라 움직인다.** 이미 준 돈의 날짜가 바뀌면 안 된다.
+    #: (null = 규칙이 생기기 전에 만들어진 명세서 — 말일로 떨어진다)
+    pay_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     # ── 제출·결재 워크플로우 (직원 신청 → 대표자 승인/반려) ──
     status: Mapped[PayslipStatus] = mapped_column(

@@ -1,6 +1,6 @@
 [project]
 name = "hifis-server"
-version = "0.2.0"
+version = "0.3.0"
 description = "HiFIS 직원 관리 플랫폼 백엔드 (FastAPI · 홈서버 self-host)"
 requires-python = ">=3.12"
 
@@ -18,7 +18,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3",
     "bcrypt>=4.1",
     "python-multipart>=0.0.12",
-    "httpx>=0.27",
+    "httpx[http2]>=0.27",  # http2 = APNs 필수 (애플이 HTTP/1.1 을 안 받는다)
     "apscheduler>=3.10",
     "pywebpush>=2.0",
     "slowapi>=0.1.9",

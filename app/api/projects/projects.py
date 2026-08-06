@@ -328,7 +328,11 @@ async def create_project_request(
     await _log_activity(db, project_id, current.id, ProjectActivityKind.DUE, f"{label} 신청")  # 승인 전 신청도 타임라인
     approvers = (await db.execute(select(Employee).where(Employee.role == Role.MASTER))).scalars().all()
     for approver in approvers:
-        await notify(db, employee_id=approver.id, **ntext.project_request(label, project.title, current.name))
+        await notify(
+            db,
+            employee_id=approver.id,
+            **ntext.project_request(label, project.title, current.name, project.id),
+        )
     await db.commit()
     return _req_out(req)
 
@@ -364,7 +368,13 @@ async def _decide_request(
     await notify(
         db,
         employee_id=req.requested_by_id,
-        **ntext.project_request_decided(label, status == ProjectRequestStatus.APPROVED, title, reason),
+        **ntext.project_request_decided(
+            label,
+            status == ProjectRequestStatus.APPROVED,
+            title,
+            reason,
+            req.project_id,
+        ),
     )
     await db.commit()
     await db.refresh(req)

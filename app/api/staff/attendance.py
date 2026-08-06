@@ -409,6 +409,7 @@ async def attendance_calendar_all(
     사람별 캘린더(`/attendance/calendar`)와 **같은 판정**을 전 직원에게 돌린 것이다.
     사람마다 부르면 인원수만큼 요청이 나가서 여기서 한 번에 준다.
     휴무·판정불가는 담지 않는다 — 대표 달력이 그릴 자리가 없다.
+    **MASTER·ADMIN 은 아예 빼고 센다** (출퇴근을 안 찍어서 매일 결근이 된다).
     MANAGER 는 branch_scope 가 자기 지점으로 좁혀 준다.
     """
     start, end = period_range(month)
@@ -417,7 +418,13 @@ async def attendance_calendar_all(
     today = now_kst.date()
     limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(사람별 캘린더와 같다)
 
-    emp_stmt = select(Employee).where(Employee.deleted_at.is_(None))
+    emp_stmt = select(Employee).where(
+        Employee.deleted_at.is_(None),
+        # 대표·관리자는 출퇴근을 안 찍는다 — 판정하면 근무시간이 지나는 순간
+        # **매일 결근**으로 찍혀서 달력이 그 이름으로 채워진다 (실제로 그랬다).
+        # 근태를 보는 쪽이지 대상이 아니라 아예 뺀다.
+        Employee.role.notin_([Role.MASTER, Role.ADMIN]),
+    )
     if scope:
         emp_stmt = emp_stmt.where(Employee.branch_id == scope)
     employees = list((await db.execute(emp_stmt)).scalars().all())
