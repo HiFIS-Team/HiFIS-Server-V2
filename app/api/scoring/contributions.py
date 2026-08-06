@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import ContribType, Role, ScoreCategory
@@ -65,7 +65,7 @@ async def create_contribution(
 @router.get("", response_model=list[ContributionGrantOut], dependencies=[Depends(get_current_user)])
 async def list_contributions(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
+    scope: str | None = Depends(branch_filter),  # ?branchId= 로 지점을 고를 수 있다
     employee_id: str | None = Query(None, alias="employeeId"),
     period: str | None = Query(None),  # "YYYY-MM" — 점수 원장과 동일. 앱 '이번 달 기여' 필터
 ) -> list[ContributionGrant]:
