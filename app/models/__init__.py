@@ -19,6 +19,7 @@ from app.models.scoring.kindness import KindnessSurvey
 from app.models.projects.meeting import Meeting
 from app.models.members.member import Member
 from app.models.board.notice import Notice
+from app.models.chat.device_token import DeviceToken
 from app.models.chat.notification import Notification, PushSubscription
 from app.models.payroll.payslip import Payslip
 from app.models.scoring.peer_review import PeerReview
@@ -67,6 +68,7 @@ __all__ = [
     "PeerReview",
     "Project",
     "ProjectRequest",
+    "DeviceToken",
     "HourlyWagePolicy",
     "PaydayPolicy",
     "RankPolicy",
