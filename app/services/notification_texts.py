@@ -80,33 +80,50 @@ def approval_withdrawn(approval_title: str, approval_id: str) -> dict:
 
 
 # ── 프로젝트 요청(연장/누락사유) ──
-def project_request(label: str, project_title: str, requester_name: str) -> dict:
+#
+# **링크에 프로젝트 id 를 싣는다** (`/projects/{id}`). 목록 주소만 주면 앱이
+# 탭까지만 옮기고 어느 프로젝트인지 몰라서, 받은 사람이 목록에서 다시 찾아야 한다.
+# 공지도 같은 이유로 id 를 싣게 고쳤다 (backend-gap 35번).
+def _project_link(project_id: str | None) -> str:
+    return f"/projects/{project_id}" if project_id else "/projects"
+
+
+def project_request(
+    label: str, project_title: str, requester_name: str, project_id: str | None = None
+) -> dict:
     # label = "기한 연장" | "누락 사유"
     return {
         "type": "PROJECT",
         "title": f"프로젝트 {label} 요청",
         "body": f"{project_title} · {requester_name}",
-        "link": "/projects",
+        "link": _project_link(project_id),
     }
 
 
-def project_request_decided(label: str, approved: bool, project_title: str, reject_reason: str | None = None) -> dict:
+def project_request_decided(
+    label: str,
+    approved: bool,
+    project_title: str,
+    reject_reason: str | None = None,
+    project_id: str | None = None,
+) -> dict:
+    link = _project_link(project_id)
     if approved:
-        return {"type": "PROJECT", "title": f"프로젝트 {label} 승인", "body": f"{project_title} · 새 마감 반영", "link": "/projects"}
-    return {"type": "PROJECT", "title": f"프로젝트 {label} 반려", "body": f"{project_title} · 사유: {reject_reason}", "link": "/projects"}
+        return {"type": "PROJECT", "title": f"프로젝트 {label} 승인", "body": f"{project_title} · 새 마감 반영", "link": link}
+    return {"type": "PROJECT", "title": f"프로젝트 {label} 반려", "body": f"{project_title} · 사유: {reject_reason}", "link": link}
 
 
 # ── 프로젝트 마감 리마인더(스케줄러) ──
-def project_due_soon(days: int, project_title: str) -> dict:
-    return {"type": "PROJECT", "title": f"프로젝트 마감 D-{days}", "body": project_title, "link": "/projects"}
+def project_due_soon(days: int, project_title: str, project_id: str | None = None) -> dict:
+    return {"type": "PROJECT", "title": f"프로젝트 마감 D-{days}", "body": project_title, "link": _project_link(project_id)}
 
 
-def project_due_today(project_title: str) -> dict:
-    return {"type": "PROJECT", "title": "오늘 프로젝트 마감!", "body": project_title, "link": "/projects"}
+def project_due_today(project_title: str, project_id: str | None = None) -> dict:
+    return {"type": "PROJECT", "title": "오늘 프로젝트 마감!", "body": project_title, "link": _project_link(project_id)}
 
 
-def project_overdue(project_title: str) -> dict:
-    return {"type": "PROJECT", "title": "프로젝트가 누락됐어요", "body": project_title, "link": "/projects"}
+def project_overdue(project_title: str, project_id: str | None = None) -> dict:
+    return {"type": "PROJECT", "title": "프로젝트가 누락됐어요", "body": project_title, "link": _project_link(project_id)}
 
 
 # ── 급여 ──

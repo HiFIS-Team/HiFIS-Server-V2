@@ -51,14 +51,14 @@ async def project_reminders(now: datetime | None = None) -> None:
                 if now_kst.hour == 9:
                     d = (due_date - today).days
                     for eid in assignees:
-                        await send_push(db, employee_id=eid, **ntext.project_due_soon(d, p.title))
+                        await send_push(db, employee_id=eid, **ntext.project_due_soon(d, p.title, p.id))
             elif today == due_date:
                 # 마감 당일 — 매시간
                 for eid in assignees:
-                    await send_push(db, employee_id=eid, **ntext.project_due_today(p.title))
+                    await send_push(db, employee_id=eid, **ntext.project_due_today(p.title, p.id))
             elif p.overdue_notified_at is None:
                 # 마감 초과 — 누락 1회(앱 내 알림 + 푸시)
                 for eid in assignees:
-                    await notify(db, employee_id=eid, **ntext.project_overdue(p.title))
+                    await notify(db, employee_id=eid, **ntext.project_overdue(p.title, p.id))
                 p.overdue_notified_at = now_utc
         await db.commit()
