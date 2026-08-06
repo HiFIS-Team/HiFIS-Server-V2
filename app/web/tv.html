@@ -10,7 +10,9 @@
       href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 /* ─────────────────────────────────────────────────────────────
-   매장 TV — 해결된 컴플레인이 한 장씩 돈다. (피트니스스타 회원용)
+   매장 TV — 해결된 컴플레인이 **위에서부터 쌓인다**. (피트니스스타 회원용)
+   한 화면에 다섯 줄이고, 새로 해결된 것이 위에서 내려오면 아래가 한 칸씩
+   밀리고 맨 아래 것이 화면 밖으로 빠진다. 늘 최신이 맨 위다.
    세로(9:16)로 세운 화면 기준이고, **멀리서 보는 것**이라
    글자를 px 가 아니라 화면 크기 비율(vmin)로 잡는다.
    색은 앱 디자인 토큰 그대로다.
@@ -47,56 +49,71 @@ body{
 .brand b{font-size:calc(var(--u)*3.4);font-weight:800;letter-spacing:-.02em}
 .head .branch{font-size:calc(var(--u)*3);font-weight:600;color:var(--g400)}
 
-/* ── 본문 ── */
-.stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative}
-.card{
-  width:100%;text-align:center;position:absolute;
-  opacity:0;transform:translateY(calc(var(--u)*2.4));
-  transition:opacity .6s ease,transform .6s cubic-bezier(.22,.61,.36,1);
+/* ── 머리말 ──
+   줄마다 붙이던 것을 화면 위 하나로 올렸다. 다섯 줄이 같이 서 있어서
+   줄마다 큰 글씨를 얹으면 정작 회원 목소리가 안 보인다.
+   해결된 게 한 건뿐이어도 화면이 멈춘 것처럼 보이지 않게 문구가 돌아간다. */
+.lead{
+  margin:calc(var(--u)*6) 0 calc(var(--u)*5);
+  font-size:calc(var(--u)*5.4);font-weight:800;line-height:1.35;
+  letter-spacing:-.03em;
+  transition:opacity .5s ease;
 }
-.card.on{opacity:1;transform:none}
+.lead em{font-style:normal;color:var(--primary)}
+.lead.out{opacity:0}
 
-.check{
-  width:calc(var(--u)*20);height:calc(var(--u)*20);margin:0 auto calc(var(--u)*6);
+/* ── 본문 ──
+   줄은 **자리를 계산해서 절대 위치로** 놓는다. 그래야 새 줄이 들어올 때
+   아래 줄들이 한 칸씩 미끄러져 내려간다 (문서 흐름에 두면 툭 튄다). */
+.stage{flex:1;position:relative;overflow:hidden}
+.row{
+  position:absolute;left:0;right:0;top:0;
+  display:flex;align-items:center;gap:calc(var(--u)*3.5);
+  padding:0 calc(var(--u)*5);
+  background:var(--surface);border-radius:calc(var(--u)*4);
+  box-shadow:0 calc(var(--u)*1) calc(var(--u)*4) rgba(16,24,40,.05);
+  opacity:0;
+  transition:transform .75s cubic-bezier(.22,.61,.36,1),opacity .5s ease;
+  will-change:transform;
+}
+.tick{
+  flex:none;
+  width:calc(var(--u)*9);height:calc(var(--u)*9);border-radius:50%;
+  background:var(--primary-light);
+  display:flex;align-items:center;justify-content:center;
+}
+.tick svg{
+  width:calc(var(--u)*4.6);height:calc(var(--u)*4.6);
+  fill:none;stroke:var(--primary);stroke-width:2.8;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+.body{min-width:0}
+.quote{
+  font-size:calc(var(--u)*4.2);font-weight:600;line-height:1.45;color:var(--g600);
+  word-break:keep-all;
+  /* 칸 높이가 정해져 있어서 긴 글은 두 줄까지만 — 넘치면 줄이 서로 겹친다 */
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
+}
+.when{margin-top:calc(var(--u)*1.4);font-size:calc(var(--u)*2.8);color:var(--g400);font-weight:600}
+
+/* 아직 해결된 게 없을 때 — 벽에 빈 화면을 걸어 둘 수는 없다 */
+.idle{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;transition:opacity .5s ease;
+}
+.idle.off{opacity:0}
+.idle .check{
+  width:calc(var(--u)*20);height:calc(var(--u)*20);margin-bottom:calc(var(--u)*6);
   border-radius:50%;background:var(--primary-light);
   display:flex;align-items:center;justify-content:center;
 }
-.check svg{
+.idle .check svg{
   width:calc(var(--u)*10);height:calc(var(--u)*10);
   fill:none;stroke:var(--primary);stroke-width:2.6;
   stroke-linecap:round;stroke-linejoin:round;
 }
-.card.on .check{animation:pop .7s cubic-bezier(.34,1.4,.64,1) both}
-@keyframes pop{from{transform:scale(.62);opacity:0}to{transform:scale(1);opacity:1}}
-
-.lead{
-  font-size:calc(var(--u)*6.2);font-weight:800;line-height:1.35;
-  letter-spacing:-.03em;margin-bottom:calc(var(--u)*5);
-}
-.lead em{font-style:normal;color:var(--primary)}
-
-.quote{
-  display:inline-block;max-width:88%;
-  padding:calc(var(--u)*5) calc(var(--u)*5.5);border-radius:calc(var(--u)*4);
-  background:var(--surface);box-shadow:0 calc(var(--u)*1) calc(var(--u)*4) rgba(16,24,40,.05);
-  font-size:calc(var(--u)*5);font-weight:600;line-height:1.55;color:var(--g600);
-  word-break:keep-all;
-}
-.when{margin-top:calc(var(--u)*4);font-size:calc(var(--u)*3.2);color:var(--g400);font-weight:600}
-
-/* 아직 해결된 게 없을 때 — 벽에 빈 화면을 걸어 둘 수는 없다 */
-.idle{text-align:center}
-.idle .lead{margin-bottom:calc(var(--u)*3)}
 .idle p{font-size:calc(var(--u)*3.6);color:var(--g500);font-weight:500;line-height:1.6}
-
-/* ── 발 ── */
-.foot{display:flex;align-items:center;justify-content:center;gap:calc(var(--u)*1.6);
-      height:calc(var(--u)*4)}
-.pip{
-  width:calc(var(--u)*1.3);height:calc(var(--u)*1.3);border-radius:50%;
-  background:var(--g200);transition:background .4s,transform .4s;
-}
-.pip.on{background:var(--primary);transform:scale(1.35)}
 
 /* 화면이 가로로 걸려 있어도 무너지지는 않게 (세로 기준이지만) */
 @media (orientation:landscape){ :root{--u:1.6vmin} }
@@ -110,19 +127,16 @@ body{
     <div class="branch" id="branch"></div>
   </header>
 
+  <p class="lead" id="lead">회원님 목소리로<br><em>피트니스스타는 자랍니다</em></p>
+
   <main class="stage" id="stage">
-    <section class="card on" id="idle">
-      <div class="idle">
-        <div class="check">
-          <svg viewBox="0 0 24 24"><path d="M12 20s-7-4.3-9-8.4A5 5 0 0 1 12 6.2 5 5 0 0 1 21 11.6c-2 4.1-9 8.4-9 8.4z"/></svg>
-        </div>
-        <p class="lead">회원님의 한 말씀이<br><em>피트니스스타를 만듭니다</em></p>
-        <p>불편하셨던 점을 말씀해 주세요.</p>
+    <section class="idle" id="idle">
+      <div class="check">
+        <svg viewBox="0 0 24 24"><path d="M12 20s-7-4.3-9-8.4A5 5 0 0 1 12 6.2 5 5 0 0 1 21 11.6c-2 4.1-9 8.4-9 8.4z"/></svg>
       </div>
+      <p>불편하셨던 점을 말씀해 주세요.</p>
     </section>
   </main>
-
-  <footer class="foot" id="foot"></footer>
 </div>
 
 <script>
@@ -131,15 +145,16 @@ body{
 
 var TOKEN = location.pathname.replace(/\/+$/,'').split('/').pop();
 
-var HOLD    = 9000;    // 한 장을 보여주는 시간
-var REFRESH = 15000;   // 서버에 다시 물어보는 주기 — 해결하면 이만큼 안에 뜬다
-var MAX_PIP = 8;       // 아래 점은 이만큼까지만 그린다 (많으면 줄이 길어진다)
+var MAX       = 5;       // 한 화면에 세우는 줄 수
+var REFRESH   = 15000;   // 서버에 다시 물어보는 주기 — 해결하면 이만큼 안에 뜬다
+var LEAD_HOLD = 10000;   // 머리말을 바꾸는 주기
+var SLIDE     = 800;     // 줄이 미끄러지는 시간 (CSS transition 과 맞춘다)
 
-// 해결 카드 머리말 — **한 장 넘어갈 때마다 무작위로 고른다.**
-// 하나로 고정하면 해결된 게 한 건뿐일 때 같은 화면이 종일 걸려 있다.
+// 화면 머리말 — **돌아가며 바뀐다.** 하나로 고정하면 해결된 게 한 건뿐일 때
+// 같은 화면이 종일 걸려 있다.
 //
 // '고쳤습니다' 처럼 조치를 알리는 말이 아니라, **회원 목소리가 매장을 키운다**는
-// 쪽으로 쓴다. 무엇을 고쳤는지는 아래 인용 상자가 이미 말해 준다.
+// 쪽으로 쓴다. 무엇을 고쳤는지는 아래 줄들이 이미 말해 준다.
 // 뒷줄이 파랗게 강조된다. [앞줄, 뒷줄]
 var LEADS = [
   ['회원님 목소리로',   '피트니스스타는 자랍니다'],
@@ -148,21 +163,10 @@ var LEADS = [
   ['오늘도 한 가지',    '회원님과 함께 바꿉니다'],
   ['회원님이 만드는',   '더 나은 피트니스스타']
 ];
-var lastLead = -1;
+var lastLead = 0;
 
-function pickLead(){
-  if (LEADS.length < 2) return LEADS[0];
-  var i;
-  // 바로 앞과 같은 것은 피한다 — 연달아 같은 말이 나오면 안 도는 것처럼 보인다
-  do { i = Math.floor(Math.random() * LEADS.length); } while (i === lastLead);
-  lastLead = i;
-  return LEADS[i];
-}
-
-var items = [];        // 해결된 컴플레인
-var seen  = {};        // 이미 띄운 적 있는 id
-var at    = -1;        // 지금 몇 번째
-var timer = null;
+var rows  = {};   // id → 화면에 붙어 있는 줄
+var order = [];   // 지금 서 있는 차례 (위에서부터, 최신이 앞)
 var first = true;
 
 var $ = function(id){ return document.getElementById(id); };
@@ -179,101 +183,105 @@ function dateLabel(iso){
   return d.getFullYear() + '년 ' + (d.getMonth()+1) + '월 ' + d.getDate() + '일 해결';
 }
 
-function card(item){
-  var lead = pickLead();
-  var el = document.createElement('section');
-  el.className = 'card';
+// ── 머리말 ──────────────────────────────────────────────────────
+
+function rollLead(){
+  if (LEADS.length < 2) return;
+  var i;
+  // 바로 앞과 같은 것은 피한다 — 연달아 같은 말이 나오면 안 도는 것처럼 보인다
+  do { i = Math.floor(Math.random() * LEADS.length); } while (i === lastLead);
+  lastLead = i;
+
+  var el = $('lead');
+  el.classList.add('out');
+  setTimeout(function(){
+    el.innerHTML = esc(LEADS[i][0]) + '<br><em>' + esc(LEADS[i][1]) + '</em>';
+    el.classList.remove('out');
+  }, 500);
+}
+
+// ── 줄 자리 ─────────────────────────────────────────────────────
+//
+// 칸 높이를 화면에서 재서 나눈다. TV 마다 비율이 달라서 vmin 으로 박아 두면
+// 어떤 화면에서는 다섯 번째 줄이 잘린다.
+
+var cardH = 0, gap = 0;
+
+function measure(){
+  var h = $('stage').clientHeight;
+  gap = Math.round(h * 0.022);
+  cardH = Math.round((h - gap * (MAX - 1)) / MAX);
+}
+
+/// 위에서 몇 번째 자리인지 → 화면에서의 y. -1 은 화면 위(들어오기 전)다
+function yAt(index){ return index * (cardH + gap); }
+
+function place(el, index, visible){
+  el.style.height = cardH + 'px';
+  el.style.transform = 'translateY(' + yAt(index) + 'px)';
+  el.style.opacity = visible ? '1' : '0';
+}
+
+function build(item){
+  var el = document.createElement('article');
+  el.className = 'row';
   el.innerHTML =
-    '<div class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>'
-    + '<p class="lead">' + esc(lead[0]) + '<br><em>' + esc(lead[1]) + '</em></p>'
-    + '<div class="quote">' + esc(item.text) + '</div>'
-    + '<div class="when">' + esc(dateLabel(item.resolvedAt)) + '</div>';
+    '<span class="tick"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>'
+    + '<div class="body">'
+    +   '<p class="quote">' + esc(item.text) + '</p>'
+    +   '<p class="when">' + esc(dateLabel(item.resolvedAt)) + '</p>'
+    + '</div>';
   return el;
 }
 
-function pips(){
-  var foot = $('foot');
-  foot.innerHTML = '';
-  if (items.length < 2) return;                 // 한 장뿐이면 점이 뜻이 없다
-  var n = Math.min(items.length, MAX_PIP);
-  for (var i = 0; i < n; i++){
-    var p = document.createElement('span');
-    p.className = 'pip' + (i === at % n ? ' on' : '');
-    foot.appendChild(p);
-  }
-}
+// ── 화면 갱신 ───────────────────────────────────────────────────
 
-function show(index){
-  at = index;
-  var stage = $('stage');
-  var next = card(items[at]);
-  stage.appendChild(next);
-  // 한 프레임 뒤에 켜야 전환이 걸린다 (붙자마자 켜면 그냥 나타난다)
-  requestAnimationFrame(function(){
-    requestAnimationFrame(function(){
-      [].forEach.call(stage.querySelectorAll('.card'), function(c){
-        if (c !== next) c.classList.remove('on');
-      });
-      next.classList.add('on');
-    });
+function render(items){
+  measure();
+  var want = items.slice(0, MAX);
+  var wantIds = want.map(function(it){ return it.id; });
+
+  // 1) 새로 들어온 줄을 화면 **위쪽 밖**에 미리 붙여 둔다
+  var incoming = [];
+  want.forEach(function(item){
+    if (rows[item.id]) return;
+    var el = build(item);
+    $('stage').appendChild(el);
+    place(el, -1, false);
+    rows[item.id] = el;
+    incoming.push(el);
   });
-  // 넘어간 장은 전환이 끝난 뒤 치운다 — 계속 쌓이면 TV 가 느려진다
-  setTimeout(function(){
-    [].forEach.call(stage.querySelectorAll('.card'), function(c){
-      if (c !== next && c.id !== 'idle') c.remove();
-    });
-    var idle = $('idle');
-    if (idle) idle.classList.remove('on');
-  }, 800);
 
-  seen[items[at].id] = true;
-  pips();
-}
+  // 2) 빠질 줄은 맨 아래 자리로 내려보내고 지운다
+  order.forEach(function(id){
+    if (wantIds.indexOf(id) >= 0) return;
+    var el = rows[id];
+    delete rows[id];
+    if (!el) return;
+    place(el, MAX, false);
+    setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, SLIDE);
+  });
 
-function tick(){
-  clearTimeout(timer);
-  if (!items.length) return;
-  show((at + 1) % items.length);
-  timer = setTimeout(tick, HOLD);
+  order = wantIds;
+
+  // 3) 한 프레임 뒤에 제자리로 보낸다.
+  //    붙자마자 옮기면 브라우저가 처음 자리를 안 그려서 전환이 안 걸린다
+  var move = function(){
+    wantIds.forEach(function(id, i){ place(rows[id], i, true); });
+  };
+  if (incoming.length && !first){
+    requestAnimationFrame(function(){ requestAnimationFrame(move); });
+  } else {
+    move();   // 첫 화면은 그냥 제자리에 나타난다
+  }
+
+  $('idle').classList.toggle('off', wantIds.length > 0);
 }
 
 function apply(data){
   $('branch').textContent = data.branchName || '';
-  var next = data.resolved || [];
-
-  // 방금 해결한 것이 있으면 **기다리지 않고 바로** 그 장으로 넘어간다.
-  // 완료를 누른 사람이 TV 를 보고 있을 때 반응이 없으면 안 된 줄 안다
-  var fresh = -1;
-  if (!first){
-    for (var i = 0; i < next.length; i++){
-      if (!seen[next[i].id]){ fresh = i; break; }
-    }
-  }
-
-  items = next;
-
-  if (!items.length){
-    clearTimeout(timer);
-    at = -1;
-    $('foot').innerHTML = '';
-    [].forEach.call($('stage').querySelectorAll('.card'), function(c){
-      if (c.id !== 'idle') c.remove(); else c.classList.add('on');
-    });
-    return;
-  }
-
-  if (first || at < 0){
-    first = false;
-    clearTimeout(timer);
-    show(0);
-    timer = setTimeout(tick, HOLD);
-  } else if (fresh >= 0){
-    clearTimeout(timer);
-    show(fresh);
-    timer = setTimeout(tick, HOLD);
-  } else if (at >= items.length){
-    at = items.length - 1;   // 목록이 줄었을 때 범위 밖으로 안 나가게
-  }
+  render(data.resolved || []);
+  first = false;
 }
 
 function load(){
@@ -287,10 +295,17 @@ function load(){
 
 load();
 setInterval(load, REFRESH);
+setInterval(rollLead, LEAD_HOLD);
 
 // TV 는 몇 달씩 켜 둔다 — 브라우저가 절전으로 멈췄다 깨어나면 바로 다시 받는다
 document.addEventListener('visibilitychange', function(){
   if (!document.hidden) load();
+});
+
+// 화면 크기가 바뀌면 칸 높이를 다시 재서 줄을 옮긴다
+window.addEventListener('resize', function(){
+  measure();
+  order.forEach(function(id, i){ place(rows[id], i, true); });
 });
 
 })();
