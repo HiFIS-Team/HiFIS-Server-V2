@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from pydantic import Field
+
 from app.enums import ScoreCategory
 from app.schemas.base import CamelModel
 
@@ -34,8 +36,66 @@ class RankingItem(CamelModel):
     points: int
 
 
+class RankingBoardItem(CamelModel):
+    """랭킹 화면이 사람마다 보여주는 한 줄.
+
+    앱은 이 값들로 항목별 순위를 직접 세운다 — 서버가 탭마다 따로 주면
+    같은 사람의 값이 탭마다 어긋날 수 있다.
+    """
+
+    employee_id: str
+    name: str
+    branch_id: str
+
+    # 매출 — 그 달 등록권 결제액과 신규/재등록 건수
+    revenue: int = 0
+    new_signups: int = 0
+    re_signups: int = 0
+
+    # 친절 — 점수(원장 합)와 받은 설문 수
+    kindness: int = 0
+    reviews: int = 0
+
+    # 프로젝트 — 점수(원장 합)와 그 달 기한인 것 중 담당분
+    project_score: int = 0
+    project_done: int = 0
+    project_total: int = 0
+
+    # 환경정비 — 점수(원장 합)와 수행 횟수
+    care_score: int = 0
+    care: int = 0
+
+    # 수업 — 그 달 수행한 세션 수와 그것으로 쌓인 점수
+    lessons: int = 0
+    lesson_score: int = 0
+
+    # 지난달 순위 — [매출, 친절, 프로젝트, 환경, 수업, 종합]. 0 이면 순위 없음
+    last_rank: list[int] = Field(default_factory=lambda: [0, 0, 0, 0, 0, 0])
+
+
 class ScoreSummary(CamelModel):
     employee_id: str
     period: str | None = None
     total: int
     by_category: dict[str, int]
+
+
+class RankOvertakeOut(CamelModel):
+    """랭킹판에서 자리가 바뀐 한 건 — 대표·관리자 랭킹 화면이 읽는다.
+
+    `gap` 은 **항목마다 단위가 다르다** (매출이면 원, 수업이면 개수, 나머지는 점).
+    서버가 단위를 붙이지 않는 건 화면이 이미 어느 탭인지 알기 때문이다.
+    """
+
+    id: str
+    period: str
+    metric: str
+    mover_id: str
+    mover_name: str
+    # 앞지른 사람의 지점 — 화면의 지점 필터가 쓴다
+    mover_branch_id: str | None = None
+    passed_id: str
+    passed_name: str
+    gap: float
+    rank: int
+    created_at: datetime

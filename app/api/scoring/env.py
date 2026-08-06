@@ -35,28 +35,38 @@ router = APIRouter(tags=["env"])
 # 기본 환경정비 항목 (최종 점수표). 지점마다 없으면 자동 생성 —
 # (이름, 배점, editable). editable=False 는 고정 보호(수정/삭제 불가).
 # '기타'는 1~10 범위라 editable=True 로 두어 지점별 조정 가능(항목을 바꾸려면 이 상수를 고칠 것).
+# 순서 = 하루 일하는 흐름(§31): 빨래 → 청소 → 관리 → 홍보 → 기타.
+# (배점순 아님 — 현수막이 청소 사이에 끼거나 화장실청소가 홍보 뒤로 가지 않도록)
+#
+# **이 차례는 앱이 정한다.** 칩을 위에서 아래로 훑으며 누르게 돼 있어서
+# 실제 일하는 차례와 다르면 손이 왔다 갔다 한다. 임의로 바꾸지 않는다.
 BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
-    ("빨래정리", 3, False),
-    ("건조기", 1, False),
+    # 빨래 — 돌리고, 말리고, 갠다. 이 차례가 뒤집히면 안 된다
     ("세탁", 1, False),
+    ("건조기", 1, False),
+    ("빨래정리", 3, False),
+    # 청소 — 넓은 곳부터 탈의실, 화장실 순
     ("구역청소", 2, False),
-    ("현수막", 10, False),
     ("복도청소", 2, False),
     ("락커정리", 2, False),
     ("남탈부스", 5, False),
     ("남탈청소", 2, False),
     ("여탈부스", 5, False),
     ("여탈청소", 2, False),
+    ("화장실청소", 5, False),
+    # 관리
     ("기구관리", 2, False),
     ("회원지도", 2, False),
-    ("블로그", 10, False),
-    ("족자", 5, False),
+    ("TM회원관리", 1, False),
+    # 홍보 — 온라인부터 오프라인
     ("게시물", 3, False),
     ("스토리", 3, False),
-    ("클레임해결", 10, False),
     ("전단지", 10, False),
-    ("화장실청소", 5, False),
-    ("TM회원관리", 1, False),
+    ("현수막", 10, False),
+    ("족자", 5, False),
+    ("블로그", 10, False),
+    # 기타 — 어쩌다 하는 것들
+    ("클레임해결", 10, False),
     ("기타", 1, True),  # 1~10 범위 → 지점별 조정 가능
 ]
 
@@ -71,8 +81,8 @@ async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
         return
     if await db.get(Branch, branch_id) is None:  # 실재하는 지점만
         return
-    for name, points, editable in BASE_ENV_ITEMS:
-        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=editable))
+    for i, (name, points, editable) in enumerate(BASE_ENV_ITEMS):
+        db.add(EnvItem(branch_id=branch_id, name=name, points=points, editable=editable, sort_order=i))
     await db.commit()
 
 
@@ -96,7 +106,7 @@ async def list_env_items(
         stmt = stmt.where(EnvItem.branch_id == scope)
     if branch_id:
         stmt = stmt.where(EnvItem.branch_id == branch_id)
-    result = await db.execute(stmt.order_by(EnvItem.points.desc(), EnvItem.name))
+    result = await db.execute(stmt.order_by(EnvItem.sort_order, EnvItem.name))  # 고정 순서(§4.2 #31)
     return list(result.scalars().all())
 
 
@@ -105,7 +115,8 @@ async def create_env_item(payload: EnvItemCreate, db: AsyncSession = Depends(get
     if await db.get(Branch, payload.branch_id) is None:
         raise HTTPException(400, detail={"code": "BRANCH_NOT_FOUND", "message": "지점이 존재하지 않습니다"})
     item = EnvItem(
-        branch_id=payload.branch_id, name=payload.name, points=payload.points, editable=payload.editable
+        branch_id=payload.branch_id, name=payload.name, points=payload.points,
+        editable=payload.editable, sort_order=payload.sort_order,
     )
     db.add(item)
     await db.commit()

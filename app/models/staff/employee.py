@@ -9,7 +9,7 @@ from sqlalchemy import ARRAY, DateTime, Enum as SAEnum, ForeignKey, Integer, Str
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
-from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
+from app.enums import DeductionMethod, EmployeeStatus, EmploymentType, Rank, Role, WorkStatus
 
 
 class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -39,7 +39,15 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=EmployeeStatus.ACTIVE,
     )
 
-    avatar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#6366f1")
+    # 고용 형태 — 정규직은 직급별 기본급, 알바는 시급제 (재직 상태와 다른 축)
+    employment_type: Mapped[EmploymentType] = mapped_column(
+        SAEnum(EmploymentType, native_enum=False, length=20),
+        nullable=False,
+        default=EmploymentType.FULL_TIME,
+        server_default=EmploymentType.FULL_TIME.value,
+    )
+
+    avatar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2F54EB")  # 팔레트 첫 색(§2.2)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
     work_status: Mapped[WorkStatus] = mapped_column(
@@ -51,6 +59,8 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # 퇴사 시각 — status=RESIGNED 로 바뀌거나 삭제(퇴사) 시 기록. null=재직 중 (§58)
+    resigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 급여 공제 방식 (§5) — 직원별 설정

@@ -25,6 +25,24 @@ class AttendanceOut(CamelModel):
     status: AttendanceStatus | None = None  # 서버 판정(정상/지각/조기퇴근 등) — 근무시간 대비
 
 
+class AttendanceRosterGroupOut(CamelModel):
+    """하루 안에서 같은 판정을 받은 사람들."""
+
+    status: AttendanceStatus
+    names: list[str]
+
+
+class AttendanceRosterDayOut(CamelModel):
+    """전사 캘린더 하루 — 상태별로 누가 그랬는지.
+
+    사람별 캘린더를 인원수만큼 부르지 않으려고 한 번에 묶어 준다.
+    휴무(DAY_OFF)·판정불가는 담지 않는다 — 화면에 쓸 자리가 없다.
+    """
+
+    date: date
+    groups: list[AttendanceRosterGroupOut]
+
+
 class AttendanceDayOut(CamelModel):
     """캘린더 하루 상태 — 기록 없는 날(결근/휴가/휴무)까지 포함해 서버가 판정."""
 

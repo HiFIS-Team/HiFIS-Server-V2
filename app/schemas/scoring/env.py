@@ -12,12 +12,14 @@ class EnvItemCreate(CamelModel):
     name: str
     points: int = Field(gt=0)
     editable: bool = True
+    sort_order: int = 1000  # 신규 커스텀 항목은 기본 목록(0~) 아래로
 
 
 class EnvItemUpdate(CamelModel):
     name: str | None = None
     points: int | None = Field(default=None, gt=0)
     editable: bool | None = None
+    sort_order: int | None = None  # 재정렬
 
 
 class EnvItemOut(CamelModel):
@@ -26,6 +28,7 @@ class EnvItemOut(CamelModel):
     name: str
     points: int
     editable: bool
+    sort_order: int
 
 
 class EnvLogCreate(CamelModel):

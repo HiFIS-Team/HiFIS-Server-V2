@@ -4,8 +4,8 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from app.enums import DeductionMethod, EmployeeStatus, Rank, Role, WorkStatus
-from app.schemas.base import CamelModel, SignedUrlOptional
+from app.enums import AttendanceStatus, DeductionMethod, EmployeeStatus, EmploymentType, Rank, Role, WorkStatus
+from app.schemas.base import CamelModel, SignedUrlOptional, normalize_phone
 
 
 class EmployeeCreate(CamelModel):
@@ -22,6 +22,8 @@ class EmployeeCreate(CamelModel):
 
 class EmployeeUpdate(CamelModel):
     rank: Rank | None = None
+    # 정규직 ↔ 알바 — 급여 계산 방식이 갈린다
+    employment_type: EmploymentType | None = None
     role: Role | None = None
     status: EmployeeStatus | None = None
     team: str | None = None
@@ -32,10 +34,16 @@ class EmployeeUpdate(CamelModel):
 
 class EmployeeMeUpdate(CamelModel):
     name: str | None = None
+    phone: str | None = None  # 본인 휴대폰 번호 (§2.2) — 직원이 직접 입력
     avatar_color: str | None = None
     avatar_url: str | None = None
     status_message: str | None = None
     work_status: WorkStatus | None = None
+
+    @field_validator("phone")
+    @classmethod
+    def _validate_phone(cls, v: str | None) -> str | None:
+        return normalize_phone(v) if v is not None else None
 
 
 class PasswordChange(CamelModel):
@@ -54,15 +62,19 @@ class EmployeeOut(CamelModel):
     role: Role
     team: str | None = None
     status: EmployeeStatus
+    employment_type: EmploymentType
     avatar_color: str
     avatar_url: SignedUrlOptional = None
     status_message: str | None = None
     work_status: WorkStatus
     joined_at: datetime
+    resigned_at: datetime | None = None  # 퇴사 시각 (§58) — null=재직 중
     last_active_at: datetime | None = None
     shift_start: str | None = None  # 기본 근무 시간 "HH:MM" (null=미설정 → 첫 로그인 시 설정 유도)
     shift_end: str | None = None
     work_days: list[int] | None = None  # 근무 요일 ISO 1(월)~7(일). null=미설정
+    # 오늘 근태 판정 (§59) — 목록(GET /employees)에서만 채움. 그 외 응답은 null.
+    today_attendance_status: AttendanceStatus | None = None
 
 
 class ScheduleSet(CamelModel):

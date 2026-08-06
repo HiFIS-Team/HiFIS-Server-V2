@@ -8,16 +8,25 @@ gross = 기본급 + PT 커미션(세션 싸인당 한 회 단가 × 요율).
 ⚠️ 4대보험 요율은 연도별 변동 — §7 요율 미확정. 확정 시 아래 상수 갱신.
 """
 
+from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import period_range
-from app.enums import DeductionMethod, EmployeeStatus, Rank, RegistrationType, ScoreCategory
+from app.enums import (
+    DeductionMethod,
+    EmployeeStatus,
+    EmploymentType,
+    Rank,
+    RegistrationType,
+    ScoreCategory,
+)
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.payroll.payslip import Payslip
+from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
@@ -137,6 +146,114 @@ async def get_rank_policy(
     return (await db.execute(stmt)).scalars().first()
 
 
+async def get_hourly_wage(
+    db: AsyncSession, branch_id: str, as_of: datetime
+) -> int | None:
+    """그 시점에 유효했던 시급 — 지점 우선(지정 > 전사 null), 최신 effective_from.
+
+    **상수로 두지 않는 이유**: 최저임금이 오를 때 값을 바꾸면 지난 달 급여까지
+    새 시급으로 다시 계산된다. 기간을 나눠 두면 그달 값이 그대로 남는다.
+    """
+    stmt = (
+        select(HourlyWagePolicy)
+        .where(
+            HourlyWagePolicy.effective_from <= as_of,
+            or_(
+                HourlyWagePolicy.branch_id == branch_id,
+                HourlyWagePolicy.branch_id.is_(None),
+            ),
+        )
+        .order_by(
+            HourlyWagePolicy.branch_id.isnot(None).desc(),
+            HourlyWagePolicy.effective_from.desc(),
+        )
+    )
+    policy = (await db.execute(stmt)).scalars().first()
+    return policy.wage if policy else None
+
+
+def _shift_minutes(employee: Employee) -> int:
+    """하루 근무 분 — 본인이 온보딩에서 설정한 출퇴근 시각 그대로.
+
+    **휴게시간을 빼지 않는다** (2026-08-05 결정). 설정한 시간을 그대로 준다.
+    자정을 넘기는 근무(22:00~06:00)는 하루를 더해 잰다.
+    """
+    if not employee.shift_start or not employee.shift_end:
+        return 0
+    start_h, start_m = (int(x) for x in employee.shift_start.split(":"))
+    end_h, end_m = (int(x) for x in employee.shift_end.split(":"))
+    start = start_h * 60 + start_m
+    end = end_h * 60 + end_m
+    if end <= start:
+        end += 24 * 60
+    return end - start
+
+
+def _work_day_count(employee: Employee, year_month: str) -> int:
+    """그달에 본인 근무 요일이 몇 번 오는가 (Employee.work_days 는 ISO 1~7)"""
+    if not employee.work_days:
+        return 0
+    year, month = int(year_month[:4]), int(year_month[5:7])
+    days = monthrange(year, month)[1]
+    wanted = set(employee.work_days)
+    return sum(
+        1 for day in range(1, days + 1) if date(year, month, day).isoweekday() in wanted
+    )
+
+
+class NoScheduleError(Exception):
+    """근무 시간·요일을 설정 안 한 알바 — 급여를 뽑을 근거가 없다.
+
+    조용히 0원 명세서를 만들면 **안 준 게 아니라 0원을 준 것**이 되어
+    나중에 되짚기 어렵다. 지금은 막고 근무 설정을 받게 한다.
+    """
+
+
+async def build_hourly_payslip_data(
+    db: AsyncSession, employee: Employee, year_month: str, wage: int
+) -> dict:
+    """알바(PART_TIME) 명세서 — **시급만.** 직급 기본급·PT 인센티브가 없다.
+
+    근거는 **본인이 설정한 근무시간**이다 (첫 로그인 온보딩에서 받는 값).
+    출퇴근 스캔 실적이 아니라서 스캔을 빼먹어도 급여가 비지 않는다.
+    """
+    per_day = _shift_minutes(employee)
+    day_count = _work_day_count(employee, year_month)
+    total_minutes = per_day * day_count
+    if total_minutes <= 0:
+        raise NoScheduleError
+    gross = round(total_minutes / 60 * wage)
+
+    deductions = _deductions(gross, employee.deduction_method)
+    total_deduction = sum(line["amount"] for line in deductions)
+
+    return {
+        "rank": employee.rank,
+        # 알바는 직급 기본급이 없다 — 시급으로 계산한 값이 통째로 기본급 자리에 온다
+        "base_salary": gross,
+        "incentive_new": 0,
+        "incentive_renewal": 0,
+        "other_allowances": 0,
+        "gross": gross,
+        "deduction_method": employee.deduction_method,
+        "deductions": deductions,
+        "total_deduction": total_deduction,
+        "net": gross - total_deduction,
+        "basis": {
+            "new_sales": [],
+            "renewal_sales": [],
+            "session_signs": 0,
+            # 어떻게 이 금액이 나왔는지 — 화면이 그대로 보여줄 수 있게 남긴다
+            "hourly": {
+                "wage": wage,
+                "minutes_per_day": per_day,
+                "work_days": day_count,
+                "total_minutes": total_minutes,
+            },
+        },
+    }
+
+
 async def build_payslip_data(
     db: AsyncSession, employee: Employee, year_month: str, policy: RankPolicy
 ) -> dict:
@@ -251,10 +368,20 @@ async def generate_branch_payslips(
 
     generated: list[Payslip] = []
     for employee in employees:
-        policy = await get_rank_policy(db, employee.rank, employee.branch_id, start)
-        if policy is None:
-            continue  # 요율 정책 없는 직급은 건너뜀
-        data = await build_payslip_data(db, employee, year_month, policy)
+        if employee.employment_type == EmploymentType.PART_TIME:
+            # 알바는 시급제 — 직급 정책을 안 탄다 (PT 인센티브도 없다)
+            wage = await get_hourly_wage(db, employee.branch_id, start)
+            if wage is None:
+                continue  # 시급 정책이 없으면 뽑을 근거가 없다
+            try:
+                data = await build_hourly_payslip_data(db, employee, year_month, wage)
+            except NoScheduleError:
+                continue  # 근무 설정 전이면 건너뛴다 (0원 명세서를 만들지 않는다)
+        else:
+            policy = await get_rank_policy(db, employee.rank, employee.branch_id, start)
+            if policy is None:
+                continue  # 요율 정책 없는 직급은 건너뜀
+            data = await build_payslip_data(db, employee, year_month, policy)
         payslip = Payslip(employee_id=employee.id, year_month=year_month, **data)
         db.add(payslip)
         generated.append(payslip)

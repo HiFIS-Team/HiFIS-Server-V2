@@ -1,7 +1,10 @@
 """모델 등록 지점 — Alembic autogenerate 가 metadata 를 인식하도록 여기서 import."""
 
 from app.models.platform.access_log import AccessLog
+from app.models.platform.anomaly import Anomaly
+from app.models.platform.api_metric import ApiMetric
 from app.models.platform.account import Account, AccountAccessLog
+from app.models.platform.audit_log import AuditLog
 from app.models.board.approval import Approval
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
 from app.models.staff.attendance import Attendance, LeaveRequest
@@ -21,7 +24,9 @@ from app.models.payroll.payslip import Payslip
 from app.models.scoring.peer_review import PeerReview
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
+from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.rank_policy import RankPolicy
+from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.ranking_snapshot import RankingSnapshot
 from app.models.board.reaction import Reaction
 from app.models.members.registration import Registration
@@ -32,6 +37,9 @@ from app.models.projects.todo import Todo
 __all__ = [
     "Account",
     "AccountAccessLog",
+    "Anomaly",
+    "ApiMetric",
+    "AuditLog",
     "Approval",
     "ChatRoom",
     "ChatRoomMember",
@@ -58,7 +66,9 @@ __all__ = [
     "PeerReview",
     "Project",
     "ProjectRequest",
+    "HourlyWagePolicy",
     "RankPolicy",
+    "RankOvertake",
     "RankingSnapshot",
     "Reaction",
     "Registration",

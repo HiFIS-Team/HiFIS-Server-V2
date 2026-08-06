@@ -13,6 +13,7 @@ class Role(StrEnum):
 class Rank(StrEnum):
     TRAINER = "TRAINER"              # 트레이너 (권한 MEMBER)
     FC = "FC"                        # FC 정규 (권한 MEMBER)
+    MARKETER = "MARKETER"            # 마케터 (권한 MEMBER)
     TEAM_LEAD = "TEAM_LEAD"          # 팀장 (권한 MANAGER)
     STORE_MANAGER = "STORE_MANAGER"  # 점장 (권한 MANAGER)
     DEVELOPER = "DEVELOPER"          # 개발자 (권한 MASTER)
@@ -20,7 +21,7 @@ class Rank(StrEnum):
 
 
 def role_for_rank(rank: "Rank") -> "Role":
-    """직급 → 권한 매핑. FC·트레이너=MEMBER / 팀장·점장=MANAGER / 개발자·대표=MASTER.
+    """직급 → 권한 매핑. 트레이너·FC·마케터=MEMBER / 팀장·점장=MANAGER / 개발자·대표=MASTER.
 
     ※ ADMIN(전 지점 조회 전용 참관 권한)은 어느 직급에도 자동 매핑되지 않는다 —
       대표(MASTER)가 직원 수정에서 수동 지정한다.
@@ -47,6 +48,17 @@ class PayslipStatus(StrEnum):
     APPROVED = "APPROVED"    # 승인 완료(지급 확정 — 아직 입금 전)
     PAID = "PAID"            # 지급 완료(실입금 확인)
     REJECTED = "REJECTED"    # 반려
+
+
+class EmploymentType(StrEnum):
+    """고용 형태 — 재직 상태(EmployeeStatus)와 **다른 축**이다.
+
+    알바가 그만두면 `status=RESIGNED` 로 가고 고용 형태는 그대로 남는다.
+    한 사람이 알바로 시작해 정규직이 되는 경우도 이 값만 바꾸면 된다.
+    """
+
+    FULL_TIME = "FULL_TIME"  # 정규직 — 직급별 기본급 + 인센티브
+    PART_TIME = "PART_TIME"  # 알바 — 시급제만 (직급과 무관하게 인센티브 없음)
 
 
 class EmployeeStatus(StrEnum):
@@ -104,6 +116,18 @@ class ProjectRequestStatus(StrEnum):
     REJECTED = "REJECTED"    # 반려 (사유 필수)
 
 
+class ProjectActivityKind(StrEnum):
+    """프로젝트 상세 타임라인 항목 종류. COMMENT=사용자 댓글 / 나머지=시스템 활동 기록.
+    native_enum=False(VARCHAR)라 종류 추가 시 마이그레이션 불필요."""
+
+    COMMENT = "COMMENT"      # 사용자가 쓴 댓글 (body 필수, 수정·삭제 가능)
+    CREATED = "CREATED"      # 프로젝트 생성
+    PROGRESS = "PROGRESS"    # 진행률 변경(수동)
+    TODO = "TODO"            # 체크리스트 완료
+    DUE = "DUE"              # 기한 변경(수정·연장 승인)
+    ASSIGNEE = "ASSIGNEE"    # 담당자 변경
+
+
 class MeetingScope(StrEnum):
     COMPANY = "COMPANY"
     PROJECT = "PROJECT"
@@ -122,6 +146,7 @@ class AttendanceStatus(StrEnum):
     LATE = "LATE"                      # 지각
     EARLY_LEAVE = "EARLY_LEAVE"        # 조기퇴근
     LATE_AND_EARLY = "LATE_AND_EARLY"  # 지각 + 조기퇴근
+    OVERTIME = "OVERTIME"              # 야근 — 퇴근 스캔이 설정 퇴근시간보다 1시간+ 늦음
     IN_PROGRESS = "IN_PROGRESS"        # 출근했고 아직 퇴근 전(당일)
     NO_CHECKOUT = "NO_CHECKOUT"        # 지난 날인데 퇴근 기록 없음
     ABSENT = "ABSENT"                  # 결근 — 근무일인데 과거·기록 없음·휴가 없음
@@ -143,6 +168,18 @@ class HalfPeriod(StrEnum):
 
     AM = "AM"  # 오전 반차
     PM = "PM"  # 오후 반차
+
+
+class ComplaintStatus(StrEnum):
+    """친절 설문의 '개선했으면 하는 부분' 처리 단계 (§4.5).
+
+    설문에 개선 의견이 적혀 있으면 그게 컴플레인이다. 해결하면 DONE 이 되고,
+    매장 TV 화면이 그것만 골라 '해결 완료' 로 띄운다.
+    """
+
+    PENDING = "PENDING"  # 미처리
+    WORKING = "WORKING"  # 해결중
+    DONE = "DONE"        # 해결 완료
 
 
 class LeaveStatus(StrEnum):
@@ -183,13 +220,18 @@ class ScoreCategory(StrEnum):
 
 
 class RankingKind(StrEnum):
-    """랭킹 탭 종류 — /scores/ranking?kind=. 표시 순서: 종합왕 → 매출왕 → 수업왕 → 친절왕 → 피드백왕."""
+    """랭킹 탭 종류 — /scores/ranking?kind=. 헤드라인 순서: 종합왕 → 매출왕 → 수업왕 → 친절왕 → 피드백왕.
+
+    PROJECT·ENV 는 앱에서 on-demand 조회용(kind 값 = ScoreCategory 동명 → kind_conditions 자동 매핑).
+    """
 
     OVERALL = "OVERALL"    # 종합왕 — 전체 점수 합
     SALES = "SALES"        # 매출왕 — 매출성과(SALES) 자동 기여도 (CONTRIB 중 sales:*)
     CLASS = "CLASS"        # 수업왕 — 수업 개수 점수
     KINDNESS = "KINDNESS"  # 친절왕 — 회원 친절도
     PEER = "PEER"          # 피드백왕 — 동료평가
+    PROJECT = "PROJECT"    # 프로젝트왕 — 프로젝트 달성 점수 (ScoreCategory.PROJECT)
+    ENV = "ENV"            # 환경왕 — 환경정비 점수 (ScoreCategory.ENV)
 
 
 class ReactionTargetType(StrEnum):
@@ -198,8 +240,51 @@ class ReactionTargetType(StrEnum):
     MESSAGE = "MESSAGE"  # 사내톡 메시지 (§6.11, 추후)
 
 
+class MessageKind(StrEnum):
+    """사내톡 메시지 종류 — 사람이 쓴 것과 서버가 남긴 안내를 가른다.
+
+    SYSTEM 은 앱이 말풍선이 아니라 가운데 회색 한 줄로 그린다
+    (초대·나가기·이름 변경).
+    """
+
+    TEXT = "TEXT"
+    SYSTEM = "SYSTEM"
+
+
+class EventStatus(StrEnum):
+    """일정 승인 상태.
+
+    MASTER·ADMIN 이 올린 것은 바로 APPROVED, 나머지는 PENDING 으로 들어간다.
+    **반려하면 행을 지우므로 REJECTED 는 없다** — 달력이 유일한 목록이라
+    죽은 일정이 남으면 칸만 어지럽힌다. 신청자에게는 알림으로 알린다.
+    """
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+
+
+class InboxKind(StrEnum):
+    """홈 결재함 한 줄의 출처 — 승인·반려를 어느 엔드포인트로 보낼지 가른다."""
+
+    PAYSLIP = "PAYSLIP"    # POST /payslips/{id}/approve|reject
+    LEAVE = "LEAVE"        # POST /leaves/{id}/approve|reject
+    APPROVAL = "APPROVAL"  # POST /approvals/{id}/approve|reject
+    EVENT = "EVENT"        # POST /events/{id}/approve|reject
+
+
 class AccessEvent(StrEnum):
     """접속 로그 이벤트 — 개인정보처리방침 §1-1·§8(접속 기록 보관)."""
 
     LOGIN_SUCCESS = "LOGIN_SUCCESS"
     LOGIN_FAIL = "LOGIN_FAIL"
+
+
+class AnomalyKind(StrEnum):
+    """이상행동 종류 — 접속·활동 로그를 5분마다 훑어 찾는다 (모니터링 '이상 징후')."""
+
+    BRUTE_FORCE = "BRUTE_FORCE"          # 같은 계정·IP 로 로그인 반복 실패
+    FORBIDDEN_BURST = "FORBIDDEN_BURST"  # 권한 없는 요청 반복 — 앱에 없는 걸 직접 부름
+    NEW_DEVICE = "NEW_DEVICE"            # 그 사람이 안 쓰던 IP·기기에서 로그인
+    BULK_DELETE = "BULK_DELETE"          # 짧은 시간에 대량 삭제
+    READ_BURST = "READ_BURST"            # 남의 대화·기록 열람 급증
+    SCREEN_CAPTURE = "SCREEN_CAPTURE"    # 짧은 시간에 화면 캡처 반복 (iOS — 막을 수 없어 세기만 한다)

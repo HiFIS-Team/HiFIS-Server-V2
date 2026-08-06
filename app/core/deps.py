@@ -3,7 +3,7 @@
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,3 +53,22 @@ async def branch_scope(current: Employee = Depends(get_current_user)) -> str | N
     if current.role in (Role.MASTER, Role.ADMIN):
         return None
     return current.branch_id
+
+
+async def branch_filter(
+    scope: str | None = Depends(branch_scope),
+    branch_id: str | None = Query(None, alias="branchId"),
+) -> str | None:
+    """볼 지점 — `branch_scope` 에 **고르는 길**을 더한 것.
+
+    앱 업무 화면의 지점 필터가 쓴다. 항목마다 규칙이 갈리면 같은 필터를 걸고도
+    화면마다 다른 게 보이므로 판정을 여기 한 곳에 둔다.
+
+    - **MASTER·ADMIN** — `scope` 가 None 이라 고른 지점이 그대로 쓰인다.
+      안 고르면(None) 예전처럼 전 지점이다.
+    - **MEMBER·MANAGER** — `scope` 가 본인 지점을 주고 **그게 이긴다.**
+      `branchId` 를 넣어도 조용히 본인 지점으로 고정된다. 403 을 안 내는 이유는
+      남의 지점을 달라고 한 게 아니라 볼 수 있는 만큼만 주는 것이기 때문이다
+      (근태 `GET /attendance` 와 같은 규칙 — backend-gap 60).
+    """
+    return scope or branch_id

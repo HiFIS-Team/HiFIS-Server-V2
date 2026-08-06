@@ -6,17 +6,36 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.storage import save_upload
 from app.db.session import get_db
-from app.enums import ReactionTargetType
+from app.enums import MessageKind, ReactionTargetType
+from app.models.board.reaction import Reaction
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
 from app.models.staff.employee import Employee
-from app.schemas.chat.chat import ChatRoomCreate, ChatRoomOut, MessageCreate, MessageOut
-from app.services.chat import broadcast_event, is_member, member_ids, post_message
+from app.schemas.chat.chat import (
+    AttachmentOut,
+    ChatMemberAdd,
+    ChatMuteSet,
+    ChatRoomCreate,
+    ChatRoomOut,
+    ChatRoomUpdate,
+    MessageCreate,
+    MessageOut,
+)
+from app.services.chat import (
+    broadcast_event,
+    is_member,
+    member_ids,
+    post_message,
+    read_counts,
+    reply_refs,
+    system_message,
+)
 from app.services.reactions import aggregate_for
 
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(get_current_user)])
@@ -32,13 +51,61 @@ async def _require_member(db: AsyncSession, room_id: str, employee_id: str) -> C
 
 
 async def _messages_out(db: AsyncSession, messages: list[Message]) -> list[MessageOut]:
+    if not messages:
+        return []
     agg = await aggregate_for(db, ReactionTargetType.MESSAGE, [m.id for m in messages])
+    refs = await reply_refs(db, messages)
+    reads = await read_counts(db, messages[0].room_id, messages)
     out = []
     for m in messages:
         model = MessageOut.model_validate(m)
         model.reactions = agg[m.id]
+        model.reply_to = refs.get(m.reply_to_id or "")
+        model.read_count = reads.get(m.id, 0)
         out.append(model)
     return out
+
+
+async def _drop_reactions(db: AsyncSession, message_ids: list[str]) -> None:
+    """메시지에 달린 반응을 지운다(commit 은 호출부에서).
+
+    Reaction.target_id 는 다형 참조라 FK 가 없다 — 메시지가 없어져도
+    행이 그대로 남으므로 여기서 직접 정리한다.
+    """
+    if not message_ids:
+        return
+    await db.execute(
+        delete(Reaction).where(
+            Reaction.target_type == ReactionTargetType.MESSAGE,
+            Reaction.target_id.in_(message_ids),
+        )
+    )
+
+
+async def _rejoin(db: AsyncSession, room_id: str, employee_ids: set[str]) -> set[str]:
+    """나갔던 멤버를 되살린다(commit 은 호출부에서). 되살린 사람 id 를 돌려준다.
+
+    멤버십은 지우지 않고 `left_at` 만 찍으므로(§'최근 나간 항목'), 다시 넣을 때
+    행을 새로 만들면 유니크 제약에 걸린다. 있는 행의 `left_at` 을 지운다.
+    """
+    if not employee_ids:
+        return set()
+    rows = (
+        await db.scalars(
+            select(ChatRoomMember).where(
+                ChatRoomMember.room_id == room_id,
+                ChatRoomMember.employee_id.in_(employee_ids),
+            )
+        )
+    ).all()
+    back = set()
+    for row in rows:
+        if row.left_at is not None:
+            row.left_at = None
+        back.add(row.employee_id)
+    if rows:
+        await db.flush()
+    return back
 
 
 async def _find_dm(db: AsyncSession, a: str, b: str) -> ChatRoom | None:
@@ -85,6 +152,11 @@ async def create_room(
     if not payload.is_group and len(members) == 2:
         existing = await _find_dm(db, current.id, next(iter(others)))
         if existing is not None:
+            # 예전에 나간 방이면 **둘 다 되살린다.** 다시 말을 거는 순간
+            # 그 대화는 살아 있는 것이고, 안 되살리면 방금 만든 방에서
+            # 403(멤버 아님)이 난다 (실제 발생).
+            await _rejoin(db, existing.id, members)
+            await db.commit()  # flush 만 하면 요청이 끝나며 롤백된다
             return await _room_out(db, existing, current.id)
 
     room = ChatRoom(name=payload.name, is_group=payload.is_group, owner_id=current.id)
@@ -99,14 +171,21 @@ async def create_room(
 
 @router.get("/rooms", response_model=list[ChatRoomOut])
 async def list_rooms(
+    left: bool = Query(False, description="true 면 내가 나간 방(최근 나간 항목)"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ChatRoomOut]:
+    """내 대화 목록. `left=true` 면 **나간 방**을 대신 준다.
+
+    나간 방도 행이 남아 있어서(§`ChatRoomMember.left_at`) 언제 나갔는지와
+    그때까지의 대화를 다시 찾아볼 수 있다.
+    """
+    membership = ChatRoomMember.left_at.isnot(None) if left else ChatRoomMember.left_at.is_(None)
     my_rooms = (
         await db.scalars(
             select(ChatRoom)
             .join(ChatRoomMember, ChatRoomMember.room_id == ChatRoom.id)
-            .where(ChatRoomMember.employee_id == current.id)
+            .where(ChatRoomMember.employee_id == current.id, membership)
         )
     ).all()
     rooms = [await _room_out(db, room, current.id) for room in my_rooms]
@@ -115,6 +194,131 @@ async def list_rooms(
         key=lambda r: r.last_message.created_at if r.last_message else r.updated_at, reverse=True
     )
     return rooms
+
+
+@router.patch("/rooms/{room_id}", response_model=ChatRoomOut)
+async def update_room(
+    room_id: str,
+    payload: ChatRoomUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ChatRoomOut:
+    """방 이름 바꾸기 — 멤버 누구나. 바뀐 사실은 안내 메시지로 대화에 남는다.
+
+    DM 은 이름이 없다(상대 이름으로 보인다) — 400 으로 막는다.
+    """
+    room = await _require_member(db, room_id, current.id)
+    if not room.is_group:
+        raise HTTPException(400, detail={"code": "NOT_GROUP_ROOM", "message": "1:1 대화는 이름을 바꿀 수 없습니다"})
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(400, detail={"code": "NAME_REQUIRED", "message": "방 이름을 입력하세요"})
+    if name != room.name:
+        room.name = name
+        await db.commit()
+        await system_message(
+            db, room_id=room_id, actor_id=current.id, body=f"{current.name}님이 방 이름을 '{name}'(으)로 바꿨어요"
+        )
+    await db.refresh(room)
+    return await _room_out(db, room, current.id)
+
+
+@router.patch("/rooms/{room_id}/mute", response_model=ChatRoomOut)
+async def set_mute(
+    room_id: str,
+    payload: ChatMuteSet,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ChatRoomOut:
+    """이 방 알림 끄기/켜기 — **나에게만** 적용된다.
+
+    꺼도 메시지는 그대로 오고 안읽음도 센다. 웹푸시만 안 간다.
+    """
+    room = await _require_member(db, room_id, current.id)
+    membership = await db.scalar(
+        select(ChatRoomMember).where(
+            ChatRoomMember.room_id == room_id,
+            ChatRoomMember.employee_id == current.id,
+            ChatRoomMember.left_at.is_(None),
+        )
+    )
+    if membership is not None and membership.muted != payload.muted:
+        membership.muted = payload.muted
+        await db.commit()
+    return await _room_out(db, room, current.id)
+
+
+@router.post("/rooms/{room_id}/members", response_model=ChatRoomOut, status_code=201)
+async def add_members(
+    room_id: str,
+    payload: ChatMemberAdd,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ChatRoomOut:
+    """멤버 초대.
+
+    **DM 에 초대하면 그룹방이 된다** — 둘이던 대화에 셋째가 들어오면
+    더 이상 1:1 이 아니다. 이름이 없으면 앱이 멤버 이름을 이어 붙여 보여준다.
+    """
+    room = await _require_member(db, room_id, current.id)
+    already = set(await member_ids(db, room_id))
+    wanted = {mid for mid in payload.member_ids if mid} - already
+    if not wanted:
+        raise HTTPException(400, detail={"code": "NO_MEMBERS", "message": "초대할 사람을 1명 이상 지정하세요"})
+
+    people = (
+        await db.scalars(
+            select(Employee).where(Employee.id.in_(wanted), Employee.deleted_at.is_(None))
+        )
+    ).all()
+    if len(people) != len(wanted):
+        raise HTTPException(400, detail={"code": "MEMBER_NOT_FOUND", "message": "존재하지 않는 멤버가 있습니다"})
+
+    rejoined = await _rejoin(db, room_id, {p.id for p in people})
+    for person in people:
+        if person.id in rejoined:
+            continue  # 예전에 나갔던 사람 — 행이 이미 있어서 되살리기만 한다
+        db.add(ChatRoomMember(room_id=room_id, employee_id=person.id))
+    if not room.is_group:
+        room.is_group = True
+    await db.commit()
+
+    names = ", ".join(p.name for p in people)
+    await system_message(
+        db, room_id=room_id, actor_id=current.id, body=f"{current.name}님이 {names}님을 초대했어요"
+    )
+    await db.refresh(room)
+    return await _room_out(db, room, current.id)
+
+
+@router.delete("/rooms/{room_id}/members/me", status_code=204)
+async def leave_room(
+    room_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """방 나가기 — 내 멤버십만 지운다. 대화와 남의 기록은 그대로 둔다.
+
+    마지막 사람이 나가면 방을 지운다. 아무도 못 여는 방이 남을 이유가 없다.
+    """
+    await _require_member(db, room_id, current.id)
+    # 안내를 먼저 남긴다 — 나간 뒤에는 이 방에 글을 쓸 수 없다
+    await system_message(db, room_id=room_id, actor_id=current.id, body=f"{current.name}님이 나갔어요")
+
+    membership = await db.scalar(
+        select(ChatRoomMember).where(
+            ChatRoomMember.room_id == room_id, ChatRoomMember.employee_id == current.id
+        )
+    )
+    if membership is not None:
+        # 행을 지우지 않고 나간 시각만 찍는다 — '최근 나간 항목'에서 다시 찾는다
+        membership.left_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    # **마지막 사람이 나가도 방을 지우지 않는다.** 지우면 나간 사람의
+    # '최근 나간 항목'에서 그 방이 통째로 사라져 다시 들여다볼 수 없다.
+    # 아무도 없는 방은 활성 목록에 안 뜨므로 걸리적거리지도 않는다.
+    return None
 
 
 # ---------- 메시지 ----------
@@ -127,7 +331,8 @@ async def list_messages(
     db: AsyncSession = Depends(get_db),
 ) -> list[MessageOut]:
     await _require_member(db, room_id, current.id)
-    stmt = select(Message).where(Message.room_id == room_id)
+    # 전송 취소한 메시지는 빼고 준다(소프트 삭제) — 답글 인용은 reply_to 가 따로 알린다
+    stmt = select(Message).where(Message.room_id == room_id, Message.deleted_at.is_(None))
     if before is not None:
         stmt = stmt.where(Message.created_at < before)
     stmt = stmt.order_by(Message.created_at.desc()).limit(limit)
@@ -145,9 +350,59 @@ async def send_message(
 ) -> MessageOut:
     await _require_member(db, room_id, current.id)
     message = await post_message(
-        db, room_id=room_id, sender_id=current.id, body=payload.body, attachments=payload.attachments
+        db,
+        room_id=room_id,
+        sender_id=current.id,
+        body=payload.body,
+        attachments=payload.attachments,
+        reply_to_id=payload.reply_to_id,
     )
     return (await _messages_out(db, [message]))[0]
+
+
+@router.post("/rooms/{room_id}/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_attachment(
+    room_id: str,
+    file: UploadFile = File(...),
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttachmentOut:
+    """사내톡에 붙일 파일 올리기 — 올린 주소를 메시지 `attachments` 에 넣어 보낸다.
+
+    문서함(`POST /documents`)과 나눈 이유: 그쪽은 폴더·스코프가 필요한 **문서 관리**고,
+    대화에 붙는 사진 한 장은 그 트리에 들어갈 것이 아니다.
+    """
+    await _require_member(db, room_id, current.id)
+    url, ext, size = await save_upload(file)
+    return AttachmentOut(
+        url=url, name=file.filename or f"file.{ext}", ext=ext, size=size
+    )
+
+
+@router.delete("/rooms/{room_id}/messages/{message_id}", status_code=204)
+async def delete_message(
+    room_id: str,
+    message_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """전송 취소 — **본인이 보낸 것만.** 행은 남기고 목록에서만 뺀다.
+
+    지운 것을 남에게도 즉시 없애야 해서 `type=delete` 로 브로드캐스트한다.
+    """
+    await _require_member(db, room_id, current.id)
+    message = await db.get(Message, message_id)
+    if message is None or message.room_id != room_id or message.deleted_at is not None:
+        raise HTTPException(404, detail={"code": "MESSAGE_NOT_FOUND", "message": "메시지를 찾을 수 없습니다"})
+    if message.sender_id != current.id:
+        raise HTTPException(403, detail={"code": "NOT_MESSAGE_SENDER", "message": "본인이 보낸 메시지만 취소할 수 있습니다"})
+    message.deleted_at = datetime.now(timezone.utc)
+    # 말풍선이 사라지면 거기 달린 반응도 갈 곳이 없다.
+    # Reaction 은 target_id 가 FK 가 아니라서(다형 참조) 직접 지운다.
+    await _drop_reactions(db, [message_id])
+    await db.commit()
+    await broadcast_event(db, room_id=room_id, type="delete", messageId=message_id)
+    return None
 
 
 @router.post("/rooms/{room_id}/read", status_code=204)
@@ -174,18 +429,28 @@ async def mark_read(
 
 # ---------- 헬퍼 ----------
 async def _room_out(db: AsyncSession, room: ChatRoom, me: str) -> ChatRoomOut:
-    last_read = await db.scalar(
-        select(ChatRoomMember.last_read_at).where(
+    mine = await db.scalar(
+        select(ChatRoomMember).where(
             ChatRoomMember.room_id == room.id, ChatRoomMember.employee_id == me
         )
     )
+    last_read = mine.last_read_at if mine else None
     members = await member_ids(db, room.id)
+    # 전송 취소한 메시지는 미리보기에도 안읽음 수에도 안 들어간다
     last_msg = await db.scalar(
-        select(Message).where(Message.room_id == room.id).order_by(Message.created_at.desc()).limit(1)
+        select(Message)
+        .where(Message.room_id == room.id, Message.deleted_at.is_(None))
+        .order_by(Message.created_at.desc())
+        .limit(1)
     )
-    # 안읽음 = 내 last_read 이후 도착한 남의 메시지 수
+    # 안읽음 = 내 last_read 이후 도착한 남의 메시지 수.
+    # 시스템 안내(초대·나가기·이름 변경)는 세지 않는다 — 누가 나갔다고
+    # 방에 빨간 배지가 붙으면 읽을 것이 있는 줄 알고 들어가게 된다.
     unread_stmt = select(func.count()).select_from(Message).where(
-        Message.room_id == room.id, Message.sender_id != me
+        Message.room_id == room.id,
+        Message.deleted_at.is_(None),
+        Message.sender_id != me,
+        Message.kind == MessageKind.TEXT,
     )
     if last_read is not None:
         unread_stmt = unread_stmt.where(Message.created_at > last_read)
@@ -198,5 +463,6 @@ async def _room_out(db: AsyncSession, room: ChatRoom, me: str) -> ChatRoomOut:
         member_ids=members,
         last_message=(await _messages_out(db, [last_msg]))[0] if last_msg else None,
         unread_count=unread or 0,
+        muted=bool(mine and mine.muted),
         updated_at=room.updated_at,
     )

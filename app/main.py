@@ -13,12 +13,26 @@ from app.core.ratelimit import limiter
 from app.api.auth import auth, invite_keys
 from app.api.board import approvals, events, notices, reactions
 from app.api.chat import chat, notifications
+from app.api.legal import consents
 from app.api.members import members, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
-from app.api.platform import access_logs, accounts, dashboard, documents, files, search
+from app.api.platform import (
+    access_logs,
+    accounts,
+    audit_logs,
+    monitoring,
+    chat_audit,
+    dashboard,
+    documents,
+    files,
+    search,
+)
 from app.api.projects import meetings, projects, todos
+from app.api.public import survey as public_survey, tv as public_tv
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees, home
+from app.core.audit_middleware import AuditMiddleware
+from app.core.metrics_middleware import MetricsMiddleware
 from app.core.config import settings
 from app.db.session import engine
 from app.workers.scheduler import start_scheduler, stop_scheduler
@@ -38,7 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -71,6 +85,10 @@ if settings.environment == "development":
         r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$"
     )
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
+# 활동 로그 — 쓰기 요청을 받아 적는다(§8). CORS 다음에 등록해 프리플라이트(OPTIONS)는 안 탄다
+app.add_middleware(AuditMiddleware)
+# 응답 시간 계측 — 활동 로그보다 바깥이라 로그 기록 시간까지 포함해 잰다
+app.add_middleware(MetricsMiddleware)
 
 # org — 조직·인사
 app.include_router(auth.router)
@@ -83,6 +101,7 @@ app.include_router(attendance.router)
 app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
+app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회원 개인정보(§13)
 # scoring — 점수
 app.include_router(scores.router)
 app.include_router(env.router)
@@ -106,8 +125,13 @@ app.include_router(ws_chat_router)  # WS /ws/chat
 # platform — 문서·계정·검색·대시보드
 app.include_router(accounts.router)
 app.include_router(access_logs.router)
+app.include_router(audit_logs.router)
+app.include_router(monitoring.router)  # 성능 지표·이상행동 감지
+app.include_router(chat_audit.router)  # 사내톡 열람(관리자 이상)
 app.include_router(documents.router)
 app.include_router(search.router)
+app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
+app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
 app.include_router(dashboard.router)
 app.include_router(files.router)  # 서명 URL 파일 서빙(/files) — 정적 /uploads 공개 대체(§H2)
 

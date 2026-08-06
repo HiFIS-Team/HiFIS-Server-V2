@@ -49,12 +49,15 @@ def _require_participant(approval: Approval, current: Employee) -> None:
 
 @router.get("", response_model=list[ApprovalOut])
 async def list_approvals(
-    box: str = Query(..., pattern="^(mine|inbox|decided)$"),
+    box: str = Query(..., pattern="^(mine|inbox|decided|all)$"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Approval]:
     stmt = select(Approval)
-    if box == "mine":
+    if box == "all":  # 전사 결재 전체 — 관리자만(결재선 여러 단이라 남에게 걸린 문서도 봐야 함)
+        if current.role not in (Role.MASTER, Role.ADMIN):
+            raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "전사 결재 열람은 관리자만 가능합니다"})
+    elif box == "mine":
         stmt = stmt.where(Approval.requester_id == current.id)
     elif box == "inbox":  # 내 결재 차례인 문서
         stmt = stmt.where(
@@ -78,6 +81,16 @@ async def create_approval(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Approval:
+    """결재 올리기 — **MASTER·ADMIN 은 못 올린다.**
+
+    결재는 대표가 판단해 주는 것이라, 판단하는 쪽이 올리면 자기가 올려
+    자기가 결재하는 자리가 된다. 올리는 건 MANAGER·MEMBER 다.
+    """
+    if current.role in (Role.MASTER, Role.ADMIN):
+        raise HTTPException(
+            403,
+            detail={"code": "NOT_A_REQUESTER", "message": "대표·관리자는 결재를 올리지 않습니다"},
+        )
     steps = [
         {"approver_id": aid, "status": ApprovalStepStatus.PENDING, "comment": None, "acted_at": None}
         for aid in payload.approver_ids
@@ -119,6 +132,9 @@ async def _act(approval_id: str, decision: ApprovalStepStatus, comment: str | No
     approval = await _get_or_404(approval_id, db)
     if approval.status != ApprovalStatus.IN_PROGRESS:
         raise HTTPException(400, detail={"code": "ALREADY_DONE", "message": "이미 종결된 결재입니다"})
+    # 승인·반려는 **MASTER 만** 한다. 결재선에 다른 사람이 서 있어도 마찬가지다
+    if current.role != Role.MASTER:
+        raise HTTPException(403, detail={"code": "MASTER_ONLY", "message": "대표만 결재할 수 있습니다"})
     if approval.current_approver_id != current.id:
         raise HTTPException(403, detail={"code": "NOT_YOUR_TURN", "message": "결재 차례가 아닙니다"})
 

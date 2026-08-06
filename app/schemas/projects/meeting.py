@@ -37,4 +37,5 @@ class MeetingOut(CamelModel):
     author_id: str
     meeting_at: datetime
     created_at: datetime
+    updated_at: datetime  # 수정 시각 (onupdate) — 앱 '수정됨' 표시
     reactions: list[ReactionAgg] = Field(default_factory=list)  # §6.12 이모지 반응 집계

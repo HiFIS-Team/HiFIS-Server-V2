@@ -17,6 +17,8 @@ class EnvItem(UUIDMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     points: Mapped[int] = mapped_column(Integer, nullable=False)
     editable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 표시 순서 — 배점순이 아니라 고정 순서(매일 쓰는 세탁이 아래로 안 가도록). 작을수록 위.
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 class EnvTaskLog(UUIDMixin, TimestampMixin, Base):

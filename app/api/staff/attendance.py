@@ -28,6 +28,8 @@ from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
     AttendanceDayOut,
     AttendanceOut,
+    AttendanceRosterDayOut,
+    AttendanceRosterGroupOut,
     AttendanceScanRequest,
     LeaveBalanceOut,
     LeaveReject,
@@ -41,8 +43,25 @@ from app.services.scoring import accrue_score
 router = APIRouter(tags=["attendance"])
 
 # 근무 외 출근 자동 점수 (§6.9) — 기본 근무시간보다 이 분수 이상 이르거나 늦으면 인정, 각 +점수(하루 최대 2회).
-OFFHOURS_THRESHOLD_MIN = 30
+OFFHOURS_THRESHOLD_MIN = 60
 OFFHOURS_POINTS = 10
+
+# 야근 판정 — 설정 퇴근시간에서 이 분수를 넘기면 야근. 퇴근 스캔을 기다리지 않고
+# **시계로도** 잡는다(아직 일하는 중이면 '출근'이 아니라 '야근'이다).
+# 근무 외 출근 점수와 같은 값으로 둔다: 점수를 받는 날과 화면에 야근으로 뜨는 날이 갈리면 헷갈린다.
+OVERTIME_THRESHOLD_MIN = OFFHOURS_THRESHOLD_MIN
+
+# 조기퇴근 유예 — 퇴근시간보다 이 분수까지 일찍 찍은 건 그냥 퇴근으로 본다.
+# 정리하고 나오느라 몇 분 이른 사람까지 조기퇴근으로 부르면 매일 걸린다.
+EARLY_LEAVE_GRACE_MIN = 20
+
+# 자정을 넘겨 퇴근한 뒤 '퇴근'으로 남겨 두는 시간. 지나면 미출근으로 돌아간다.
+# (자정 전에 퇴근했으면 날짜가 바뀌는 순간 저절로 미출근이 된다)
+OVERNIGHT_GRACE_MIN = 60
+
+# 이 시각(KST) 전의 첫 스캔은 **어제 퇴근**으로 본다 — 야근이 자정을 넘긴 경우다.
+# 이보다 늦으면 평범한 출근 스캔이라 어제 기록을 건드리지 않는다.
+OVERNIGHT_CHECKOUT_BEFORE_MIN = 5 * 60
 
 
 def _hhmm_to_min(s: str) -> int:
@@ -56,25 +75,77 @@ def _kst_min(dt: datetime) -> int:
 
 
 def _attendance_status(
-    rec: Attendance, shift_start: str | None, shift_end: str | None, today: date
+    rec: Attendance, shift_start: str | None, shift_end: str | None, now_kst: datetime
 ) -> AttendanceStatus:
-    """근무시간 대비 판정(§6.9) — 정상/지각/조기퇴근. 근무시간 미설정이면 UNKNOWN.
+    """근무시간 대비 판정(§6.9) — 정상/지각/조기퇴근/야근. 근무시간 미설정이면 UNKNOWN.
 
     결근(근무일인데 기록 없음)은 근무 요일 스케줄이 없어 여기서 판정하지 않는다.
+    지각과 야근이 겹치면 **지각이 이긴다** — 값이 하나뿐이고 먼저 봐야 하는 쪽이다.
+
+    아직 퇴근을 안 찍었어도 **시계가 퇴근시간을 넘기면 야근**이다. 퇴근 스캔을
+    기다리면 밤 11시까지 남은 사람이 화면에서는 그냥 '출근'으로 보인다.
     """
     if not shift_start or not shift_end or rec.check_in is None:
         return AttendanceStatus.UNKNOWN
+    end_min = _hhmm_to_min(shift_end)
     late = _kst_min(rec.check_in) > _hhmm_to_min(shift_start)
     if rec.check_out is None:
-        return AttendanceStatus.IN_PROGRESS if rec.date >= today else AttendanceStatus.NO_CHECKOUT
-    early = _kst_min(rec.check_out) < _hhmm_to_min(shift_end)
+        if rec.date < now_kst.date():
+            return AttendanceStatus.NO_CHECKOUT
+        if _kst_min(now_kst) >= end_min + OVERTIME_THRESHOLD_MIN:
+            return AttendanceStatus.OVERTIME  # 아직 안 갔고 퇴근시간을 넘겼다
+        return AttendanceStatus.IN_PROGRESS
+    # 자정을 넘겨 찍었으면 하루를 더해야 '퇴근시간보다 몇 분 이른가/늦은가'가 나온다.
+    # 안 더하면 새벽 1시 퇴근이 0시 기준 90분이 되어 **조기퇴근**으로 잡힌다.
+    out_min = _kst_min(rec.check_out) + (
+        1440 if rec.check_out.astimezone(KST).date() > rec.date else 0
+    )
+    early = out_min < end_min - EARLY_LEAVE_GRACE_MIN
     if late and early:
         return AttendanceStatus.LATE_AND_EARLY
     if late:
         return AttendanceStatus.LATE
     if early:
         return AttendanceStatus.EARLY_LEAVE
+    if out_min >= end_min + OVERTIME_THRESHOLD_MIN:
+        return AttendanceStatus.OVERTIME
     return AttendanceStatus.NORMAL
+
+
+def _still_overnight(prev: Attendance | None, now_kst: datetime) -> bool:
+    """자정을 넘겨서도 아직 안 갔는가 — 그러면 오늘도 계속 **야근**이다.
+
+    날짜만 보고 미출근으로 밀면 밤새 일하는 사람이 자정에 사라진다.
+    [OVERNIGHT_CHECKOUT_BEFORE_MIN] 까지만 이어 준다 — 그 뒤의 스캔은 새 출근이라
+    (스캔 규칙과 같은 경계다) 계속 야근으로 두면 퇴근을 잊은 사람이 종일 남는다.
+    """
+    if prev is None or prev.check_in is None or prev.check_out is not None:
+        return False
+    return _kst_min(now_kst) < OVERNIGHT_CHECKOUT_BEFORE_MIN
+
+
+def _just_left_overnight(prev: Attendance | None, now_kst: datetime) -> bool:
+    """자정을 넘겨 퇴근한 직후인가 — 그 뒤 [OVERNIGHT_GRACE_MIN] 분은 '퇴근'으로 남긴다.
+
+    퇴근 스캔이 어제 기록에 붙어서, 그대로 두면 찍자마자 미출근으로 돌아간다.
+    """
+    if prev is None or prev.check_out is None:
+        return False
+    if prev.check_out.astimezone(KST).date() != now_kst.date():
+        return False  # 어제 안에 퇴근했다 — 날짜가 바뀌었으니 이미 미출근이다
+    return (now_kst - prev.check_out).total_seconds() <= OVERNIGHT_GRACE_MIN * 60
+
+
+def _absent_today(employee: Employee, now_kst: datetime) -> bool:
+    """오늘 근무일인데 스캔이 없을 때 결근으로 볼지 — 퇴근 시간이 지났으면 결근이다.
+
+    그 전에는 **미출근**(판정 없음)이다. 아침 9시에 결근으로 뜨면 아직 오는 중인
+    사람을 결근으로 부르는 셈이라, 본인이 설정한 근무시간이 다 지나야 찍는다.
+    근무시간을 설정 안 한 사람은 기준이 없어 판정하지 않는다.
+    """
+    if not employee.shift_end:
+        return False
+    return _kst_min(now_kst) > _hhmm_to_min(employee.shift_end)
 
 
 async def _award_offhours(
@@ -137,13 +208,28 @@ async def scan_attendance(
         )
     ).scalar_one_or_none()
 
+    # 야근이 자정을 넘긴 경우 — 새벽 첫 스캔은 **어제 퇴근**이다.
+    # 그냥 두면 새벽 1시 퇴근이 오늘 출근으로 잡혀 어제는 퇴근 누락으로 남는다.
+    overnight = False
+    if record is None and now_min < OVERNIGHT_CHECKOUT_BEFORE_MIN:
+        prev = (
+            await db.execute(
+                select(Attendance).where(
+                    Attendance.employee_id == target.id,
+                    Attendance.date == today - timedelta(days=1),
+                )
+            )
+        ).scalar_one_or_none()
+        if prev is not None and prev.check_in is not None and prev.check_out is None:
+            record, overnight = prev, True
+
     if record is None:  # 첫 스캔 = 출근
         record = Attendance(
             employee_id=target.id, date=today, check_in=now, source=AttendanceSource.BARCODE
         )
         db.add(record)
         action = "출근"
-        # 기본 출근보다 30분+ 이르게 왔으면 조기출근 자동 점수
+        # 기본 출근보다 1시간+ 이르게 왔으면 조기출근 자동 점수
         if target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
@@ -151,25 +237,37 @@ async def scan_attendance(
         if record.check_in is not None:
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
         action = "퇴근"
-        # 기본 퇴근보다 30분+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만)
-        if target.shift_end and now_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
-            await _award_offhours(db, target, today.isoformat(), "out", "초과 근무")
+        # 기본 퇴근보다 1시간+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만).
+        # 자정을 넘겼으면 하루를 더해야 '몇 분 늦었나'가 나온다. 점수는 그 근무일 몫이다.
+        out_min = now_min + (1440 if overnight else 0)
+        if target.shift_end and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
+            await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
     await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
     await db.commit()
     await db.refresh(record)
     out = AttendanceOut.model_validate(record)
-    out.status = _attendance_status(record, target.shift_start, target.shift_end, now_kst.date())
+    out.status = _attendance_status(record, target.shift_start, target.shift_end, now_kst)
     return out
 
 
 @router.get("/attendance", response_model=list[AttendanceOut])
 async def list_attendance(
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     month: str | None = Query(None),
 ) -> list[AttendanceOut]:
+    # 권한 가드(§60) — 캘린더·연차잔여와 동일. MEMBER 는 본인 근태만(남의 employeeId·미지정 모두 본인 고정).
+    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        employee_id = current.id
+    elif employee_id and employee_id != current.id and current.role == Role.MANAGER:
+        target = await db.get(Employee, employee_id)
+        if target is None or target.deleted_at is not None:
+            raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+        if target.branch_id != current.branch_id:
+            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
     stmt = select(Attendance)
     if scope:
         stmt = stmt.join(Employee, Employee.id == Attendance.employee_id).where(
@@ -193,12 +291,12 @@ async def list_attendance(
             )
         ).all():
             shifts[eid] = (ss, se)
-    today = datetime.now(timezone.utc).astimezone(KST).date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
     out: list[AttendanceOut] = []
     for r in rows:
         ss, se = shifts.get(r.employee_id, (None, None))
         o = AttendanceOut.model_validate(r)
-        o.status = _attendance_status(r, ss, se, today)
+        o.status = _attendance_status(r, ss, se, now_kst)
         out.append(o)
     return out
 
@@ -226,7 +324,8 @@ async def attendance_calendar(
 
     start, end = period_range(month)
     start_d, end_d = start.date(), end.date()
-    today = datetime.now(timezone.utc).astimezone(KST).date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    today = now_kst.date()
     limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(오늘까지)
 
     recs = {
@@ -270,7 +369,7 @@ async def attendance_calendar(
             out.append(
                 AttendanceDayOut(
                     date=day,
-                    status=_attendance_status(rec, target.shift_start, target.shift_end, today),
+                    status=_attendance_status(rec, target.shift_start, target.shift_end, now_kst),
                     check_in=rec.check_in,
                     check_out=rec.check_out,
                     work_minutes=rec.work_minutes,
@@ -287,10 +386,106 @@ async def attendance_calendar(
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
             elif day < today:  # 근무일인데 과거·기록없음·휴가없음 → 결근
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.ABSENT))
-            # 오늘 근무일 + 기록 없음 → 아직 결근 아님(스캔 대기) → 생략
+            elif _absent_today(target, now_kst):  # 오늘 — 퇴근 시간까지 안 찍혔으면 결근
+                out.append(AttendanceDayOut(date=day, status=AttendanceStatus.ABSENT))
+            # 아직 근무 시간 안 → 미출근(판정 없음) → 생략
         # work_days 미설정이면 기록 없는 날은 판정 불가 → 생략
         day += timedelta(days=1)
     return out
+
+
+@router.get(
+    "/attendance/calendar/all",
+    response_model=list[AttendanceRosterDayOut],
+    dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))],
+)
+async def attendance_calendar_all(
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_scope),
+    month: str = Query(...),
+) -> list[AttendanceRosterDayOut]:
+    """전사 월 캘린더 — 하루마다 **누가 어떤 상태였는지**를 이름으로 묶어 준다.
+
+    사람별 캘린더(`/attendance/calendar`)와 **같은 판정**을 전 직원에게 돌린 것이다.
+    사람마다 부르면 인원수만큼 요청이 나가서 여기서 한 번에 준다.
+    휴무·판정불가는 담지 않는다 — 대표 달력이 그릴 자리가 없다.
+    MANAGER 는 branch_scope 가 자기 지점으로 좁혀 준다.
+    """
+    start, end = period_range(month)
+    start_d, end_d = start.date(), end.date()
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    today = now_kst.date()
+    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(사람별 캘린더와 같다)
+
+    emp_stmt = select(Employee).where(Employee.deleted_at.is_(None))
+    if scope:
+        emp_stmt = emp_stmt.where(Employee.branch_id == scope)
+    employees = list((await db.execute(emp_stmt)).scalars().all())
+    if not employees:
+        return []
+    emp_ids = [e.id for e in employees]
+
+    # 기록·휴가를 통째로 한 번씩 받아 사람별로 나눈다 (사람마다 질의하지 않는다)
+    recs: dict[str, dict[date, Attendance]] = {eid: {} for eid in emp_ids}
+    for r in (
+        await db.execute(
+            select(Attendance).where(
+                Attendance.employee_id.in_(emp_ids),
+                Attendance.date >= start_d,
+                Attendance.date < end_d,
+            )
+        )
+    ).scalars().all():
+        recs[r.employee_id][r.date] = r
+
+    leaves: dict[str, list[LeaveRequest]] = {eid: [] for eid in emp_ids}
+    for lv in (
+        await db.execute(
+            select(LeaveRequest).where(
+                LeaveRequest.employee_id.in_(emp_ids),
+                LeaveRequest.status == LeaveStatus.APPROVED,
+                LeaveRequest.start_date < end_d,
+                LeaveRequest.end_date >= start_d,
+            )
+        )
+    ).scalars().all():
+        leaves[lv.employee_id].append(lv)
+
+    # 날짜 → 상태 → 이름들. 화면 순서는 앱이 정하므로 여기서는 만난 순으로 담는다.
+    board: dict[date, dict[AttendanceStatus, list[str]]] = {}
+    for emp in employees:
+        mine = recs[emp.id]
+        my_leaves = leaves[emp.id]
+        work_days = set(emp.work_days or [])
+        day = start_d
+        while day < limit_d:
+            rec = mine.get(day)
+            on_leave = next((lv for lv in my_leaves if lv.start_date <= day <= lv.end_date), None)
+            status: AttendanceStatus | None = None
+            if rec is not None:
+                status = _attendance_status(rec, emp.shift_start, emp.shift_end, now_kst)
+                if status == AttendanceStatus.UNKNOWN:
+                    status = None  # 근무시간 미설정 — 그릴 자리가 없다
+            elif on_leave is not None:
+                status = AttendanceStatus.ON_LEAVE
+            elif work_days and day.isoweekday() in work_days:
+                if day < today or _absent_today(emp, now_kst):
+                    status = AttendanceStatus.ABSENT
+                # 오늘 근무시간 안 → 미출근. 캘린더에는 안 담는다(카드가 보여준다)
+            if status is not None:
+                board.setdefault(day, {}).setdefault(status, []).append(emp.name)
+            day += timedelta(days=1)
+
+    return [
+        AttendanceRosterDayOut(
+            date=day,
+            groups=[
+                AttendanceRosterGroupOut(status=status, names=names)
+                for status, names in board[day].items()
+            ],
+        )
+        for day in sorted(board)
+    ]
 
 
 # ---------- 휴가 ----------
@@ -335,7 +530,12 @@ async def list_leaves(
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     status: LeaveStatus | None = Query(None),
+    current: Employee = Depends(get_current_user),
 ) -> list[LeaveRequest]:
+    # 일반 직원은 **본인 것만** — 남의 휴가 사유까지 보이면 안 된다.
+    # `/attendance` 와 같은 규칙이다 (403 대신 조용히 본인으로 고정).
+    if current.role == Role.MEMBER:
+        employee_id = current.id
     stmt = select(LeaveRequest)
     if scope:
         stmt = stmt.join(Employee, Employee.id == LeaveRequest.employee_id).where(

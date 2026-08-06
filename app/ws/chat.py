@@ -2,10 +2,14 @@
 
 연결: ws://…/ws/chat?token=<accessToken> (브라우저 WS 는 헤더 못 넣어 쿼리로 JWT).
 클라 → 서버 프레임:
-  { "type": "message", "roomId", "body", "attachments"? }
+  { "type": "message", "roomId", "body", "attachments"?, "replyToId"? }
   { "type": "typing",  "roomId", "isTyping" }
   { "type": "read",    "roomId" }
 서버 → 클라: post_message/broadcast_event 가 보내는 {type, roomId, ...}.
+  { "type": "message", "roomId", "message": MessageOut }
+  { "type": "typing",  "roomId", "employeeId", "isTyping" }
+  { "type": "read",    "roomId", "employeeId", "lastReadAt" }
+  { "type": "delete",  "roomId", "messageId" }   — 전송 취소
 """
 
 from datetime import datetime, timezone
@@ -67,6 +71,7 @@ async def _handle(employee_id: str, data: dict) -> None:
                 await post_message(
                     db, room_id=room_id, sender_id=employee_id,
                     body=body, attachments=data.get("attachments") or [],
+                    reply_to_id=data.get("replyToId"),
                 )
         elif typ == "typing":
             await broadcast_event(
