@@ -510,7 +510,16 @@ async def generate_branch_payslips(
         # 지급일 규칙이 사람마다 다르다 — 급여 주기와 측정 개시일이 여기서 갈린다
         payday = await get_payday_policy(db, employee.branch_id, employee.rank, start)
         if not payroll_started(year_month, payday):
-            continue  # 측정 개시 전 주기 — 앱을 켜기 전 실적은 급여로 안 친다
+            # 측정 개시 전 주기 — 앱을 켜기 전 실적은 급여로 안 친다.
+            #
+            # **매출 기여 점수(SALES)도 같이 빠진다** (적립이 이 루프 아래에 있다).
+            # 곁가지가 아니라 **그렇게 하기로 정한 것이다 (2026-08-06)** —
+            # 매출성과 점수는 돈에서 나온 값이라 급여와 같은 날부터 시작한다.
+            # 개시 전 매출도 점수로 쌓고 싶어지면 이 적립을 마감 밖으로 빼야 한다.
+            #
+            # 랭킹의 '매출' 탭은 영향이 없다 — 거기는 점수 원장이 아니라
+            # 등록권 결제액을 직접 합산한다 (`ranking_board.py`).
+            continue
         if employee.employment_type == EmploymentType.PART_TIME:
             # 알바는 시급제 — 직급 정책을 안 탄다 (PT 인센티브도 없다)
             wage = await get_hourly_wage(db, employee.branch_id, start)
