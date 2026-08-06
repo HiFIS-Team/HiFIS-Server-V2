@@ -28,7 +28,9 @@ from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.payroll import (
     NoScheduleError,
+    apply_incentive_override,
     build_hourly_payslip_data,
+    can_adjust_incentive,
     build_payslip_data,
     compute_payday,
     generate_branch_payslips,
@@ -116,6 +118,7 @@ async def my_accrued(
         session_signs=0,
         new_sessions=0,
         renewal_sessions=0,
+        can_adjust=False,
     )
     # 아직 재기 시작 전이면 0 이다 — 앱을 켜기 전 실적을 쌓아 보여주면 안 된다
     if not payroll_started(year_month, payday):
@@ -126,6 +129,7 @@ async def my_accrued(
     if policy is None:
         return empty
     data = await build_payslip_data(db, current, year_month, policy, payday)
+    can_adjust = can_adjust_incentive(current, policy)
     return AccruedOut(
         year_month=year_month,
         period_start=start.date(),
@@ -137,6 +141,7 @@ async def my_accrued(
         session_signs=data["basis"]["session_signs"],
         new_sessions=len(data["basis"]["new_sales"]),
         renewal_sessions=len(data["basis"]["renewal_sales"]),
+        can_adjust=can_adjust,
     )
 
 
@@ -153,6 +158,16 @@ async def submit_my_payslip(
         raise HTTPException(403, detail={"code": "NOT_PAYDAY", "message": "급여 지급일에만 신청할 수 있어요"})
     if not payroll_started(payload.year_month, payday):
         raise HTTPException(400, detail={"code": "PAYROLL_NOT_STARTED", "message": "아직 급여를 재기 시작한 기간이 아니에요"})
+    rank_policy = await get_rank_policy(db, current.rank, current.branch_id, start)
+    adjusting = payload.incentive_new is not None or payload.incentive_renewal is not None
+    # 커미션을 고쳐 보낼 수 있는 사람인지 먼저 본다 — 알바·FC 는 고칠 자리가 없다.
+    # 조용히 무시하면 **적어 낸 금액과 신청된 금액이 달라진다.**
+    if adjusting and not can_adjust_incentive(current, rank_policy):
+        raise HTTPException(
+            400,
+            detail={"code": "NO_INCENTIVE", "message": "PT 커미션이 없는 급여라 금액을 고칠 수 없어요"},
+        )
+
     payslip = (
         await db.execute(
             select(Payslip).where(
@@ -171,13 +186,30 @@ async def submit_my_payslip(
             except NoScheduleError:
                 raise HTTPException(400, detail={"code": "NO_SCHEDULE", "message": "근무 시간을 설정해야 급여를 신청할 수 있어요"})
         else:
-            policy = await get_rank_policy(db, current.rank, current.branch_id, start)
-            if policy is None:
+            if rank_policy is None:
                 raise HTTPException(400, detail={"code": "NO_RANK_POLICY", "message": "직급 급여 정책이 없어 신청할 수 없어요"})
-            data = await build_payslip_data(db, current, payload.year_month, policy, payday)
+            data = await build_payslip_data(db, current, payload.year_month, rank_policy, payday)
+        data = apply_incentive_override(
+            data, current, payload.incentive_new, payload.incentive_renewal
+        )
         payslip = Payslip(employee_id=current.id, year_month=payload.year_month, **data)
         db.add(payslip)
         await db.flush()
+    elif adjusting:
+        # 마감으로 이미 만들어져 있던 명세서 — 고친 값만 얹고 총액을 다시 센다
+        data = apply_incentive_override(
+            {
+                "base_salary": payslip.base_salary,
+                "incentive_new": payslip.incentive_new,
+                "incentive_renewal": payslip.incentive_renewal,
+                "other_allowances": payslip.other_allowances,
+            },
+            current,
+            payload.incentive_new,
+            payload.incentive_renewal,
+        )
+        for field, value in data.items():
+            setattr(payslip, field, value)
     if payslip.status in (PayslipStatus.SUBMITTED, PayslipStatus.APPROVED, PayslipStatus.PAID):
         raise HTTPException(400, detail={"code": "ALREADY_SUBMITTED", "message": "이미 제출된 명세서예요"})
     payslip.status = PayslipStatus.SUBMITTED

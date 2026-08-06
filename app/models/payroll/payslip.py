@@ -35,6 +35,16 @@ class Payslip(UUIDMixin, TimestampMixin, Base):
     base_salary: Mapped[int] = mapped_column(Integer, nullable=False)
     incentive_new: Mapped[int] = mapped_column(Integer, nullable=False)
     incentive_renewal: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: 서버가 계산한 원래 커미션 — 위 두 값과 다르면 본인이 고쳐서 신청한 것이다.
+    #:
+    #: 고친 값으로 덮어써 버리면 **무엇을 승인하는지 아무도 모른다.**
+    #: 자동 집계가 빠뜨린 수업(대타·기록 누락)을 바로잡으라고 연 자리라,
+    #: 원래 값이 남아야 결재하는 쪽이 차이를 보고 판단한다.
+    #: (null = 이 규칙이 생기기 전에 만들어진 명세서)
+    incentive_new_auto: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    incentive_renewal_auto: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     other_allowances: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     gross: Mapped[int] = mapped_column(Integer, nullable=False)
     deduction_method: Mapped[DeductionMethod] = mapped_column(

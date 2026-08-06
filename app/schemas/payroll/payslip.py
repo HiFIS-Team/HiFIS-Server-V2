@@ -17,6 +17,16 @@ class PayslipSubmit(CamelModel):
     year_month: str
     note: str | None = None  # 특이사항(선택) — 지각 사유·추가 근무 설명 등
 
+    #: 본인이 고친 PT 커미션 — 안 주면 서버 계산값 그대로.
+    #:
+    #: 자동 집계가 빠뜨린 수업(대타·기록 누락)을 신청 때 바로잡으라고 연다.
+    #: **기본급은 못 고친다** — 직급 정책에서 나오는 값이라 본인이 정할 것이 아니다.
+    #: 알바(시급제)와 커미션 요율이 0인 직급(FC)은 고칠 자리 자체가 없어 400 이다.
+    #: 원래 계산값은 `incentiveNewAuto`·`incentiveRenewalAuto` 로 남아서
+    #: 결재하는 쪽이 얼마를 고쳤는지 본다.
+    incentive_new: int | None = Field(default=None, ge=0)
+    incentive_renewal: int | None = Field(default=None, ge=0)
+
 
 class PayslipReject(CamelModel):
     reason: str
@@ -47,6 +57,10 @@ class AccruedOut(CamelModel):
     #: 화면이 '워크인 N회' 를 붙이는 자리라 진행 중일 때도 있어야 한다
     new_sessions: int
     renewal_sessions: int
+    #: 신청할 때 본인이 커미션을 고칠 수 있는 사람인가 (알바·FC 는 false).
+    #: 앱이 이 값으로 입력칸을 열지 정한다 — 앱이 따로 판정하면 서버와 어긋나
+    #: 못 고치는 사람에게 칸이 열리고 제출에서 400 이 난다.
+    can_adjust: bool
 
 
 class DeductionLine(CamelModel):
@@ -89,6 +103,11 @@ class PayslipOut(CamelModel):
     base_salary: int
     incentive_new: int
     incentive_renewal: int
+    #: 서버가 계산한 원래 커미션 — 위 두 값과 다르면 **본인이 고쳐서 신청한 것**이다.
+    #: 결재하는 쪽이 무엇을 승인하는지 알아야 해서 같이 싣는다.
+    #: (규칙이 생기기 전 명세서는 null)
+    incentive_new_auto: int | None = None
+    incentive_renewal_auto: int | None = None
     other_allowances: int
     gross: int
     deduction_method: DeductionMethod

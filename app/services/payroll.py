@@ -187,6 +187,51 @@ def due_year_month(today: date, policy: PaydayPolicy | None = None) -> str | Non
     return None
 
 
+def can_adjust_incentive(employee: Employee, policy: RankPolicy | None) -> bool:
+    """본인이 PT 커미션을 고쳐서 신청할 수 있는 사람인가.
+
+    자동 집계가 빠뜨린 수업(대타·기록 누락)을 바로잡으라고 연 자리다.
+    **알바는 시급제라 커미션이 없고, FC 는 요율이 0** 이라 고칠 것이 없다.
+    """
+    if employee.employment_type == EmploymentType.PART_TIME:
+        return False
+    if policy is None:
+        return False
+    return policy.new_rate > 0 or policy.renewal_rate > 0
+
+
+def apply_incentive_override(
+    data: dict,
+    employee: Employee,
+    incentive_new: int | None,
+    incentive_renewal: int | None,
+) -> dict:
+    """본인이 고친 커미션을 얹고 총액·공제를 다시 센다.
+
+    `incentive_*_auto` 는 **안 건드린다** — 원래 계산값이 남아야 결재하는 쪽이
+    얼마를 고쳤는지 본다. 기본급은 직급 정책에서 나오는 값이라 손대지 않는다.
+    """
+    if incentive_new is None and incentive_renewal is None:
+        return data
+    if incentive_new is not None:
+        data["incentive_new"] = incentive_new
+    if incentive_renewal is not None:
+        data["incentive_renewal"] = incentive_renewal
+    gross = (
+        data["base_salary"]
+        + data["incentive_new"]
+        + data["incentive_renewal"]
+        + data["other_allowances"]
+    )
+    deductions = _deductions(gross, employee.deduction_method)
+    total_deduction = sum(line["amount"] for line in deductions)
+    data["gross"] = gross
+    data["deductions"] = deductions
+    data["total_deduction"] = total_deduction
+    data["net"] = gross - total_deduction
+    return data
+
+
 def _deductions(gross: int, method: DeductionMethod) -> list[dict]:
     if method == DeductionMethod.FREELANCE:
         return [{"label": "사업소득세(3.3%)", "amount": round(gross * FREELANCE_RATE)}]
@@ -316,6 +361,8 @@ async def build_hourly_payslip_data(
         "base_salary": gross,
         "incentive_new": 0,
         "incentive_renewal": 0,
+        "incentive_new_auto": 0,
+        "incentive_renewal_auto": 0,
         "other_allowances": 0,
         "gross": gross,
         "deduction_method": employee.deduction_method,
@@ -409,6 +456,9 @@ async def build_payslip_data(
         "base_salary": policy.base_salary,
         "incentive_new": incentive_new,
         "incentive_renewal": incentive_renewal,
+        # 신청할 때 본인이 고칠 수 있어서 원래 계산값을 따로 남긴다 (§76)
+        "incentive_new_auto": incentive_new,
+        "incentive_renewal_auto": incentive_renewal,
         "other_allowances": other_allowances,
         "gross": gross,
         "deduction_method": employee.deduction_method,
