@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     apns_key_id: str = ""
     apns_team_id: str = ""
     apns_private_key: str = ""
-    apns_topic: str = "app.hifis.hifisApp"  # 번들 ID (네 플랫폼 공통)
+    apns_topic: str = "app.hifis.hifis"  # 번들 ID (네 플랫폼 공통)
 
     # 이메일 발송(비밀번호 재설정 인증번호 등, §2.3) — smtp_host 비면 로그 스텁으로 폴백(개발).
     # 무료 SMTP 계정 하나면 충분(예: Gmail/Naver 587 STARTTLS).

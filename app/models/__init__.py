@@ -15,6 +15,7 @@ from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.board.event import Event
 from app.models.auth.invite import InviteKey
+from app.models.auth.scan_terminal import ScanTerminal
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.projects.meeting import Meeting
 from app.models.members.member import Member
@@ -58,6 +59,7 @@ __all__ = [
     "SupplyOrder",
     "Event",
     "InviteKey",
+    "ScanTerminal",
     "KindnessSurvey",
     "Meeting",
     "Member",

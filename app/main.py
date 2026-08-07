@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app.core.ratelimit import limiter
 
-from app.api.auth import auth, invite_keys
+from app.api.auth import auth, invite_keys, scan_terminals
 from app.api.board import approvals, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.legal import consents
@@ -96,6 +96,7 @@ app.include_router(employees.router)
 app.include_router(home.router)  # GET /me/home (개인 홈 요약)
 app.include_router(branches.router)
 app.include_router(invite_keys.router)
+app.include_router(scan_terminals.router)  # 지점 출퇴근 단말 토큰 (MASTER)
 app.include_router(attendance.router)
 # sales — 회원·매출
 app.include_router(members.router)
