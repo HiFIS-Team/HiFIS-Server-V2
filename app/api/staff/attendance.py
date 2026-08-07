@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.deps import ScanActor, branch_scope, get_current_user, require_role, scan_actor
 from app.core.periods import KST, period_range
 from app.db.session import get_db
 from app.enums import (
@@ -177,9 +177,15 @@ async def _award_offhours(
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
     payload: AttendanceScanRequest | None = Body(default=None),
-    current: Employee = Depends(get_current_user),
+    actor: ScanActor = Depends(scan_actor),
     db: AsyncSession = Depends(get_db),
 ) -> AttendanceOut:
+    """사람이 부를 수도 있고 **지점 단말**이 부를 수도 있다.
+
+    단말은 `X-Terminal-Token` 헤더로 온다 (카운터 PC 에서 화면 없이 도는
+    프로그램). 어느 쪽이든 **자기 지점 직원만** 찍을 수 있고, 전 지점은
+    MASTER·ADMIN 뿐이다.
+    """
     # 사번(emp_no) 스캔이면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
     if payload is not None and payload.code:
         normalized = payload.code.strip().replace("-", "")  # 하이픈 유무 모두 허용
@@ -191,10 +197,13 @@ async def scan_attendance(
         )
         if target is None:
             raise HTTPException(404, detail={"code": "EMP_NO_NOT_FOUND", "message": "등록되지 않은 사번입니다"})
-        if current.role not in (Role.MASTER, Role.ADMIN) and target.branch_id != current.branch_id:
+        if not actor.all_branches and target.branch_id != actor.branch_id:
             raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 스캔할 수 없습니다"})
+    elif actor.employee is not None:
+        target = actor.employee
     else:
-        target = current
+        # 단말에는 '본인'이 없다 — 사번을 안 주면 누구를 찍을지 알 수 없다
+        raise HTTPException(400, detail={"code": "CODE_REQUIRED", "message": "사번이 필요합니다"})
 
     now = datetime.now(timezone.utc)
     now_kst = now.astimezone(KST)
