@@ -44,6 +44,7 @@ async def create_invite_key(
         branch_id=payload.branch_id,
         role=payload.role,
         rank=payload.rank,
+        employment_type=payload.employment_type,
         team=payload.team,
         issued_by_id=current.id,
         expires_at=expires_at,
