@@ -63,6 +63,9 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
         branch_id=key.branch_id,
         role=key.role,
         rank=key.rank,
+        # 알바로 뽑았으면 알바로 들어온다. 들어온 뒤 정규직으로 올리거나
+        # 퇴사시키는 건 대표(MASTER)가 `PATCH /employees/{id}` 로 판단한다.
+        employment_type=key.employment_type,
         team=key.team,
         emp_no=await unique_emp_no(db),
         avatar_color=await next_avatar_color(db),  # 팔레트 분산 배정(§2.2)
