@@ -1,6 +1,6 @@
 [project]
 name = "hifis-server"
-version = "0.4.0"
+version = "0.5.0"
 description = "HiFIS 직원 관리 플랫폼 백엔드 (FastAPI · 홈서버 self-host)"
 requires-python = ">=3.12"
 
