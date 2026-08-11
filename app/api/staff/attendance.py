@@ -10,7 +10,14 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import ScanActor, branch_scope, get_current_user, require_role, scan_actor
+from app.core.deps import (
+    ScanActor,
+    branch_filter,
+    branch_scope,
+    get_current_user,
+    require_role,
+    scan_actor,
+)
 from app.core.periods import KST, period_range
 from app.db.session import get_db
 from app.enums import (
@@ -429,7 +436,9 @@ async def attendance_calendar(
 )
 async def attendance_calendar_all(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
+    # 앱 헤더의 지점 고르개가 쓴다 — MASTER·ADMIN 만 고를 수 있고
+    # MANAGER 는 뭘 넣든 본인 지점으로 고정된다 (`branch_filter`).
+    scope: str | None = Depends(branch_filter),
     month: str = Query(...),
 ) -> list[AttendanceRosterDayOut]:
     """전사 월 캘린더 — 하루마다 **누가 어떤 상태였는지**를 이름으로 묶어 준다.
