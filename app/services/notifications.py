@@ -14,8 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.enums import EmployeeStatus, Role
 from app.models.chat.device_token import DeviceToken
 from app.models.chat.notification import Notification, PushSubscription
+from app.models.staff.employee import Employee
 from app.services import apns
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,31 @@ except ImportError:  # pragma: no cover
 
 def _push_enabled() -> bool:
     return _PUSH_AVAILABLE and bool(settings.vapid_private_key)
+
+
+async def boss_ids(db: AsyncSession, *, exclude: str | None = None) -> list[str]:
+    """전사 상황 알림을 받는 사람 — **MASTER · ADMIN** (2026-08-11 대표 결정).
+
+    출퇴근·결근·프로젝트·회의록·인사처럼 **남의 일**을 알리는 자리에서 쓴다.
+    본인 일을 본인에게 알리는 것들(결재·급여·휴가 결과)은 여기를 안 쓴다.
+
+    [exclude] 는 그 일을 **직접 한 사람**이다. 대표가 프로젝트를 만들고 자기가
+    "새 프로젝트가 만들어졌어요" 를 받으면 이상하다.
+    """
+    rows = await db.scalars(
+        select(Employee.id).where(
+            Employee.role.in_([Role.MASTER, Role.ADMIN]),
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    return [eid for eid in rows if eid != exclude]
+
+
+async def notify_bosses(db: AsyncSession, *, exclude: str | None = None, **text) -> None:
+    """[boss_ids] 전원에게 같은 알림 — 부르는 쪽이 매번 루프를 돌지 않게."""
+    for eid in await boss_ids(db, exclude=exclude):
+        await notify(db, employee_id=eid, **text)
 
 
 async def notify(

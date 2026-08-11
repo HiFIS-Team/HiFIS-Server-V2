@@ -24,9 +24,9 @@ from app.schemas.scoring.score import (
     ScoreEventOut,
     ScoreSummary,
 )
-from app.services.ranking import kind_conditions
+from app.services.ranking import compute_ranking, kind_conditions
 from app.services.ranking_board import METRICS, build_board, rank_board
-from app.services.scoring import accrue_score
+from app.services.scoring import accrue_score, scores_apply_to
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
 
@@ -62,24 +62,23 @@ async def ranking(
 ) -> list[RankingItem]:
     # 랭킹은 '전사 통합'(전 지점) — 전 인원을 한 줄로 세운다(멤버·매니저 모두 동일한 통합 랭킹).
     # 특정 지점 랭킹만 보려면 branchId 로 필터. (지점 스코프를 걸지 않는 이유: §branch_scope 주석)
-    total = func.coalesce(func.sum(ScoreEvent.points), 0).label("points")
-    stmt = select(Employee.id, Employee.name, total).join(
-        ScoreEvent, ScoreEvent.employee_id == Employee.id
-    )
+    #
+    # **질의를 여기서 다시 짜지 않는다.** 예전에는 `compute_ranking` 과 똑같은 것을
+    # 한 벌씩 갖고 있어서, 대표·관리자를 빼는 규칙을 저쪽에만 넣었더니 화면에는
+    # 그대로 떴다 (실제로 겪었다). 세는 곳은 한 군데다.
+    #
     # kind(랭킹 탭)가 category 보다 우선. OVERALL=필터 없음, SALES=CONTRIB 중 sales:* 만.
-    if kind is not None:
-        stmt = stmt.where(*kind_conditions(kind))
-    elif category is not None:
-        stmt = stmt.where(ScoreEvent.category == category)
-    if period:
-        stmt = stmt.where(ScoreEvent.period == period)
-    if branch_id:
-        stmt = stmt.where(ScoreEvent.branch_id == branch_id)
-    stmt = stmt.group_by(Employee.id, Employee.name).order_by(total.desc())
-    rows = (await db.execute(stmt)).all()
+    rows = await compute_ranking(
+        db, kind=kind, category=category, period=period, branch_id=branch_id
+    )
     return [
-        RankingItem(rank=i + 1, employee_id=row.id, name=row.name, points=row.points)
-        for i, row in enumerate(rows)
+        RankingItem(
+            rank=row["rank"],
+            employee_id=row["employee_id"],
+            name=row["name"],
+            points=row["points"],
+        )
+        for row in rows
     ]
 
 
@@ -145,6 +144,11 @@ async def create_score(
     employee = await db.get(Employee, payload.employee_id)
     if employee is None:
         raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원이 존재하지 않습니다"})
+    if not scores_apply_to(employee):
+        raise HTTPException(
+            400,
+            detail={"code": "NO_SCORE_TARGET", "message": "대표·관리자에게는 점수를 매기지 않습니다"},
+        )
     event = await accrue_score(
         db,
         employee_id=employee.id,

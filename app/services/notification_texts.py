@@ -173,3 +173,113 @@ def ranking_drop(label: str, overtaker_text: str, old_rank: int, new_rank: int) 
 
 def ranking_change_admin(label: str, summary: str) -> dict:
     return {"type": "RANKING", "title": f"{label} 순위 변동", "body": summary, "link": "/ranking"}
+
+
+# ── 대표·관리자에게 가는 전사 알림 ──
+#
+# 위의 것들은 **본인 일**을 본인에게 알린다. 아래는 **남의 일**을 대표·관리자에게
+# 알리는 것이라 성격이 다르다. 받는 사람은 `notifications.boss_ids()` 가 정한다.
+#
+# 출퇴근은 사람 수 × 2 라 하루 수십 번 울린다 (2026-08-11 대표 결정 — 찍을 때마다
+# 한 건씩). 줄여야 할 일이 생기면 문구가 아니라 **부르는 쪽**을 손봐야 한다.
+def staff_attendance(name: str, action: str, when: datetime, note: str | None = None) -> dict:
+    # action = "출근" | "퇴근", note = "지각" 처럼 **정상이 아닐 때만**
+    body = f"{when:%H:%M}"
+    if note:
+        body += f" · {note}"
+    return {"type": "ATTENDANCE", "title": f"{name} {action}", "body": body, "link": "/attendance"}
+
+
+def staff_absent(name: str) -> dict:
+    return {
+        "type": "ATTENDANCE",
+        "title": f"{name} 결근",
+        "body": "퇴근 시간이 지나도록 출근 기록이 없어요",
+        "link": "/attendance",
+    }
+
+
+#: 휴가 종류 → 사람이 읽는 말
+_LEAVE_LABELS = {"ANNUAL": "연차", "HALF": "반차", "SICK": "병가", "FIELD": "외근", "ETC": "기타"}
+
+
+def leave_label(leave_type, half_period=None) -> str:
+    if str(leave_type) == "HALF" and half_period:
+        return f"{'오전' if str(half_period) == 'AM' else '오후'} 반차"
+    return _LEAVE_LABELS.get(str(leave_type), "휴가")
+
+
+def leave_requested(name: str, kind: str, start_date, end_date) -> dict:
+    period = f"{start_date}" if start_date == end_date else f"{start_date} ~ {end_date}"
+    return {
+        "type": "LEAVE",
+        "title": "휴가 신청이 올라왔어요",
+        "body": f"{name} · {kind} · {period}",
+        "link": "/attendance",
+    }
+
+
+def project_created(project_title: str, author_name: str, project_id: str | None = None) -> dict:
+    return {
+        "type": "PROJECT",
+        "title": "새 프로젝트가 만들어졌어요",
+        "body": f"{project_title} · {author_name}",
+        "link": _project_link(project_id),
+    }
+
+
+def project_completed(project_title: str, project_id: str | None = None) -> dict:
+    return {
+        "type": "PROJECT",
+        "title": "프로젝트가 완료됐어요",
+        "body": project_title,
+        "link": _project_link(project_id),
+    }
+
+
+def project_overdue_admin(project_title: str, who: str, project_id: str | None = None) -> dict:
+    return {
+        "type": "PROJECT",
+        "title": "프로젝트가 누락됐어요",
+        "body": f"{project_title} · {who}",
+        "link": _project_link(project_id),
+    }
+
+
+def meeting_created(meeting_title: str, author_name: str, meeting_id: str) -> dict:
+    return {
+        "type": "MEETING",
+        "title": "새 회의록이 올라왔어요",
+        "body": f"{meeting_title} · {author_name}",
+        "link": f"/meetings/{meeting_id}",
+    }
+
+
+#: 직급 → 사람이 읽는 말 (앱 `Rank.label` 과 같은 말을 쓴다)
+_RANK_LABELS = {
+    "TRAINER": "트레이너",
+    "FC": "FC",
+    "MARKETER": "마케터",
+    "TEAM_LEAD": "팀장",
+    "STORE_MANAGER": "점장",
+    "DEVELOPER": "개발자",
+    "CEO": "대표",
+}
+
+
+def rank_label(rank) -> str | None:
+    return _RANK_LABELS.get(str(rank))
+
+
+def employee_joined(name: str, branch_name: str | None, rank_label: str | None) -> dict:
+    detail = " · ".join(x for x in (branch_name, rank_label) if x)
+    return {
+        "type": "STAFF",
+        "title": "새 직원이 가입했어요",
+        "body": f"{name}{f' · {detail}' if detail else ''}",
+        "link": "/staff",
+    }
+
+
+def employee_resigned(name: str) -> dict:
+    return {"type": "STAFF", "title": "퇴사 처리됐어요", "body": name, "link": "/staff"}

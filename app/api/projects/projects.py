@@ -41,7 +41,7 @@ from app.schemas.projects.project_request import (
     ProjectRequestReject,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify
+from app.services.notifications import notify, notify_bosses
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(get_current_user)])
@@ -161,8 +161,16 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
                 source_ref_id=project.id,
                 reason="프로젝트 완료",
             )
+        # 대표·관리자에게 완료를 알린다 (2026-08-11 대표 요청).
+        # **한 번만** — 이 함수는 진행률을 건드릴 때마다 불려서, 표시가 없으면
+        # 완료된 프로젝트를 고칠 때마다 같은 알림이 다시 나간다.
+        if project.completed_notified_at is None:
+            project.completed_notified_at = datetime.now(timezone.utc)
+            await notify_bosses(db, **ntext.project_completed(project.title, project.id))
         return
 
+    # 100% 아래로 내려갔다 — 다시 완료하면 그때 또 알린다
+    project.completed_notified_at = None
     for event in existing:
         if event.created_by_id is None:  # 사람이 매긴 점수는 남긴다
             await db.delete(event)
@@ -253,6 +261,9 @@ async def create_project(
     db.add(project)
     await db.flush()
     await _log_activity(db, project.id, current.id, ProjectActivityKind.CREATED, "프로젝트를 만들었어요")
+    await notify_bosses(
+        db, exclude=current.id, **ntext.project_created(project.title, current.name, project.id)
+    )
     await _settle_completion(db, project)  # 드물지만 처음부터 100% 로 만드는 경우
     await db.commit()
     await db.refresh(project)

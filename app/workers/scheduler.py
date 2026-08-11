@@ -15,6 +15,7 @@ import uuid
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.workers.absence_alerts import absence_alerts
 from app.workers.event_reminders import event_reminders
 from app.workers.payday_reminder import payday_deadline_reminders, payday_reminders
 from app.workers.payroll_close import close_previous_month
@@ -67,6 +68,10 @@ def _register_jobs() -> None:
     # 매시간 정각 UTC — 프로젝트 마감(전 D-N 매일 9시 / 당일 매시간 / 누락 1회)
     scheduler.add_job(project_reminders, CronTrigger(minute=0),
                       id="project_reminder", replace_existing=True)
+    # 매시간 정각 — 결근 알림(대표·관리자). 사람마다 퇴근 시간이 달라서
+    # **본인 퇴근 시간이 막 지난 그 정각**에만 한 번 나간다 (absence_alerts 주석 참고)
+    scheduler.add_job(absence_alerts, CronTrigger(minute=0),
+                      id="absence_alert", replace_existing=True)
     # 매일 00:00 UTC(=09:00 KST) — 일정 D-7/D-3/전날/당일 리마인더
     scheduler.add_job(event_reminders, CronTrigger(hour=0, minute=0),
                       id="event_reminder", replace_existing=True)
