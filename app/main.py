@@ -28,7 +28,11 @@ from app.api.platform import (
     search,
 )
 from app.api.projects import meetings, projects, todos
-from app.api.public import survey as public_survey, tv as public_tv
+from app.api.public import (
+    legal as public_legal,
+    survey as public_survey,
+    tv as public_tv,
+)
 from app.api.scoring import contributions, env, kindness, peer_reviews, scores
 from app.api.staff import attendance, branches, employees, home
 from app.core.audit_middleware import AuditMiddleware
@@ -133,6 +137,7 @@ app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
 app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
+app.include_router(public_legal.router)   # 약관·개인정보처리방침 — **로그인 없음**(스토어 심사용 공개 URL)
 app.include_router(dashboard.router)
 app.include_router(files.router)  # 서명 URL 파일 서빙(/files) — 정적 /uploads 공개 대체(§H2)
 
