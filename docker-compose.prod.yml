@@ -5,11 +5,20 @@ name: hifis
 #   · db·redis 를 호스트에 노출하지 않음 (내부 네트워크로만)
 #   · api 는 127.0.0.1:8000 에만 (앞단 nginx 가 받는다)
 #   · 데이터는 전부 이름있는 볼륨 — 다시 배포해도 안 사라진다
+#   · 컨테이너마다 메모리·CPU 상한 (아래 참고)
+#
+# 자원 상한을 왜 두나 —
+#   상한이 없으면 하나가 폭주할 때 **서버 전체가 같이 넘어간다.** 상한이 있으면
+#   그 컨테이너만 죽고(OOM) `restart: unless-stopped` 로 되살아난다.
+#   서버는 28GB · 8코어라 아래 값을 다 합쳐도 절반이 안 된다 —
+#   채용사이트·모니터링·OS 몫을 남겨 둔 값이다.
 services:
   db:
     image: postgres:16
     restart: unless-stopped
     env_file: .env
+    mem_limit: 4g
+    cpus: 2.0
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,6 +31,8 @@ services:
     image: redis:7
     restart: unless-stopped
     command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    mem_limit: 512m
+    cpus: 0.5
     volumes:
       - redisdata:/data
     healthcheck:
@@ -34,6 +45,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    mem_limit: 4g
+    cpus: 4.0
     depends_on:
       db:
         condition: service_healthy

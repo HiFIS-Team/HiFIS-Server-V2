@@ -27,4 +27,8 @@ EXPOSE 8000
 # develop 에서 이 자리를 건드리면 머지에서 충돌하거나 조용히 사라진다.
 # 사라져도 배포 스크립트가 alembic 을 따로 돌려서 **한동안 티가 안 난다** — 그게 더 나쁘다.
 # 그래서 두 브랜치를 같은 내용으로 맞춰 둔다.
-CMD ["sh", "-c", "alembic upgrade head && gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers 2 --access-logfile -"]
+#
+# 워커 수는 `.env` 의 `GUNICORN_WORKERS` 로 바꾼다 (기본 4).
+# 예전에는 2로 박혀 있었는데 서버 코어가 8개라 놀리는 자원이 많았다.
+# **재빌드 없이** 바꾸려고 환경변수로 뺐다 — `sh -c` 라 여기서 풀린다.
+CMD ["sh", "-c", "alembic upgrade head && gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --access-logfile -"]
