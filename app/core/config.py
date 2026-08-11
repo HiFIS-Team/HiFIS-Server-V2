@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     apns_private_key: str = ""
     apns_topic: str = "app.hifis.hifis"  # 번들 ID (네 플랫폼 공통)
 
+    # 서버 내부 훅 토큰 (§보안) — 사람 계정이 아니라 **서버 자신**이 부르는 자리.
+    # 지금은 `POST /security/ssh-login` 하나가 쓴다 (SSH 접속 알림).
+    # 비면 그 엔드포인트가 **항상 401** 이다 — 실수로 열려 있는 상태가 안 생긴다.
+    internal_hook_token: str = ""
+
     # 이메일 발송(비밀번호 재설정 인증번호 등, §2.3) — smtp_host 비면 로그 스텁으로 폴백(개발).
     # 무료 SMTP 계정 하나면 충분(예: Gmail/Naver 587 STARTTLS).
     smtp_host: str = ""

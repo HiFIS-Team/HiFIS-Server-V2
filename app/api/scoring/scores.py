@@ -24,7 +24,7 @@ from app.schemas.scoring.score import (
     ScoreEventOut,
     ScoreSummary,
 )
-from app.services.ranking import compute_ranking, kind_conditions
+from app.services.ranking import compute_ranking
 from app.services.ranking_board import METRICS, build_board, rank_board
 from app.services.scoring import accrue_score, scores_apply_to
 

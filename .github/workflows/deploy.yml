@@ -1,20 +1,65 @@
-name: Deploy Backend
+# 검사 + 배포
+#
+#   develop 푸시 → 검사만
+#   main    푸시 → 검사 통과하면 홈서버에 배포
+#
+# 배포는 SSH 키로 서버의 `/usr/local/bin/deploy-hifis.sh` 하나만 실행한다.
+# 그 키는 authorized_keys 에 command= 로 묶여 있어 **다른 명령은 못 돌린다**
+# (셸도 안 열리고 포트 포워딩도 막혀 있다).
+
+name: 검사 · 배포
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 같은 브랜치에 연달아 푸시하면 앞의 것은 취소한다
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  deploy:
+  check:
+    name: 검사
     runs-on: ubuntu-latest
-
     steps:
-      - name: SSH Deploy
-        uses: appleboy/ssh-action@v1.0.3
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: 2222
-          script: |
-            bash ~/hifis-app-server/deploy/backend.sh
+          python-version: "3.12"
+
+      - name: ruff 설치
+        run: pip install --quiet ruff
+
+      - name: 코드 검사
+        run: ruff check app/
+
+      - name: 서식 검사
+        run: ruff format --check app/
+        continue-on-error: true   # 아직 서식을 통일하지 않았다 — 참고용
+
+      - name: 도커 이미지가 빌드되나
+        run: docker build -t hifis-api:ci .
+
+  deploy:
+    name: 배포
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 홈서버에 배포
+        env:
+          KEY:   ${{ secrets.DEPLOY_KEY }}
+          HOST:  ${{ secrets.SSH_HOST }}
+          PORT:  ${{ secrets.SSH_PORT }}
+          USER:  ${{ secrets.SSH_USER }}
+          HOSTKEY: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY"     > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$HOSTKEY" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$USER@$HOST"

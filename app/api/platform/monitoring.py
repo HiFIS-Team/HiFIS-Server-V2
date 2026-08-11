@@ -8,15 +8,17 @@
 알려 오는 자리라 **전 직원이 부른다.**
 """
 
+import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
-from app.enums import Role
+from app.enums import EmployeeStatus, Rank, Role
 from app.models.platform.anomaly import Anomaly
 from app.models.platform.api_metric import BUCKET_BOUNDS, ApiMetric
 from app.models.staff.employee import Employee
@@ -26,7 +28,9 @@ from app.schemas.platform.monitoring import (
     CaptureReport,
     MetricPointOut,
     SlowRouteOut,
+    SshLoginReport,
 )
+from app.services.notifications import notify
 
 router = APIRouter(tags=["monitoring"])
 
@@ -238,3 +242,53 @@ async def report_capture(
     """
     del body, current  # 미들웨어가 다 적는다 — 여기서 쓸 일이 없다
     return Response(status_code=204)
+
+# ---------------------------------------------------------------------------
+# SSH 접속 알림 — **서버 자신이 부른다** (사람 로그인이 아니다)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/security/ssh-login", status_code=204)
+async def report_ssh_login(
+    body: SshLoginReport,
+    x_internal_token: str = Header(default=""),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """서버에 SSH 로 누가 들어오면 **직급이 개발자인 사람에게** 알린다.
+
+    부르는 쪽은 사람이 아니라 서버의 PAM 훅(`/usr/local/sbin/ssh-notify.sh`)이라,
+    로그인 토큰이 아니라 `X-Internal-Token` 으로 확인한다.
+    `internal_hook_token` 이 비어 있으면 **무조건 401** 이다 —
+    설정을 빠뜨렸을 때 열려 있는 상태가 안 생긴다.
+
+    **직급이 기준이고 권한이 아니다.** 서버를 만지는 사람에게만 가야 하는데,
+    권한(MASTER)에는 대표도 들어가서 서버와 상관없는 사람에게까지 간다.
+
+    실패해도 접속을 막지 않는다 — 훅 쪽이 백그라운드로 부르고 응답을 안 기다린다.
+    """
+    expected = settings.internal_hook_token
+    if not expected or not secrets.compare_digest(x_internal_token, expected):
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
+
+    devs = (
+        await db.execute(
+            select(Employee.id).where(
+                Employee.rank == Rank.DEVELOPER,
+                Employee.status == EmployeeStatus.ACTIVE,
+            )
+        )
+    ).scalars().all()
+
+    when = datetime.now(timezone(timedelta(hours=9))).strftime("%m/%d %H:%M")
+    for employee_id in devs:
+        await notify(
+            db,
+            employee_id=employee_id,
+            type="SSH_LOGIN",
+            title="서버 SSH 접속",
+            body=f"{body.user}@서버 · {body.ip} · {when}",
+            link="/monitoring",
+        )
+    await db.commit()
+    return Response(status_code=204)
+

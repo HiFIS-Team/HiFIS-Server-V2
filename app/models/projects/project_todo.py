@@ -4,7 +4,6 @@
 (독립 배정 태스크 Todo(§6.2)와는 별개 — 이건 프로젝트에 종속된 체크리스트.)
 """
 
-from datetime import datetime
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column

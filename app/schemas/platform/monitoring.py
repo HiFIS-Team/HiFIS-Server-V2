@@ -79,3 +79,23 @@ class CaptureReport(CamelModel):
 
     # screenshot(찍힘) · recording(녹화·미러링 시작)
     kind: str = Field(default="screenshot", max_length=20)
+
+
+class SshLoginReport(CamelModel):
+    """서버에 **SSH 로 누가 들어왔다**고 서버 자신이 알려 오는 것.
+
+    사람이 부르는 자리가 아니라 서버의 PAM 훅이 부른다 —
+    그래서 로그인 토큰이 아니라 `X-Internal-Token` 헤더로 확인한다.
+
+    2026-08-11 침해 사고 이후에 붙였다. 그때는 새벽에 들어온 것을
+    **아무도 몰랐다** — 알림이 있었으면 그날 아침에 잡았을 자리다.
+    """
+
+    # 어느 계정으로 들어왔나 (`fitnessstar` 등)
+    user: str = Field(max_length=64)
+
+    # 어디서 들어왔나 — 접속 IP
+    ip: str = Field(max_length=64)
+
+    # open(접속) · close(종료). 지금은 open 만 보낸다
+    event: str = Field(default="open", max_length=16)
