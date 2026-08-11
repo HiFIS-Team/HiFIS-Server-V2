@@ -7,7 +7,7 @@ compute_ranking 은 ScoreEvent 합산으로 (employee_id, name, points, rank) �
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import RankingKind, ScoreCategory
+from app.enums import RankingKind, Role, ScoreCategory
 from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 
@@ -45,17 +45,33 @@ def kind_conditions(kind: RankingKind) -> list:
 async def compute_ranking(
     db: AsyncSession,
     *,
-    kind: RankingKind,
+    kind: RankingKind | None = None,
+    category: ScoreCategory | None = None,
     period: str | None = None,
     branch_id: str | None = None,
 ) -> list[dict]:
-    """[{employee_id, name, points, rank}] — points 내림차순, rank 는 1부터."""
+    """[{employee_id, name, points, rank}] — points 내림차순, rank 는 1부터.
+
+    **대표·관리자는 빼고 센다** (2026-08-11 대표 결정). 줄 세우는 쪽이지 서는
+    쪽이 아니다 — 근태 판정에서 뺀 것과 같은 이유다 (backend-gap 70번).
+    점수 원장에는 그대로 쌓인다. 등수만 안 매긴다.
+
+    **`GET /scores/ranking` 도 이 함수를 쓴다.** 예전에는 라우터가 같은 질의를
+    한 벌 더 갖고 있어서, 여기만 고쳤더니 화면에는 그대로 떴다 (실제로 겪었다).
+
+    [kind] 가 [category] 보다 우선한다 — 랭킹 탭이 곧 kind 다.
+    """
     total = func.coalesce(func.sum(ScoreEvent.points), 0).label("points")
-    stmt = select(Employee.id, Employee.name, total).join(
-        ScoreEvent, ScoreEvent.employee_id == Employee.id
+    stmt = (
+        select(Employee.id, Employee.name, total)
+        .join(ScoreEvent, ScoreEvent.employee_id == Employee.id)
+        .where(Employee.role.notin_([Role.MASTER, Role.ADMIN]))
     )
-    for cond in kind_conditions(kind):
-        stmt = stmt.where(cond)
+    if kind is not None:
+        for cond in kind_conditions(kind):
+            stmt = stmt.where(cond)
+    elif category is not None:
+        stmt = stmt.where(ScoreEvent.category == category)
     if period:
         stmt = stmt.where(ScoreEvent.period == period)
     if branch_id:

@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import period_range
-from app.enums import RegistrationType, ScoreCategory
+from app.enums import RegistrationType, Role, ScoreCategory
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
 from app.models.projects.project import Project
@@ -80,7 +80,12 @@ async def build_board(
 
     people = (
         await db.scalars(
-            select(Employee).where(Employee.deleted_at.is_(None))
+            select(Employee).where(
+                Employee.deleted_at.is_(None),
+                # 대표·관리자는 줄 세우는 쪽이지 서는 쪽이 아니다 (2026-08-11 대표 결정).
+                # 근태 판정에서 뺀 것과 같은 이유다 (backend-gap 70번).
+                Employee.role.notin_([Role.MASTER, Role.ADMIN]),
+            )
         )
     ).all()
     if branch_id:
