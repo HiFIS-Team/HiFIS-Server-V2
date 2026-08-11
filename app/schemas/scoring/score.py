@@ -69,7 +69,17 @@ class RankingBoardItem(CamelModel):
     lessons: int = 0
     lesson_score: int = 0
 
+    # 방문 경로 — 회원 등록 때 붙는 유입 점수. 셋을 **따로** 준다
+    # (랭킹 내역이 '블로그 10 · 인스타 5' 로 갈라 보여준다).
+    # 워크인·지인소개는 점수가 없어서 칸도 없다.
+    blog_score: int = 0
+    insta_score: int = 0
+    otpt_score: int = 0
+
     # 지난달 순위 — [매출, 친절, 프로젝트, 환경, 수업, 종합]. 0 이면 순위 없음
+    #
+    # **방문 경로는 여기 안 들어간다.** 종합 점수에는 반영하지만 랭킹 탭으로는
+    # 안 세우기로 했다 (2026-08-11) — 칸을 늘리면 종합의 자리가 밀린다.
     last_rank: list[int] = Field(default_factory=lambda: [0, 0, 0, 0, 0, 0])
 
 

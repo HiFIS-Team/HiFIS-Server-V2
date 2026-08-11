@@ -2,10 +2,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.enums import VisitPath
 
 
 class Member(UUIDMixin, TimestampMixin, Base):
@@ -22,6 +23,14 @@ class Member(UUIDMixin, TimestampMixin, Base):
     )
     referrer_member_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("members.id"), nullable=True
+    )
+    #: 어떻게 알고 왔나 — 등록할 때 받는다. 블로그·인스타·OT→PT 면 담당
+    #: 트레이너에게 5점이 붙는다 (`VISIT_PATH_SCORE`).
+    #:
+    #: **nullable 이다.** 이 칸이 생기기 전에 등록된 회원과, 아직 업데이트를
+    #: 안 받은 앱이 보내는 등록을 받아야 한다 (앱이 필수로 막는다).
+    visit_path: Mapped[VisitPath | None] = mapped_column(
+        SAEnum(VisitPath, native_enum=False, length=20), nullable=True
     )
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
