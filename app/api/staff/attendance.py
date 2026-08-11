@@ -7,7 +7,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import ScanActor, branch_scope, get_current_user, require_role, scan_actor
@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.enums import (
     AttendanceSource,
     AttendanceStatus,
+    EmployeeStatus,
     HalfPeriod,
     LeaveStatus,
     LeaveType,
@@ -37,7 +38,7 @@ from app.schemas.staff.attendance import (
     LeaveRequestOut,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify
+from app.services.notifications import notify, notify_bosses
 from app.services.scoring import accrue_score
 
 router = APIRouter(tags=["attendance"])
@@ -134,6 +135,16 @@ def _just_left_overnight(prev: Attendance | None, now_kst: datetime) -> bool:
     if prev.check_out.astimezone(KST).date() != now_kst.date():
         return False  # 어제 안에 퇴근했다 — 날짜가 바뀌었으니 이미 미출근이다
     return (now_kst - prev.check_out).total_seconds() <= OVERNIGHT_GRACE_MIN * 60
+
+
+#: 대표·관리자에게 가는 스캔 알림에 덧붙이는 말 — **정상이 아닐 때만** 있다.
+#: 여기 없는 상태(정상·근무중 등)는 시각만 적힌다.
+_SCAN_NOTES = {
+    AttendanceStatus.LATE: "지각",
+    AttendanceStatus.EARLY_LEAVE: "조기 퇴근",
+    AttendanceStatus.LATE_AND_EARLY: "지각 · 조기 퇴근",
+    AttendanceStatus.OVERTIME: "야근",
+}
 
 
 def _absent_today(employee: Employee, now_kst: datetime) -> bool:
@@ -253,10 +264,18 @@ async def scan_attendance(
             await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
     await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
+    # 대표·관리자에게도 알린다 — 누가 왔고 누가 갔는지 (2026-08-11 대표 요청).
+    # **정상이 아닐 때만** 한 마디 붙인다. '정상'을 매번 적으면 읽을 게 늘기만 한다.
+    status = _attendance_status(record, target.shift_start, target.shift_end, now_kst)
+    await notify_bosses(
+        db,
+        exclude=target.id,
+        **ntext.staff_attendance(target.name, action, now_kst, _SCAN_NOTES.get(status)),
+    )
     await db.commit()
     await db.refresh(record)
     out = AttendanceOut.model_validate(record)
-    out.status = _attendance_status(record, target.shift_start, target.shift_end, now_kst)
+    out.status = status
     return out
 
 
@@ -623,6 +642,33 @@ async def create_leave(
         reason=payload.reason,
     )
     db.add(leave)
+    # 결재자에게 알린다 — 신청이 올라온 걸 모르면 대기만 쌓인다.
+    # **승인 권한이 있는 사람들**이다 (`/leaves/{id}/approve` = MASTER · MANAGER).
+    # 점장은 자기 지점 것만 결재하므로 같은 지점만 부른다.
+    approvers = (
+        await db.scalars(
+            select(Employee.id).where(
+                Employee.status == EmployeeStatus.ACTIVE,
+                Employee.deleted_at.is_(None),
+                Employee.id != current.id,
+                or_(
+                    Employee.role == Role.MASTER,
+                    and_(
+                        Employee.role == Role.MANAGER,
+                        Employee.branch_id == current.branch_id,
+                    ),
+                ),
+            )
+        )
+    ).all()
+    text = ntext.leave_requested(
+        current.name,
+        ntext.leave_label(payload.type, half_period),
+        payload.start_date,
+        payload.end_date,
+    )
+    for eid in approvers:
+        await notify(db, employee_id=eid, **text)
     await db.commit()
     await db.refresh(leave)
     return leave

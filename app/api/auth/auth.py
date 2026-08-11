@@ -17,6 +17,7 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.enums import AccessEvent, InviteStatus
+from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.auth.invite import InviteKey
 from app.models.platform.access_log import AccessLog
@@ -33,8 +34,10 @@ from app.schemas.auth.auth import (
     TokenResponse,
 )
 from app.schemas.staff.employee import EmployeeOut
+from app.services import notification_texts as ntext
 from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
+from app.services.notifications import notify_bosses
 from app.services.password_reset import consume_reset_token, issue_code, normalize_contact, verify_code
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -72,6 +75,17 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
     )
     key.status = InviteStatus.USED
     db.add(employee)
+    # 대표·관리자에게 알린다 (2026-08-11 대표 요청) — 초대키를 준 사람이 실제로
+    # 들어왔는지는 조직도를 열어 봐야만 알 수 있었다.
+    branch = await db.get(Branch, employee.branch_id) if employee.branch_id else None
+    await notify_bosses(
+        db,
+        **ntext.employee_joined(
+            employee.name,
+            branch.name if branch else None,
+            ntext.rank_label(employee.rank),
+        ),
+    )
     await db.commit()
     return SignupResponse(result="JOINED")
 

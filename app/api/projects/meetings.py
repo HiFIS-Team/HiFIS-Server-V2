@@ -12,6 +12,8 @@ from app.models.projects.meeting import Meeting
 from app.models.projects.project import Project
 from app.models.board.reaction import Reaction
 from app.schemas.projects.meeting import MeetingCreate, MeetingOut, MeetingUpdate
+from app.services import notification_texts as ntext
+from app.services.notifications import notify_bosses
 from app.services.reactions import aggregate_for
 
 router = APIRouter(prefix="/meetings", tags=["meetings"], dependencies=[Depends(get_current_user)])
@@ -116,6 +118,13 @@ async def create_meeting(
         meeting_at=payload.meeting_at,
     )
     db.add(meeting)
+    await db.flush()  # id 가 있어야 알림 링크를 만든다
+    # 대표·관리자에게 알린다 (2026-08-11 대표 요청).
+    # **공개 범위(scope)를 안 본다** — 못 보는 회의록이면 눌렀을 때 403 이지만,
+    # MASTER·ADMIN 은 `_can_view` 가 전부 통과시켜서 그럴 일이 없다.
+    await notify_bosses(
+        db, exclude=current.id, **ntext.meeting_created(meeting.title, current.name, meeting.id)
+    )
     await db.commit()
     await db.refresh(meeting)
     return (await _to_out(db, [meeting]))[0]

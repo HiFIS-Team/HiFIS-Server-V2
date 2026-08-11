@@ -33,6 +33,13 @@ class Project(UUIDMixin, TimestampMixin, Base):
     overdue_notified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 완료 알림을 보낸 시각 — 위와 같은 이유의 멱등 표시.
+    # 완료 정산(`_settle_completion`)은 진행률을 건드릴 때마다 불린다. 이 표시가
+    # 없으면 **이미 100% 인 프로젝트를 고칠 때마다 '완료' 알림이 다시 나간다.**
+    # 100% 아래로 내려가면 비운다 — 다시 완료하면 그때 또 알린다.
+    completed_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_by_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=False
     )

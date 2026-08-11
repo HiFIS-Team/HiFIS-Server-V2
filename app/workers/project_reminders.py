@@ -17,7 +17,7 @@ from app.enums import EmployeeStatus
 from app.models.projects.project import Project
 from app.models.staff.employee import Employee
 from app.services import notification_texts as ntext
-from app.services.notifications import notify, send_push
+from app.services.notifications import notify, notify_bosses, send_push
 
 
 async def _active_assignees(db, assignee_ids: list[str]) -> list[str]:
@@ -31,6 +31,12 @@ async def _active_assignees(db, assignee_ids: list[str]) -> list[str]:
         )
     )
     return list(rows)
+
+
+async def _names(db, employee_ids: list[str]) -> str:
+    """`김트레이너 · 박FC` — 대표에게 **누가** 누락했는지 보여주려고 붙인다"""
+    rows = await db.scalars(select(Employee.name).where(Employee.id.in_(employee_ids)))
+    return " · ".join(rows)
 
 
 async def project_reminders(now: datetime | None = None) -> None:
@@ -60,5 +66,9 @@ async def project_reminders(now: datetime | None = None) -> None:
                 # 마감 초과 — 누락 1회(앱 내 알림 + 푸시)
                 for eid in assignees:
                     await notify(db, employee_id=eid, **ntext.project_overdue(p.title, p.id))
+                # 대표·관리자에게도 — **누가** 누락했는지까지 (2026-08-11 대표 요청)
+                await notify_bosses(
+                    db, **ntext.project_overdue_admin(p.title, await _names(db, assignees), p.id)
+                )
                 p.overdue_notified_at = now_utc
         await db.commit()

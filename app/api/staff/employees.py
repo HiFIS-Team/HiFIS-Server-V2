@@ -34,8 +34,10 @@ from app.schemas.staff.employee import (
     PasswordChange,
     ScheduleSet,
 )
+from app.services import notification_texts as ntext
 from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
+from app.services.notifications import notify_bosses
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -306,7 +308,12 @@ async def update_employee(
     for key, value in data.items():
         setattr(employee, key, value)
     if "status" in data:  # 퇴사 시각 동기화(§58) — RESIGNED 되면 기록, 복직하면 해제
-        employee.resigned_at = datetime.now(timezone.utc) if data["status"] == EmployeeStatus.RESIGNED else None
+        resigning = data["status"] == EmployeeStatus.RESIGNED
+        employee.resigned_at = datetime.now(timezone.utc) if resigning else None
+        # 퇴사만 알린다 (2026-08-11 대표 요청). 처리한 본인은 뺀다 — 방금 자기가
+        # 누른 것이라 알 필요가 없다. 복직·비활성은 알리지 않는다
+        if resigning:
+            await notify_bosses(db, exclude=current.id, **ntext.employee_resigned(employee.name))
     await db.commit()
     await db.refresh(employee)
     return employee
@@ -339,5 +346,6 @@ async def delete_employee(
     employee.deleted_at = now
     employee.status = EmployeeStatus.RESIGNED
     employee.resigned_at = now
+    await notify_bosses(db, exclude=current.id, **ntext.employee_resigned(employee.name))
     await db.commit()
     return None
