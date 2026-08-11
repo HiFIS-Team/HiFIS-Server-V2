@@ -209,6 +209,20 @@ class ContribType(StrEnum):
     SALES = "SALES"            # 매출성과 = 자동(부여 대상 아님)
 
 
+class VisitPath(StrEnum):
+    """회원이 어떻게 알고 왔나 — 회원 등록 때 받는다 (§3.1).
+
+    **뒤 셋만 점수를 준다** (`VISIT_PATH_SCORE`). 워크인·지인소개는 직원이
+    끌어온 것이 아니라서 뺀다.
+    """
+
+    WALK_IN = "WALK_IN"      # 워크인 — 점수 없음
+    REFERRAL = "REFERRAL"    # 지인소개 — 점수 없음
+    BLOG = "BLOG"            # 블로그
+    INSTAGRAM = "INSTAGRAM"  # 인스타
+    OT_TO_PT = "OT_TO_PT"    # OT → PT 전환
+
+
 class ScoreCategory(StrEnum):
     ENV = "ENV"            # 환경정비
     PEER = "PEER"          # 동료평가
@@ -217,6 +231,19 @@ class ScoreCategory(StrEnum):
     CONTRIB = "CONTRIB"    # 센터 기여도
     PROJECT = "PROJECT"    # 프로젝트 달성 (기본 10, 어드민 평가 -100 ~ +100)
     OPERATOR = "OPERATOR"  # 운영자 직접 부여/감점
+    # 방문 경로 — 셋을 **따로** 둔다. 랭킹 내역이 '블로그 10 · 인스타 5' 처럼
+    # 갈라서 보여줘야 해서 하나로 묶으면 다시 못 나눈다.
+    BLOG = "BLOG"              # 블로그 보고 온 회원 등록
+    INSTAGRAM = "INSTAGRAM"    # 인스타 보고 온 회원 등록
+    OT_PT = "OT_PT"            # OT → PT 전환
+
+
+#: 방문 경로 → 담당 트레이너에게 붙는 점수 (없으면 안 준다)
+VISIT_PATH_SCORE: dict[VisitPath, tuple[ScoreCategory, int]] = {
+    VisitPath.BLOG: (ScoreCategory.BLOG, 5),
+    VisitPath.INSTAGRAM: (ScoreCategory.INSTAGRAM, 5),
+    VisitPath.OT_TO_PT: (ScoreCategory.OT_PT, 5),
+}
 
 
 class RankingKind(StrEnum):

@@ -12,13 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user
 from app.db.session import get_db
-from app.enums import RegistrationStatus, Role
+from app.enums import VISIT_PATH_SCORE, RegistrationStatus, Role
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut, MemberUpdate
 from app.schemas.members.registration import RegistrationOut
+from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/members", tags=["members"], dependencies=[Depends(get_current_user)])
 
@@ -87,10 +88,33 @@ async def create_member(
         branch_id=payload.branch_id,
         owner_trainer_id=payload.owner_trainer_id,
         referrer_member_id=payload.referrer_member_id,
+        visit_path=payload.visit_path,
         memo=payload.memo,
     )
     db.add(member)
     await db.flush()  # member.id 확보
+
+    # 방문 경로 점수 — 블로그·인스타·OT→PT 만 담당 트레이너에게 5점.
+    #
+    # **신규 등록에만 준다.** 재등록(`POST /registrations`)에는 안 붙는다 —
+    # 방문 경로는 처음 올 때의 이야기라 재등록마다 또 주면 같은 유입으로
+    # 점수가 계속 쌓인다.
+    awarded = VISIT_PATH_SCORE.get(payload.visit_path) if payload.visit_path else None
+    if awarded is not None:
+        category, points = awarded
+        owner = await db.get(Employee, payload.owner_trainer_id)
+        await accrue_score(
+            db,
+            employee_id=payload.owner_trainer_id,
+            # 점수는 **그 사람 소속 지점**에 쌓는다. 회원 지점을 쓰면 다른
+            # 지점 회원을 등록했을 때 남의 지점 랭킹에 들어간다.
+            branch_id=owner.branch_id if owner else payload.branch_id,
+            category=category,
+            points=points,
+            created_by_id=current.id,
+            source_ref_id=member.id,
+            reason="회원 등록 유입",
+        )
 
     registration: Registration | None = None
     if reg_in is not None:

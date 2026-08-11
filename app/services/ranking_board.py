@@ -28,12 +28,22 @@ from app.models.staff.employee import Employee
 # 앱 랭킹 탭 순서 — 종합은 나머지를 환산해 평균 내므로 맨 뒤다
 METRICS = ["revenue", "kindness", "project", "care", "lesson", "overall"]
 
+# 종합에만 얹는 항목 — **탭으로는 안 센다.**
+#
+# 방문 경로(블로그·인스타·OT→PT)는 종합 점수에 반영하되 랭킹 탭은 늘리지
+# 않기로 했다 (2026-08-11). 여기 두면 `lastRank` 가 6칸 그대로라 앱의 탭
+# 자리가 안 밀린다 — METRICS 에 넣으면 종합이 5번에서 6번으로 밀린다.
+_OVERALL_EXTRA = ["visit"]
+
 # 점수 원장을 그대로 headline 로 쓰는 항목들
 _SCORE_FIELD = {
     ScoreCategory.KINDNESS: "kindness",
     ScoreCategory.PROJECT: "projectScore",
     ScoreCategory.ENV: "careScore",
     ScoreCategory.CLASS: "lessonScore",
+    ScoreCategory.BLOG: "blogScore",
+    ScoreCategory.INSTAGRAM: "instaScore",
+    ScoreCategory.OT_PT: "otptScore",
 }
 
 
@@ -54,6 +64,10 @@ def _blank(employee: Employee) -> dict:
         "care": 0,
         "lessons": 0,
         "lessonScore": 0,
+        # 방문 경로 — 셋을 따로 준다. 랭킹 내역이 갈라서 보여준다
+        "blogScore": 0,
+        "instaScore": 0,
+        "otptScore": 0,
         "lastRank": [0] * len(METRICS),
     }
 
@@ -188,10 +202,14 @@ def _value(row: dict, metric: str, pool: list[dict]) -> float:
         return float(row["careScore"])
     if metric == "lesson":
         return float(row["lessons"])
+    if metric == "visit":
+        # 방문 경로는 셋을 합쳐 한 항목으로 본다 — 종합에서 유입만 세 자리를
+        # 차지하면 다른 항목의 무게가 반으로 줄어든다
+        return float(row["blogScore"] + row["instaScore"] + row["otptScore"])
     # 종합 — 항목마다 1등을 100점으로 두고 상대 위치를 평균 낸다.
     # 매출은 원, 수업은 개수라 단위가 달라서 그냥 더할 수 없다.
     total = 0.0
-    parts = METRICS[:-1]
+    parts = METRICS[:-1] + _OVERALL_EXTRA
     for part in parts:
         top = max((_value(other, part, pool) for other in pool), default=0.0)
         if top > 0:

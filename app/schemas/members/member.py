@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.enums import RegistrationType
+from app.enums import RegistrationType, VisitPath
 from app.schemas.base import CamelModel
 from app.schemas.members.registration import RegistrationOut
 
@@ -26,6 +26,12 @@ class MemberCreate(CamelModel):
     branch_id: str
     owner_trainer_id: str
     referrer_member_id: str | None = None
+    #: 어떻게 알고 왔나 — 블로그·인스타·OT→PT 면 담당 트레이너에게 5점.
+    #:
+    #: **선택으로 둔다.** 앱이 고르기 전에는 등록을 못 하게 막지만, 이미
+    #: 배포된 옛 앱은 이 값을 안 보낸다 — 필수로 하면 그 앱에서 회원 등록이
+    #: 통째로 막힌다. 안 오면 점수만 안 붙는다.
+    visit_path: VisitPath | None = None
     memo: str | None = None
     registration: MemberRegistrationInput | None = None  # 있으면 회원+등록권을 한 트랜잭션으로
 
@@ -35,6 +41,9 @@ class MemberUpdate(CamelModel):
     phone: str | None = None
     owner_trainer_id: str | None = None
     referrer_member_id: str | None = None
+    #: 나중에 고칠 수 있다. **다만 점수는 등록할 때 한 번만 붙는다** —
+    #: 여기서 바꿔도 이미 쌓인 점수는 그대로다 (되돌리면 지난달 랭킹이 흔들린다).
+    visit_path: VisitPath | None = None
     memo: str | None = None
 
 
@@ -45,6 +54,7 @@ class MemberOut(CamelModel):
     branch_id: str
     owner_trainer_id: str
     referrer_member_id: str | None = None
+    visit_path: VisitPath | None = None
     registered_at: datetime
     memo: str | None = None
 
