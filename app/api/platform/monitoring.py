@@ -26,6 +26,7 @@ from app.schemas.platform.monitoring import (
     AnomalyOut,
     ApiMetricsOut,
     CaptureReport,
+    GrafanaAlert,
     MetricPointOut,
     SlowRouteOut,
     SshLoginReport,
@@ -287,6 +288,61 @@ async def report_ssh_login(
             type="SSH_LOGIN",
             title="서버 SSH 접속",
             body=f"{body.user}@서버 · {body.ip} · {when}",
+            link="/monitoring",
+        )
+    await db.commit()
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# 서버 경고 — **그라파나가 부른다** (디스크·CPU·컨테이너 죽음)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/security/alert", status_code=204)
+async def report_alert(
+    body: GrafanaAlert,
+    x_internal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """그라파나 경고를 받아 **직급이 개발자인 사람에게** 알린다.
+
+    SSH 접속 알림과 같은 길이고 열쇠도 같다(`internal_hook_token`). 다만
+    그라파나의 webhook 은 `X-Internal-Token` 같은 임의 헤더를 못 붙이는 판이
+    있어서 **`Authorization: Bearer <토큰>` 도 받아 준다.**
+
+    ⚠️ **이 길은 API 가 살아 있어야 도착한다.** API 나 DB 가 죽는 사고는
+    바로 그 사고 때문에 알림이 안 온다. 그건 서버 밖에서 재는 장치가 있어야
+    닫힌다 — 아직 없다.
+    """
+    expected = settings.internal_hook_token
+    token = x_internal_token or authorization.removeprefix("Bearer ").strip()
+    if not expected or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
+
+    devs = (
+        await db.execute(
+            select(Employee.id).where(
+                Employee.rank == Rank.DEVELOPER,
+                Employee.status == EmployeeStatus.ACTIVE,
+            )
+        )
+    ).scalars().all()
+
+    resolved = body.status == "resolved"
+    title = "서버 경고 해제" if resolved else "서버 경고"
+    # 그라파나 제목에 붙는 `[FIRING:1]` 머리말은 떼고 보여준다 — 폰 알림은 좁다
+    summary = body.title.split("] ", 1)[-1] if "] " in body.title else body.title
+    text = (summary or body.message or "내용 없음").strip()[:200]
+
+    for employee_id in devs:
+        await notify(
+            db,
+            employee_id=employee_id,
+            type="SERVER_ALERT",
+            title=title,
+            body=text,
             link="/monitoring",
         )
     await db.commit()

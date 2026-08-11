@@ -54,10 +54,19 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
+# API 문서(Swagger·ReDoc·OpenAPI)는 **운영에서 닫는다.**
+# 열어 두면 급여·근태·모니터링까지 엔드포인트 이름과 요청 형식이 전부 보인다.
+# 그 자체로 뚫리는 자리는 아니지만, 공격자에게 지도를 쥐여 줄 이유가 없다.
+# 개발(`ENVIRONMENT=development`)에서는 그대로 열린다 — localhost:8001/docs.
+_DOCS_OPEN = settings.environment != "production"
+
 app = FastAPI(
     title=settings.app_name,
-    version="0.8.0",
+    version="0.9.0",
     lifespan=lifespan,
+    docs_url="/docs" if _DOCS_OPEN else None,
+    redoc_url="/redoc" if _DOCS_OPEN else None,
+    openapi_url="/openapi.json" if _DOCS_OPEN else None,
 )
 
 # 레이트리밋(§9.7) — 라우트의 @limiter.limit 데코레이터가 app.state.limiter 를 사용
@@ -155,4 +164,8 @@ async def health() -> dict[str, str]:
 
 @app.get("/", tags=["meta"])
 async def root() -> dict[str, str]:
-    return {"name": settings.app_name, "version": app.version, "docs": "/docs"}
+    # 운영에서는 문서를 닫으므로 없는 주소를 가리키지 않는다
+    body = {"name": settings.app_name, "version": app.version}
+    if _DOCS_OPEN:
+        body["docs"] = "/docs"
+    return body

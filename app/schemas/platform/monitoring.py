@@ -99,3 +99,23 @@ class SshLoginReport(CamelModel):
 
     # open(접속) · close(종료). 지금은 open 만 보낸다
     event: str = Field(default="open", max_length=16)
+
+
+class GrafanaAlert(CamelModel):
+    """그라파나가 경고를 보낼 때 그대로 보내는 본문 (webhook contact point).
+
+    **모양을 우리가 정하는 게 아니라 그라파나가 정한다** — 그래서 필드를
+    전부 선택으로 두고 쓰는 것만 받는다. 판이 올라가며 필드가 늘어도 안 깨진다.
+
+    디스크가 차거나 CPU 가 오래 튀거나 컨테이너가 죽으면 여기로 온다.
+    받아서 **직급이 개발자인 사람에게** 알린다 (SSH 접속 알림과 같은 길).
+    """
+
+    # firing(발생) · resolved(해제)
+    status: str = Field(default="firing", max_length=20)
+
+    # 그라파나가 만들어 주는 한 줄 제목 (`[FIRING:1] 디스크 부족`)
+    title: str = Field(default="", max_length=200)
+
+    # 본문 — 어떤 규칙이 왜 걸렸는지
+    message: str = Field(default="", max_length=2000)
