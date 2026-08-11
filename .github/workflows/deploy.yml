@@ -33,7 +33,9 @@ jobs:
           python-version: "3.12"
 
       - name: ruff 설치
-        run: pip install --quiet ruff
+        # 판을 고정한다 — `ruff` 로만 두면 새 판이 나올 때마다 검사 기준이 바뀐다
+        # (0.16 에서 실제로 그래서 CI 가 죽었다. pyproject 의 select 와 짝이다)
+        run: pip install --quiet "ruff==0.16.2"
 
       - name: 코드 검사
         run: ruff check app/
