@@ -44,6 +44,17 @@ include = ["app*"]
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint]
+# 검사할 규칙을 **직접 적어 둔다.** ruff 의 기본값에 맡기면 안 된다 —
+# 0.16 에서 기본이 826개로 넓어지면서 CI 가 통째로 죽었다 (564건, 2026-08-12).
+# 그중 362건이 `db = Depends(get_db)` 를 잡는 B008 이었다. FastAPI 의 정석 문법이라
+# 코드가 아니라 검사가 틀린 것이었다.
+#
+#   E4 import · E7 문법 · E9 구문오류 · F 안 쓰는 이름·오타
+#
+# 여기 있는 것만 본다. 규칙을 늘리려면 코드를 먼저 맞추고 한 줄씩 더한다.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.ruff.lint.per-file-ignores]
 # 모델 등록 지점 — Alembic autogenerate 가 metadata 를 인식하려면
 # 여기서 import 만 해 두고 쓰지 않는다. 그래서 "안 쓰는 import" 검사에서 뺀다.
