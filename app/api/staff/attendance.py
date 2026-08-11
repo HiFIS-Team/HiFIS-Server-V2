@@ -24,7 +24,6 @@ from app.enums import (
     AttendanceSource,
     AttendanceStatus,
     EmployeeStatus,
-    HalfPeriod,
     LeaveStatus,
     LeaveType,
     Role,
