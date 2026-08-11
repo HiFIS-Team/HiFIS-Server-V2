@@ -26,7 +26,7 @@ from app.schemas.scoring.score import (
 )
 from app.services.ranking import compute_ranking, kind_conditions
 from app.services.ranking_board import METRICS, build_board, rank_board
-from app.services.scoring import accrue_score
+from app.services.scoring import accrue_score, scores_apply_to
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
 
@@ -144,6 +144,11 @@ async def create_score(
     employee = await db.get(Employee, payload.employee_id)
     if employee is None:
         raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원이 존재하지 않습니다"})
+    if not scores_apply_to(employee):
+        raise HTTPException(
+            400,
+            detail={"code": "NO_SCORE_TARGET", "message": "대표·관리자에게는 점수를 매기지 않습니다"},
+        )
     event = await accrue_score(
         db,
         employee_id=employee.id,
