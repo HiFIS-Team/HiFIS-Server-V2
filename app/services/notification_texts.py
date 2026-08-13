@@ -9,13 +9,27 @@ link 는 앱 내 딥링크. type 은 NotificationOut.type(프론트 분기용).
 from datetime import datetime
 
 
+def short(text: str | None, limit: int = 40) -> str:
+    """사람이 적은 글을 알림에 실을 때 **줄바꿈을 접고 잘라서** 쓴다.
+
+    제목·사유 칸에 길이 제한이 없어서(스키마에 `max_length` 가 없다) 길게 쓰면
+    알림이 그대로 늘어난다. 여러 줄이면 세로로도 길어진다.
+
+    **알림은 "왔다"를 알리는 자리지 읽는 자리가 아니다** — 전체는 눌러서 본다.
+    """
+    if not text:
+        return ""
+    one_line = " ".join(text.split())
+    return one_line if len(one_line) <= limit else one_line[:limit].rstrip() + "…"
+
+
 # ── 근태 · 휴가 ──
 def attendance_scan(action: str, when: datetime) -> dict:
     # action = "출근" | "퇴근", when = KST datetime
     return {
         "type": "ATTENDANCE",
-        "title": f"{action} 완료",
-        "body": f"{when:%H:%M} {action} 처리됐어요",
+        "title": f"{action}했어요",
+        "body": f"{when:%H:%M} 에 찍혔어요",
         "link": "/attendance",
     }
 
@@ -24,8 +38,8 @@ def offhours_award(kind: str, points: int) -> dict:
     # kind = "조기 출근" | "초과 근무" — 스캔이 기본 근무시간보다 30분+ 이르거나 늦을 때 자동 적립
     return {
         "type": "ATTENDANCE",
-        "title": f"근무 외 출근 +{points}점",
-        "body": f"{kind}으로 근무 외 출근 점수 {points}점이 자동 적립됐어요",
+        "title": f"{kind}으로 {points}점 받았어요",
+        "body": "근무 외 출근 점수가 쌓였어요",
         "link": "/ranking",
     }
 
@@ -34,23 +48,40 @@ def leave_decision(approved: bool, start_date, end_date, reason: str | None = No
     verb = "승인" if approved else "반려"
     body = f"{start_date} ~ {end_date}"
     if not approved and reason:
-        body += f" · 사유: {reason}"
-    return {"type": "LEAVE", "title": f"휴가 신청이 {verb}되었습니다", "body": body, "link": "/attendance"}
+        body += f" · {short(reason)}"
+    return {"type": "LEAVE", "title": f"휴가가 {verb}됐어요", "body": body, "link": "/attendance"}
 
 
 # ── 공지 ──
 def new_notice(title: str, body: str | None, notice_id: str) -> dict:
     return {
         "type": "NOTICE",
-        "title": f"새 공지 · {title}",
-        "body": (body or "")[:120],
+        "title": "새 공지가 올라왔어요",
+        # **본문을 안 싣는다** (2026-08-13 대표 요청). 공지는 마크다운으로 쓰는데
+        # 알림에는 그대로 나가서 `## 제목` `- 항목` 이 글자로 보였다.
+        # 제목만 보여주고 자세한 건 눌러서 보게 한다.
+        "body": short(title),
         "link": f"/notices/{notice_id}",  # 목록이 아니라 해당 공지로 딥링크
     }
 
 
 # ── 사내톡 ──
+#: 미리보기 길이 — 카톡·인스타가 보여주는 만큼
+CHAT_PREVIEW = 60
+
+
 def chat_message(*, room_id: str, sender_name: str, is_group: bool, room_name: str | None, body: str) -> dict:
-    preview = body.strip() if body.strip() else "(사진)"
+    """사내톡 알림 — **길게 쓴 메시지는 잘라서 보여준다.**
+
+    예전에는 길이 제한이 없어서 긴 글을 보내면 알림에 그대로 다 나갔고,
+    줄바꿈까지 살아 있어 세로로 한참 늘어났다 (2026-08-13 대표 지적).
+
+    줄바꿈·연속 공백을 한 칸으로 접고 [CHAT_PREVIEW] 자에서 자른다.
+    **알림은 "왔다"를 알리는 자리지 읽는 자리가 아니다** — 전체는 눌러서 본다.
+    """
+    preview = " ".join(body.split()) or "(사진)"
+    if len(preview) > CHAT_PREVIEW:
+        preview = preview[:CHAT_PREVIEW].rstrip() + "…"
     if is_group and room_name:
         title, text = room_name, f"{sender_name}: {preview}"
     else:
@@ -60,23 +91,23 @@ def chat_message(*, room_id: str, sender_name: str, is_group: bool, room_name: s
 
 # ── 전자결재 ──
 def _approval(title: str, approval_title: str, approval_id: str) -> dict:
-    return {"type": "APPROVAL", "title": title, "body": approval_title, "link": f"/approvals/{approval_id}"}
+    return {"type": "APPROVAL", "title": title, "body": short(approval_title), "link": f"/approvals/{approval_id}"}
 
 
 def approval_requested(approval_title: str, approval_id: str) -> dict:
-    return _approval("결재 요청이 도착했습니다", approval_title, approval_id)
+    return _approval("결재할 게 있어요", approval_title, approval_id)
 
 
 def approval_rejected(approval_title: str, approval_id: str) -> dict:
-    return _approval("결재가 반려되었습니다", approval_title, approval_id)
+    return _approval("결재가 반려됐어요", approval_title, approval_id)
 
 
 def approval_approved(approval_title: str, approval_id: str) -> dict:
-    return _approval("결재가 최종 승인되었습니다", approval_title, approval_id)
+    return _approval("결재가 승인됐어요", approval_title, approval_id)
 
 
 def approval_withdrawn(approval_title: str, approval_id: str) -> dict:
-    return _approval("결재 요청이 회수되었습니다", approval_title, approval_id)
+    return _approval("결재가 회수됐어요", approval_title, approval_id)
 
 
 # ── 프로젝트 요청(연장/누락사유) ──
@@ -94,8 +125,8 @@ def project_request(
     # label = "기한 연장" | "누락 사유"
     return {
         "type": "PROJECT",
-        "title": f"프로젝트 {label} 요청",
-        "body": f"{project_title} · {requester_name}",
+        "title": f"{label} 신청이 왔어요",
+        "body": f"{short(project_title, 30)} · {requester_name}",
         "link": _project_link(project_id),
     }
 
@@ -109,70 +140,80 @@ def project_request_decided(
 ) -> dict:
     link = _project_link(project_id)
     if approved:
-        return {"type": "PROJECT", "title": f"프로젝트 {label} 승인", "body": f"{project_title} · 새 마감 반영", "link": link}
-    return {"type": "PROJECT", "title": f"프로젝트 {label} 반려", "body": f"{project_title} · 사유: {reject_reason}", "link": link}
+        return {"type": "PROJECT", "title": f"{label}이 승인됐어요", "body": f"{short(project_title, 30)} · 새 마감이 반영됐어요", "link": link}
+    return {"type": "PROJECT", "title": f"{label}이 반려됐어요", "body": f"{short(project_title, 30)} · {short(reject_reason)}", "link": link}
 
 
 # ── 프로젝트 마감 리마인더(스케줄러) ──
 def project_due_soon(days: int, project_title: str, project_id: str | None = None) -> dict:
-    return {"type": "PROJECT", "title": f"프로젝트 마감 D-{days}", "body": project_title, "link": _project_link(project_id)}
+    return {"type": "PROJECT", "title": f"마감이 {days}일 남았어요", "body": short(project_title), "link": _project_link(project_id)}
 
 
 def project_due_today(project_title: str, project_id: str | None = None) -> dict:
-    return {"type": "PROJECT", "title": "오늘 프로젝트 마감!", "body": project_title, "link": _project_link(project_id)}
+    return {"type": "PROJECT", "title": "오늘이 마감이에요", "body": short(project_title), "link": _project_link(project_id)}
 
 
 def project_overdue(project_title: str, project_id: str | None = None) -> dict:
-    return {"type": "PROJECT", "title": "프로젝트가 누락됐어요", "body": project_title, "link": _project_link(project_id)}
+    return {"type": "PROJECT", "title": "프로젝트가 누락됐어요", "body": short(project_title), "link": _project_link(project_id)}
 
 
 # ── 급여 ──
 def payslip_approved(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "급여 신청이 승인되었어요", "body": f"{year_month} 급여명세서가 승인됐어요. 지급이 확정됩니다.", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "급여 신청이 승인됐어요", "body": f"{year_month} 지급이 확정됐어요", "link": "/payroll"}
 
 
 def payslip_rejected(reason: str | None) -> dict:
-    return {"type": "PAYROLL", "title": "급여 신청이 반려되었어요", "body": reason, "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "급여 신청이 반려됐어요", "body": short(reason), "link": "/payroll"}
 
 
 def payslip_paid(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "급여가 지급되었어요", "body": f"{year_month} 급여가 지급 완료됐어요.", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "급여가 들어왔어요", "body": f"{year_month} 급여가 지급됐어요", "link": "/payroll"}
 
 
 def payday_today(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "오늘 급여를 신청하세요", "body": f"{year_month} 급여 지급일이에요. 명세서를 확인하고 신청해주세요.", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "오늘 급여를 신청해 주세요", "body": f"{year_month} 급여 지급일이에요", "link": "/payroll"}
 
 
 def payday_tomorrow(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "내일 급여 신청일이에요", "body": f"{year_month} 급여 지급일은 내일이에요. 미리 확인해두세요.", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "내일이 급여 신청일이에요", "body": f"{year_month} 급여를 미리 확인해 두세요", "link": "/payroll"}
 
 
 def payday_deadline(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "급여 신청 마감 임박 (오늘 20시)", "body": f"{year_month} 급여를 아직 신청하지 않았어요. 오늘 안에 신청해주세요.", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "오늘 20시까지 신청해 주세요", "body": f"{year_month} 급여를 아직 안 냈어요", "link": "/payroll"}
 
 
 # ── 일정 ──
-def event_reminder(label: str, event_title: str, start_at: datetime) -> dict:
-    # label = "오늘" | "D-7"…, start_at = KST datetime
-    return {"type": "SCHEDULE", "title": f"일정 {label} · {event_title}", "body": f"{start_at:%m/%d %H:%M} 시작", "link": "/schedule"}
+def event_reminder(days: int, event_title: str, start_at: datetime) -> dict:
+    """일정 리마인더 — [days] 는 남은 날 (0 이면 오늘).
+
+    예전에는 `D-7` 을 그대로 제목에 박았는데 알림에서 딱딱하게 읽혔다
+    (2026-08-13 대표 요청). 남은 날을 말로 푼다.
+    """
+    when = "오늘" if days == 0 else "내일" if days == 1 else f"{days}일 뒤"
+    return {
+        "type": "SCHEDULE",
+        "title": f"{when} 일정이 있어요",
+        "body": f"{short(event_title, 30)} · {start_at:%m/%d %H:%M}",
+        "link": "/schedule",
+    }
 
 
 # ── 랭킹 ──
 def ranking_winner(period: str, label: str) -> dict:
     # label = "종합왕"|"매출왕"…
-    return {"type": "RANKING", "title": f"🏆 {period} {label} 1위!", "body": f"지난달 {label}에 뽑혔어요. 축하합니다!", "link": "/ranking"}
+    return {"type": "RANKING", "title": f"{label}에 뽑혔어요 🏆", "body": f"지난달 {period} 1위예요. 축하해요!", "link": "/ranking"}
 
 
 def ranking_announce(period: str, summary: str) -> dict:
-    return {"type": "RANKING", "title": f"📢 {period} 랭킹 발표", "body": summary, "link": "/ranking"}
+    return {"type": "RANKING", "title": f"{period} 랭킹이 나왔어요 📢", "body": summary, "link": "/ranking"}
 
 
 def ranking_drop(label: str, overtaker_text: str, old_rank: int, new_rank: int) -> dict:
-    return {"type": "RANKING", "title": f"{label} 순위 하락", "body": f"{overtaker_text} 님이 당신을 앞질렀어요 ({old_rank}위 → {new_rank}위)", "link": "/ranking"}
+    return {"type": "RANKING", "title": f"{label} 순위가 밀렸어요", "body": f"{overtaker_text}님이 앞질렀어요 · {old_rank}위 → {new_rank}위", "link": "/ranking"}
 
 
 def ranking_change_admin(label: str, summary: str) -> dict:
-    return {"type": "RANKING", "title": f"{label} 순위 변동", "body": summary, "link": "/ranking"}
+    return {"type": "RANKING", "title": f"{label} 순위가 바뀌었어요", "body": summary, "link": "/ranking"}
 
 
 # ── 대표·관리자에게 가는 전사 알림 ──
@@ -187,13 +228,13 @@ def staff_attendance(name: str, action: str, when: datetime, note: str | None = 
     body = f"{when:%H:%M}"
     if note:
         body += f" · {note}"
-    return {"type": "ATTENDANCE", "title": f"{name} {action}", "body": body, "link": "/attendance"}
+    return {"type": "ATTENDANCE", "title": f"{name}님이 {action}했어요", "body": body, "link": "/attendance"}
 
 
 def staff_absent(name: str) -> dict:
     return {
         "type": "ATTENDANCE",
-        "title": f"{name} 결근",
+        "title": f"{name}님이 안 나왔어요",
         "body": "퇴근 시간이 지나도록 출근 기록이 없어요",
         "link": "/attendance",
     }
@@ -223,7 +264,7 @@ def project_created(project_title: str, author_name: str, project_id: str | None
     return {
         "type": "PROJECT",
         "title": "새 프로젝트가 만들어졌어요",
-        "body": f"{project_title} · {author_name}",
+        "body": f"{short(project_title, 30)} · {author_name}",
         "link": _project_link(project_id),
     }
 
@@ -232,7 +273,7 @@ def project_completed(project_title: str, project_id: str | None = None) -> dict
     return {
         "type": "PROJECT",
         "title": "프로젝트가 완료됐어요",
-        "body": project_title,
+        "body": short(project_title),
         "link": _project_link(project_id),
     }
 
@@ -241,7 +282,7 @@ def project_overdue_admin(project_title: str, who: str, project_id: str | None =
     return {
         "type": "PROJECT",
         "title": "프로젝트가 누락됐어요",
-        "body": f"{project_title} · {who}",
+        "body": f"{short(project_title, 30)} · {who}",
         "link": _project_link(project_id),
     }
 
@@ -250,7 +291,7 @@ def meeting_created(meeting_title: str, author_name: str, meeting_id: str) -> di
     return {
         "type": "MEETING",
         "title": "새 회의록이 올라왔어요",
-        "body": f"{meeting_title} · {author_name}",
+        "body": f"{short(meeting_title, 30)} · {author_name}",
         "link": f"/meetings/{meeting_id}",
     }
 
@@ -282,4 +323,4 @@ def employee_joined(name: str, branch_name: str | None, rank_label: str | None) 
 
 
 def employee_resigned(name: str) -> dict:
-    return {"type": "STAFF", "title": "퇴사 처리됐어요", "body": name, "link": "/staff"}
+    return {"type": "STAFF", "title": f"{name}님이 퇴사했어요", "body": None, "link": "/staff"}
