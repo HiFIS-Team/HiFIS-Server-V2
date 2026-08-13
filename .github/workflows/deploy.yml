@@ -65,3 +65,37 @@ jobs:
           printf '%s\n' "$KEY"     > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
           printf '%s\n' "$HOSTKEY" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
           ssh -i ~/.ssh/deploy -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$USER@$HOST"
+
+      # 결과를 앱 푸시로 — 직군이 개발자인 사람에게 간다.
+      #
+      # `always()` 라 위 단계가 죽어도 돈다. **성공도 보낸다** — 실패만 보내면
+      # "안 왔는데 성공한 건가 알림이 고장난 건가"를 구분할 수 없다.
+      #
+      # `INTERNAL_HOOK_TOKEN` 이 없으면 조용히 건너뛴다 (비밀을 안 넣은 포크에서
+      # 워크플로가 죽지 않게). **알림이 배포를 실패로 만들지 않는다** — 방금
+      # 컨테이너를 갈아끼운 직후라 API 가 아직 안 떴을 수 있어서, 몇 번
+      # 다시 걸어 보고 그래도 안 되면 그냥 넘어간다.
+      - name: 배포 결과 알림
+        if: always()
+        env:
+          TOKEN:  ${{ secrets.INTERNAL_HOOK_TOKEN }}
+          RESULT: ${{ job.status }}
+          # 이 job 은 checkout 을 안 한다 (SSH 한 줄만 돌린다) — `git log` 를 못 쓴다.
+          # 커밋 제목은 워크플로 컨텍스트에서 꺼내고, 첫 줄만 남긴다
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          [ -n "$TOKEN" ] || { echo "INTERNAL_HOOK_TOKEN 없음 — 알림 건너뜀"; exit 0; }
+          [ "$RESULT" = success ] && STATUS=success || STATUS=failure
+          BODY=$(jq -nc --arg s "$STATUS" --arg r "$GITHUB_REF" \
+                        --arg h "$GITHUB_SHA" --arg m "$(printf '%s' "$SUBJECT" | head -1)" \
+                 '{status:$s, ref:$r, sha:$h, message:$m}')
+          for i in 1 2 3; do
+            code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' \
+                     -X POST https://api.hifis.app/security/deploy \
+                     -H "Authorization: Bearer $TOKEN" \
+                     -H 'Content-Type: application/json' \
+                     -d "$BODY" || echo 000)
+            [ "$code" = 204 ] && { echo "알림 보냄"; exit 0; }
+            echo "알림 실패($code) — $i/3"; sleep 10
+          done
+          echo "알림을 못 보냈다 (배포 자체는 위 단계 결과를 따른다)"
