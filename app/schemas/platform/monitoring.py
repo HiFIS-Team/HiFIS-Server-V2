@@ -119,3 +119,23 @@ class GrafanaAlert(CamelModel):
 
     # 본문 — 어떤 규칙이 왜 걸렸는지
     message: str = Field(default="", max_length=2000)
+
+
+class DeployReport(CamelModel):
+    """배포가 끝나고 GitHub Actions 가 보내는 본문.
+
+    **여기는 모양을 우리가 정한다** (그라파나와 다르다). 그래도 필드를 전부
+    선택으로 둔다 — 워크플로에서 값을 못 채우는 자리가 생겨도 알림은 가야 한다.
+    """
+
+    # success · failure
+    status: str = Field(default="success", max_length=20)
+
+    # `refs/heads/main` — 뒤 한 조각만 알림에 쓴다
+    ref: str = Field(default="", max_length=200)
+
+    # 커밋 해시 (앞 7자만 보여준다)
+    sha: str = Field(default="", max_length=64)
+
+    # 커밋 제목처럼 한 줄 덧붙일 것
+    message: str = Field(default="", max_length=500)

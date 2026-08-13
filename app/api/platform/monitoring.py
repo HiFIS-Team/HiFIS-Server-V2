@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
-from app.enums import EmployeeStatus, Rank, Role
+from app.enums import Role
 from app.models.platform.anomaly import Anomaly
 from app.models.platform.api_metric import BUCKET_BOUNDS, ApiMetric
 from app.models.platform.ssh_host import SshHost
@@ -27,18 +27,34 @@ from app.schemas.platform.monitoring import (
     AnomalyOut,
     ApiMetricsOut,
     CaptureReport,
+    DeployReport,
     GrafanaAlert,
     MetricPointOut,
     SlowRouteOut,
     SshLoginReport,
 )
 from app.services.geoip import region_of
-from app.services.notifications import notify
+from app.services.notifications import notify_developers
 
 router = APIRouter(tags=["monitoring"])
 
 # 버킷 칸 이름 — 경계 순서와 같아야 한다
 _BUCKETS = tuple(f"b{bound}" for bound in BUCKET_BOUNDS)
+
+
+def _check_hook_token(x_internal_token: str, authorization: str = "") -> None:
+    """서버 자신이 부르는 자리의 열쇠 검사 — SSH·그라파나·배포가 같이 쓴다.
+
+    **`internal_hook_token` 이 비어 있으면 무조건 401** 이다. 설정을 빠뜨렸을 때
+    열려 있는 상태가 안 생긴다.
+
+    `Authorization: Bearer <토큰>` 도 받는다 — 그라파나 webhook 처럼
+    `X-Internal-Token` 같은 임의 헤더를 못 붙이는 판이 있다.
+    """
+    expected = settings.internal_hook_token
+    token = x_internal_token or authorization.removeprefix("Bearer ").strip()
+    if not expected or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
 
 
 def _percentile(counts: list[int], total: int, ratio: float, max_ms: int) -> int:
@@ -281,9 +297,7 @@ async def report_ssh_login(
 
     실패해도 접속을 막지 않는다 — 훅 쪽이 백그라운드로 부르고 응답을 안 기다린다.
     """
-    expected = settings.internal_hook_token
-    if not expected or not secrets.compare_digest(x_internal_token, expected):
-        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
+    _check_hook_token(x_internal_token)
 
     now = datetime.now(timezone.utc)
     host = await db.scalar(select(SshHost).where(SshHost.ip == body.ip))
@@ -298,24 +312,14 @@ async def report_ssh_login(
             host.region = await region_of(body.ip)
 
     if first_time:
-        devs = (
-            await db.execute(
-                select(Employee.id).where(
-                    Employee.rank == Rank.DEVELOPER,
-                    Employee.status == EmployeeStatus.ACTIVE,
-                )
-            )
-        ).scalars().all()
         where = f" · {host.region}" if host.region else ""
-        for employee_id in devs:
-            await notify(
-                db,
-                employee_id=employee_id,
-                type="SSH_LOGIN",
-                title="서버 SSH 접속",
-                body=f"{body.user}@서버{where} · {body.ip}",
-                link="/monitoring",
-            )
+        await notify_developers(
+            db,
+            type="SSH_LOGIN",
+            title="서버 SSH 접속",
+            body=f"{body.user}@서버{where} · {body.ip}",
+            link="/monitoring",
+        )
     await db.commit()
     return Response(status_code=204)
 
@@ -342,19 +346,7 @@ async def report_alert(
     바로 그 사고 때문에 알림이 안 온다. 그건 서버 밖에서 재는 장치가 있어야
     닫힌다 — 아직 없다.
     """
-    expected = settings.internal_hook_token
-    token = x_internal_token or authorization.removeprefix("Bearer ").strip()
-    if not expected or not secrets.compare_digest(token, expected):
-        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
-
-    devs = (
-        await db.execute(
-            select(Employee.id).where(
-                Employee.rank == Rank.DEVELOPER,
-                Employee.status == EmployeeStatus.ACTIVE,
-            )
-        )
-    ).scalars().all()
+    _check_hook_token(x_internal_token, authorization)
 
     resolved = body.status == "resolved"
     title = "서버 경고 해제" if resolved else "서버 경고"
@@ -362,15 +354,54 @@ async def report_alert(
     summary = body.title.split("] ", 1)[-1] if "] " in body.title else body.title
     text = (summary or body.message or "내용 없음").strip()[:200]
 
-    for employee_id in devs:
-        await notify(
-            db,
-            employee_id=employee_id,
-            type="SERVER_ALERT",
-            title=title,
-            body=text,
-            link="/monitoring",
-        )
+    await notify_developers(
+        db, type="SERVER_ALERT", title=title, body=text, link="/monitoring"
+    )
+    await db.commit()
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# 배포 결과 — **GitHub Actions 가 부른다** (main 에 푸시하면 도는 워크플로)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/security/deploy", status_code=204)
+async def report_deploy(
+    body: DeployReport,
+    x_internal_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """배포가 끝나면 **직군이 개발자인 사람에게** 결과를 알린다.
+
+    **성공도 알린다.** 실패만 알리면 "안 왔는데 성공한 건가 알림이 고장난 건가"를
+    구분할 수 없다. 배포는 하루 몇 번이라 그만한 양이 아니다.
+
+    실패는 GitHub 이 메일로도 보내지만 메일은 늦게 본다. **마이그레이션이
+    도는 순간**이라 실패를 빨리 아는 값어치가 크다.
+
+    ⚠️ **배포가 API 를 갈아끼우는 그 시간에 부른다.** 그래서 컨테이너가 막
+    올라오는 중이면 이 요청이 실패할 수 있다 — 워크플로 쪽에서 재시도하고,
+    그래도 안 되면 **배포를 실패로 만들지 않고 넘어간다** (알림이 배포를
+    막으면 안 된다).
+    """
+    _check_hook_token(x_internal_token, authorization)
+
+    ok = body.status == "success"
+    where = body.ref.rsplit("/", 1)[-1] or "main"
+    detail = (body.message or "").strip()[:160]
+    body_text = f"{where} · {body.sha[:7]}" if body.sha else where
+    if detail:
+        body_text = f"{body_text} · {detail}"
+
+    await notify_developers(
+        db,
+        type="DEPLOY",
+        title="배포 완료" if ok else "배포 실패",
+        body=body_text,
+        link="/monitoring",
+    )
     await db.commit()
     return Response(status_code=204)
 
