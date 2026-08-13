@@ -21,6 +21,7 @@ from app.db.session import get_db
 from app.enums import EmployeeStatus, Rank, Role
 from app.models.platform.anomaly import Anomaly
 from app.models.platform.api_metric import BUCKET_BOUNDS, ApiMetric
+from app.models.platform.ssh_host import SshHost
 from app.models.staff.employee import Employee
 from app.schemas.platform.monitoring import (
     AnomalyOut,
@@ -31,6 +32,7 @@ from app.schemas.platform.monitoring import (
     SlowRouteOut,
     SshLoginReport,
 )
+from app.services.geoip import region_of
 from app.services.notifications import notify
 
 router = APIRouter(tags=["monitoring"])
@@ -245,6 +247,11 @@ async def report_capture(
     return Response(status_code=204)
 
 # ---------------------------------------------------------------------------
+# 이 기간 동안 안 보이던 IP 는 다시 '처음 보는 곳' 으로 친다.
+# 집 IP 가 유동이라 한 달쯤 안 쓰면 바뀌어 있을 수 있다.
+SSH_HOST_FORGET_DAYS = 30
+
+
 # SSH 접속 알림 — **서버 자신이 부른다** (사람 로그인이 아니다)
 # ---------------------------------------------------------------------------
 
@@ -265,31 +272,50 @@ async def report_ssh_login(
     **직급이 기준이고 권한이 아니다.** 서버를 만지는 사람에게만 가야 하는데,
     권한(MASTER)에는 대표도 들어가서 서버와 상관없는 사람에게까지 간다.
 
+    **처음 보는 IP 에서만 알린다** (2026-08-13 결정). 세션마다 알리면 개발자가
+    서버를 한 번 살펴보는 동안 열 건이 쏟아진다. 아는 곳에서 들어오는 건 볼
+    이유가 없고, 낯선 곳에서 들어오는 것만 봐야 8/11 같은 침입이 눈에 띈다.
+    [SSH_HOST_FORGET_DAYS] 동안 안 보이던 IP 는 다시 '처음'으로 친다.
+
+    본문에 **시각을 안 적는다** — 알림함이 이미 시각을 따로 보여준다.
+
     실패해도 접속을 막지 않는다 — 훅 쪽이 백그라운드로 부르고 응답을 안 기다린다.
     """
     expected = settings.internal_hook_token
     if not expected or not secrets.compare_digest(x_internal_token, expected):
         raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
 
-    devs = (
-        await db.execute(
-            select(Employee.id).where(
-                Employee.rank == Rank.DEVELOPER,
-                Employee.status == EmployeeStatus.ACTIVE,
-            )
-        )
-    ).scalars().all()
+    now = datetime.now(timezone.utc)
+    host = await db.scalar(select(SshHost).where(SshHost.ip == body.ip))
+    if host is None:
+        first_time = True
+        host = SshHost(ip=body.ip, region=await region_of(body.ip), last_seen_at=now)
+        db.add(host)
+    else:
+        first_time = now - host.last_seen_at > timedelta(days=SSH_HOST_FORGET_DAYS)
+        host.last_seen_at = now
+        if host.region is None:  # 지난번에 조회가 실패했다 — 한 번 더 해 본다
+            host.region = await region_of(body.ip)
 
-    when = datetime.now(timezone(timedelta(hours=9))).strftime("%m/%d %H:%M")
-    for employee_id in devs:
-        await notify(
-            db,
-            employee_id=employee_id,
-            type="SSH_LOGIN",
-            title="서버 SSH 접속",
-            body=f"{body.user}@서버 · {body.ip} · {when}",
-            link="/monitoring",
-        )
+    if first_time:
+        devs = (
+            await db.execute(
+                select(Employee.id).where(
+                    Employee.rank == Rank.DEVELOPER,
+                    Employee.status == EmployeeStatus.ACTIVE,
+                )
+            )
+        ).scalars().all()
+        where = f" · {host.region}" if host.region else ""
+        for employee_id in devs:
+            await notify(
+                db,
+                employee_id=employee_id,
+                type="SSH_LOGIN",
+                title="서버 SSH 접속",
+                body=f"{body.user}@서버{where} · {body.ip}",
+                link="/monitoring",
+            )
     await db.commit()
     return Response(status_code=204)
 

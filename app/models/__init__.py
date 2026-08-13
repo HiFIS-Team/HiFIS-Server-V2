@@ -3,6 +3,7 @@
 from app.models.platform.access_log import AccessLog
 from app.models.platform.anomaly import Anomaly
 from app.models.platform.api_metric import ApiMetric
+from app.models.platform.ssh_host import SshHost
 from app.models.platform.account import Account, AccountAccessLog
 from app.models.platform.audit_log import AuditLog
 from app.models.board.approval import Approval
@@ -42,6 +43,7 @@ __all__ = [
     "AccountAccessLog",
     "Anomaly",
     "ApiMetric",
+    "SshHost",
     "AuditLog",
     "Approval",
     "ChatRoom",
