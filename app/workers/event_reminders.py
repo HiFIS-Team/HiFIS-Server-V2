@@ -34,10 +34,9 @@ async def event_reminders(now: datetime | None = None) -> None:
             days = (e.start_at.astimezone(KST).date() - today).days
             if days not in REMIND_DAYS:
                 continue
-            label = "오늘" if days == 0 else f"D-{days}"
             await notify(
                 db,
                 employee_id=e.owner_id,
-                **ntext.event_reminder(label, e.title, e.start_at.astimezone(KST)),
+                **ntext.event_reminder(days, e.title, e.start_at.astimezone(KST)),
             )
         await db.commit()
