@@ -113,6 +113,11 @@ async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depe
         raise HTTPException(
             401, detail={"code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}
         )
+    # 처음 들어온 순간을 한 번만 찍는다 — 프로필 상세의 '첫 접속일' (2026-08-13).
+    # **응답을 만들기 전에** 세워야 그 자리에서 바로 값이 실린다.
+    if employee.first_login_at is None:
+        employee.first_login_at = datetime.now(timezone.utc)
+
     # 응답을 커밋 전에 만들어 둔다(순서 무관 — expire_on_commit=False 지만 명시적으로 안전하게)
     response = TokenResponse(
         access_token=create_access_token(employee.id, employee.token_version),
