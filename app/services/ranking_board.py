@@ -134,7 +134,11 @@ async def build_board(
         row = board.get(employee_id)
         if row is None:
             continue
-        row[_SCORE_FIELD[category]] = int(points or 0)
+        # 음수는 0 으로 (2026-08-13 결정) — MASTER 가 프로젝트 점수를 깎으면 합이
+        # 마이너스가 될 수 있는데 **랭킹판에는 `-` 를 안 찍는다.** 깎인 사실은
+        # 업무 화면의 점수 내역에 그대로 남는다. 여기서 자르면 탭 값과 종합 환산이
+        # 같은 값을 본다 — 한쪽만 자르면 둘이 어긋난다.
+        row[_SCORE_FIELD[category]] = max(0, int(points or 0))
 
     # 친절 근거 — 받은 설문 수 (점수는 위 원장에서 왔다)
     rows = (

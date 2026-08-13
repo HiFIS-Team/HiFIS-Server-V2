@@ -124,12 +124,17 @@ PROJECT_POINTS = 10
 async def _settle_completion(db: AsyncSession, project: Project) -> None:
     """완료(100%)에 맞춰 담당자 점수를 정리한다. commit 은 호출자가 한다.
 
-    - 100% 가 되면 담당자 **전원에게 기본 10점**. 이미 점수가 있는 사람은 건드리지
-      않는다 — 되돌렸다 다시 완료해도 두 번 쌓이지 않는다.
+    - 100% 가 되면 담당자 **전원에게 무조건 기본 10점**을 먼저 준다 (2026-08-13 결정).
+      MASTER 가 완료 **전에** 점수를 매겨 뒀어도 10점으로 되돌린다 — 깎거나 더 주는
+      것은 완료된 다음에 하는 판단이라, 완료 시점의 출발선은 항상 10점이다.
     - 100% 아래로 내려가면 **자동으로 준 것만** 회수한다. MASTER 가 매긴 점수는
       그대로 둔다 (평가는 진행률과 별개로 내린 판단이라 되돌리면 안 된다).
 
     자동인지는 `created_by_id` 로 가른다 — 자동은 None, 사람이 준 것은 그 사람 id.
+
+    **정산은 완료 한 번에 한 번만** 한다 (`completed_notified_at` 이 표시). 이 함수는
+    진행률을 건드릴 때마다 불려서, 표시가 없으면 100% 인 프로젝트의 할 일을 체크할
+    때마다 MASTER 가 매긴 점수가 10점으로 되돌아간다.
     """
     existing = (
         (
@@ -143,14 +148,22 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
         .scalars()
         .all()
     )
-    scored = {event.employee_id for event in existing}
+    by_employee = {event.employee_id: event for event in existing}
 
     if project.progress >= 100:
+        # 이미 이번 완료로 정산했으면 아무것도 안 한다 (MASTER 평가를 덮지 않는다)
+        if project.completed_notified_at is not None:
+            return
         for employee_id in project.assignee_ids or []:
-            if employee_id in scored:
-                continue
             employee = await db.get(Employee, employee_id)
             if employee is None:
+                continue
+            event = by_employee.get(employee_id)
+            if event is not None:
+                # 완료 전에 매겨 둔 점수가 있어도 출발선은 10점이다
+                event.points = PROJECT_POINTS
+                event.reason = "프로젝트 완료"
+                event.created_by_id = None  # 다시 자동으로 — 되돌리면 회수 대상이 된다
                 continue
             await accrue_score(
                 db,
@@ -162,11 +175,8 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
                 reason="프로젝트 완료",
             )
         # 대표·관리자에게 완료를 알린다 (2026-08-11 대표 요청).
-        # **한 번만** — 이 함수는 진행률을 건드릴 때마다 불려서, 표시가 없으면
-        # 완료된 프로젝트를 고칠 때마다 같은 알림이 다시 나간다.
-        if project.completed_notified_at is None:
-            project.completed_notified_at = datetime.now(timezone.utc)
-            await notify_bosses(db, **ntext.project_completed(project.title, project.id))
+        project.completed_notified_at = datetime.now(timezone.utc)
+        await notify_bosses(db, **ntext.project_completed(project.title, project.id))
         return
 
     # 100% 아래로 내려갔다 — 다시 완료하면 그때 또 알린다
