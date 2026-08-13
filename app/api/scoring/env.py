@@ -44,7 +44,7 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     # 빨래 — 돌리고, 말리고, 갠다. 이 차례가 뒤집히면 안 된다
     ("세탁", 1, False),
     ("건조기", 1, False),
-    ("빨래정리", 3, False),
+    ("빨래정리", 2, False),   # 3 → 2 (2026-08-13 대표 결정)
     # 청소 — 넓은 곳부터 탈의실, 화장실 순
     ("구역청소", 2, False),
     ("복도청소", 2, False),
@@ -53,7 +53,7 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     ("남탈청소", 2, False),
     ("여탈부스", 5, False),
     ("여탈청소", 2, False),
-    ("화장실청소", 5, False),
+    ("화장실청소", 2, False),  # 5 → 2 (2026-08-13 대표 결정)
     # 관리
     ("기구관리", 2, False),
     ("회원지도", 2, False),

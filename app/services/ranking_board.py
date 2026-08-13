@@ -8,15 +8,21 @@
 나머지는 **점수 원장 합**이다. 원장을 그대로 쓰는 항목(친절·프로젝트·환경정비)은
 업무 화면이 쌓아 올린 점수와 랭킹이 어긋나지 않는다.
 
+**종합은 쌓은 점수를 그대로 더한 값이다** (2026-08-13 대표 결정). 매출만
+단위가 달라서 [sales_points] 로 바꿔 **말일에 한 번** 얹는다.
+
 한 달치를 한 번에 모아 사람별로 접어 준다 — 사람마다 쿼리를 날리면
 인원수만큼 요청이 늘어난다.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.periods import period_range
-from app.enums import RegistrationType, Role, ScoreCategory
+from app.core.periods import KST, period_range
+from app.enums import RegistrationType, Role, ScoreCategory, VisitPath
+from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
 from app.models.projects.project import Project
@@ -25,15 +31,8 @@ from app.models.scoring.kindness import KindnessSurvey
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.employee import Employee
 
-# 앱 랭킹 탭 순서 — 종합은 나머지를 환산해 평균 내므로 맨 뒤다
+# 앱 랭킹 탭 순서 — 종합은 나머지를 더한 값이라 맨 뒤다
 METRICS = ["revenue", "kindness", "project", "care", "lesson", "overall"]
-
-# 종합에만 얹는 항목 — **탭으로는 안 센다.**
-#
-# 방문 경로(블로그·인스타·OT→PT)는 종합 점수에 반영하되 랭킹 탭은 늘리지
-# 않기로 했다 (2026-08-11). 여기 두면 `lastRank` 가 6칸 그대로라 앱의 탭
-# 자리가 안 밀린다 — METRICS 에 넣으면 종합이 5번에서 6번으로 밀린다.
-_OVERALL_EXTRA = ["visit"]
 
 # 점수 원장을 그대로 headline 로 쓰는 항목들
 _SCORE_FIELD = {
@@ -45,6 +44,36 @@ _SCORE_FIELD = {
     ScoreCategory.INSTAGRAM: "instaScore",
     ScoreCategory.OT_PT: "otptScore",
 }
+
+
+def sales_points(revenue: int) -> int:
+    """매출(원) → 종합에 얹는 점수. **만원 단위로 보고 0.25 를 곱한다.**
+
+    대표님 계산 그대로다 — `500만 × 0.25 = 1,250,000` 에서 뒤의 0 네 개를 떼면
+    125 이고, 그것이 곧 `500만 ÷ 1만 × 0.25` 다.
+
+    | 매출 | 점수 |
+    |---|---|
+    | 1,000만 | 250 |
+    | 500만 | 125 |
+    | 100만 | 25 |
+
+    **소수점은 버린다.** 급여의 `payroll.sales_points` 와 식은 같지만 거기는
+    반올림이라 값이 1 점 다를 수 있다 — 랭킹은 "이만큼 벌면 이만큼"이 눈으로
+    떨어져야 해서 버림으로 둔다.
+    """
+    return int(revenue / 10_000 * 0.25)
+
+
+def _month_closed(period: str) -> bool:
+    """그 달이 끝났는가 — **마지막 날부터** True.
+
+    매출 점수를 종합에 얹는 시점이다. 지난달을 볼 때는 늘 True 다.
+    """
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    start, end = period_range(period)
+    last_day = (end.astimezone(KST) - timedelta(days=1)).date()
+    return today >= last_day
 
 
 def _blank(employee: Employee) -> dict:
@@ -68,6 +97,10 @@ def _blank(employee: Employee) -> dict:
         "blogScore": 0,
         "instaScore": 0,
         "otptScore": 0,
+        # 종합의 재료 — 그 달 점수 원장 합(카테고리별로 음수는 0), 그리고
+        # 말일에 한 번 얹는 매출 점수. 둘을 더한 것이 종합이다.
+        "ledger": 0,
+        "salesScore": 0,
         "lastRank": [0] * len(METRICS),
     }
 
@@ -93,6 +126,12 @@ async def build_board(
     board = {p.id: _blank(p) for p in people}
 
     # 매출 — 그 달에 등록된 등록권의 결제액. 신규/재등록을 따로 센다
+    #
+    # **워크인은 뺀다** (2026-08-13 대표 결정). 센터를 보고 제 발로 온 사람이라
+    # 직원이 끌어온 실적이 아니다. 방문 경로 점수를 줄 때 워크인을 빼는 것과
+    # 같은 기준이다 (`VISIT_PATH_SCORE`).
+    #
+    # **급여는 그대로다** — 커미션은 워크인도 포함해서 계산한다. 랭킹에서만 뺀다.
     rows = (
         await db.execute(
             select(
@@ -101,7 +140,12 @@ async def build_board(
                 func.coalesce(func.sum(Registration.price_paid), 0),
                 func.count(),
             )
-            .where(Registration.created_at >= start, Registration.created_at < end)
+            .join(Member, Member.id == Registration.member_id)
+            .where(
+                Registration.created_at >= start,
+                Registration.created_at < end,
+                Member.visit_path.is_distinct_from(VisitPath.WALK_IN),
+            )
             .group_by(Registration.trainer_id, Registration.type)
         )
     ).all()
@@ -115,7 +159,13 @@ async def build_board(
         else:
             row["reSignups"] += count
 
-    # 친절·프로젝트·환경정비·수업 점수 — 전부 같은 원장이라 한 번에 접는다
+    # 점수 원장 — **전 카테고리**를 한 번에 접는다.
+    #
+    # 탭에 쓰는 것은 `_SCORE_FIELD` 에 있는 것들뿐이지만, 종합은 쌓은 점수를
+    # 그대로 더하므로 센터 기여도(CONTRIB)·동료평가처럼 탭이 없는 것도 들어간다.
+    #
+    # **급여 마감이 넣는 매출성과(`sales:*`)는 뺀다** — 종합의 매출 점수를
+    # 여기서 따로 계산하므로 그대로 두면 같은 매출이 두 번 세어진다.
     rows = (
         await db.execute(
             select(
@@ -125,7 +175,7 @@ async def build_board(
             )
             .where(
                 ScoreEvent.period == period,
-                ScoreEvent.category.in_(list(_SCORE_FIELD)),
+                func.coalesce(ScoreEvent.source_ref_id, "").not_like("sales:%"),
             )
             .group_by(ScoreEvent.employee_id, ScoreEvent.category)
         )
@@ -133,6 +183,11 @@ async def build_board(
     for employee_id, category, points in rows:
         row = board.get(employee_id)
         if row is None:
+            continue
+        # 카테고리마다 음수는 0 으로 자른 뒤 더한다 — 한 항목을 깎았다고
+        # 다른 항목에서 쌓은 점수까지 잡아먹으면 안 된다
+        row["ledger"] += max(0, int(points or 0))
+        if category not in _SCORE_FIELD:
             continue
         # 음수는 0 으로 (2026-08-13 결정) — MASTER 가 프로젝트 점수를 깎으면 합이
         # 마이너스가 될 수 있는데 **랭킹판에는 `-` 를 안 찍는다.** 깎인 사실은
@@ -187,6 +242,19 @@ async def build_board(
             select(Project).where(Project.due >= start, Project.due < end)
         )
     ).all()
+    # 매출 점수 — **말일부터** 종합에 얹는다 (2026-08-13 대표 결정).
+    #
+    # 매출은 원 단위라 그대로 못 더한다. 급여가 쓰는 것과 같은 식으로 바꾼다:
+    # 만원 단위로 보고 0.25 를 곱한다 (500만원 → 125, 1000만원 → 250).
+    #
+    # **달이 끝나야 붙는다.** 월중에는 0 이라 종합에 매출이 안 보이고, 마지막
+    # 날부터 한 번에 들어온다. 나머지 점수(환경정비·수업 등)는 그때그때 반영된다.
+    if _month_closed(period):
+        for row in board.values():
+            row["salesScore"] = sales_points(row["revenue"])
+    for row in board.values():
+        row["overall"] = row["ledger"] + row["salesScore"]
+
     for project in projects:
         for employee_id in project.assignee_ids or []:
             row = board.get(employee_id)
@@ -212,18 +280,18 @@ def _value(row: dict, metric: str, pool: list[dict]) -> float:
     if metric == "lesson":
         return float(row["lessons"])
     if metric == "visit":
-        # 방문 경로는 셋을 합쳐 한 항목으로 본다 — 종합에서 유입만 세 자리를
-        # 차지하면 다른 항목의 무게가 반으로 줄어든다
+        # 방문 경로 — 탭은 없지만 점수는 종합(원장 합)에 그대로 들어간다.
+        # 여기 남겨 둔 것은 추월 스캔이 "무슨 차이로 넘었나"를 잴 때 쓰기 때문이다.
         return float(row["blogScore"] + row["instaScore"] + row["otptScore"])
-    # 종합 — 항목마다 1등을 100점으로 두고 상대 위치를 평균 낸다.
-    # 매출은 원, 수업은 개수라 단위가 달라서 그냥 더할 수 없다.
-    total = 0.0
-    parts = METRICS[:-1] + _OVERALL_EXTRA
-    for part in parts:
-        top = max((_value(other, part, pool) for other in pool), default=0.0)
-        if top > 0:
-            total += _value(row, part, pool) / top * 100
-    return total / len(parts)
+    # 종합 — **쌓은 점수를 그대로 더한다** (2026-08-13 대표 결정).
+    #
+    # 예전에는 항목마다 1등을 100 으로 놓고 평균을 냈는데, 그러면 한 항목에서
+    # 압도적 1등을 해도 종합은 20점이 천장이라 "133점인데 왜 20점이냐"가 됐다.
+    # 지금은 환경정비 133점이 종합에 133 으로 들어간다 — 아무나 검산할 수 있다.
+    #
+    # 매출만 단위가 다르다(원). [sales_points] 로 점수로 바꿔서 **말일에 한 번**
+    # 얹는다 — 그 전에는 0 이다.
+    return float(row["ledger"] + row["salesScore"])
 
 
 def metric_value(row: dict, metric: str, pool: list[dict]) -> float:
