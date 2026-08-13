@@ -29,7 +29,8 @@ class DeviceToken(UUIDMixin, TimestampMixin, Base):
     #: 그 폰으로 앞사람 알림이 계속 간다.
     token: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
 
-    #: `IOS` · `MACOS` — 지금은 기록용이다 (보내는 주소는 아래 [sandbox] 가 정한다)
+    #: `IOS` · `MACOS` · `ANDROID` — **어느 길로 보낼지를 정한다.**
+    #: 애플 둘은 APNs, 안드로이드는 FCM 이다 (아래 [sandbox] 는 애플에만 뜻이 있다).
     platform: Mapped[str] = mapped_column(String(10), nullable=False, default="IOS")
 
     #: 개발용 토큰인가 — **빌드 모드가 정한다**, 기기 종류가 아니다.

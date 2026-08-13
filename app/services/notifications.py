@@ -18,7 +18,7 @@ from app.enums import EmployeeStatus, Rank, Role
 from app.models.chat.device_token import DeviceToken
 from app.models.chat.notification import Notification, PushSubscription
 from app.models.staff.employee import Employee
-from app.services import apns
+from app.services import apns, fcm
 
 logger = logging.getLogger(__name__)
 
@@ -121,26 +121,49 @@ async def _fanout(db: AsyncSession, employee_id: str, payload: dict) -> None:
     """웹푸시와 앱 푸시를 둘 다 태운다 — 한쪽이 실패해도 다른 쪽은 간다"""
     if _push_enabled():
         await _push(db, employee_id, payload)
-    if apns.enabled():
-        await _push_apns(db, employee_id, payload)
+    if apns.enabled() or fcm.enabled():
+        await _push_devices(db, employee_id, payload)
 
 
-async def _push_apns(db: AsyncSession, employee_id: str, payload: dict) -> None:
+async def _push_devices(db: AsyncSession, employee_id: str, payload: dict) -> None:
+    """앱 푸시 — 기기마다 **플랫폼을 보고 길을 가른다.**
+
+    애플(iOS·macOS)은 APNs 로 직접 치고 안드로이드는 FCM 을 거친다. 한 사람이
+    아이폰과 안드로이드를 같이 쓸 수 있으므로 기기별로 갈라야 한다.
+
+    한쪽 설정만 채워져 있으면 그쪽만 간다 — 안드로이드를 붙이기 전에도
+    애플은 그대로 갔던 것과 같다.
+    """
     devices = (
         await db.scalars(select(DeviceToken).where(DeviceToken.employee_id == employee_id))
     ).all()
     for device in devices:
-        dead = await apns.send(
-            token=device.token,
-            sandbox=device.sandbox,
-            title=payload["title"],
-            body=payload.get("body"),
-            link=payload.get("link"),
-            type=payload["type"],
-        )
-        # 앱을 지웠거나 토큰이 무효다 — 안 지우면 계속 보내다 애플이 막는다
+        android = device.platform == "ANDROID"
+        if android and not fcm.enabled():
+            continue
+        if not android and not apns.enabled():
+            continue
+        if android:
+            dead = await fcm.send(
+                token=device.token,
+                title=payload["title"],
+                body=payload.get("body"),
+                link=payload.get("link"),
+                type=payload["type"],
+            )
+        else:
+            dead = await apns.send(
+                token=device.token,
+                sandbox=device.sandbox,
+                title=payload["title"],
+                body=payload.get("body"),
+                link=payload.get("link"),
+                type=payload["type"],
+            )
+        # 앱을 지웠거나 토큰이 무효다 — 안 지우면 계속 보내다 저쪽이 막는다
         if dead:
-            logger.info("apns 토큰 정리(%s): %s", dead, device.token[:12])
+            logger.info("%s 토큰 정리(%s): %s",
+                        "fcm" if android else "apns", dead, device.token[:12])
             await db.delete(device)
 
 
