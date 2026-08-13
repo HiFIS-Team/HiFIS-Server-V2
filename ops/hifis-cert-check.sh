@@ -65,6 +65,8 @@ TOKEN=$(grep -m1 '^INTERNAL_HOOK_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- 
 
 body=$(printf '%s · ' "${PROBLEMS[@]}"); body=${body% · }
 echo "인증서 문제: $body"
-curl -sS -m 15 -o /dev/null -X POST "$API" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+# 열쇠를 명령행에 안 둔다 — `-H` 로 주면 `ps aux` 에 그대로 보인다
+printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" | \
+curl -sS -m 15 -o /dev/null --config - -X POST "$API" \
+  -H 'Content-Type: application/json' \
   -d "$(jq -nc --arg m "$body" '{status:"firing", title:"인증서 만료 임박", message:$m}')"

@@ -90,8 +90,12 @@ TOKEN=$(grep -m1 '^INTERNAL_HOOK_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- 
 [ -n "$TOKEN" ] || { echo "INTERNAL_HOOK_TOKEN 을 못 읽었다 — $ENV_FILE"; exit 1; }
 
 send() {  # send <제목> <본문>
-  curl -sS -m 15 -o /dev/null -X POST "$API" \
-    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  # 열쇠를 **명령행에 안 둔다.** `-H "Authorization: ..."` 로 주면 curl 이 도는
+  # 몇 초 동안 `ps aux` 에 토큰이 그대로 보인다. `--config -` 로 표준입력에
+  # 실어 보내면 안 보인다 (본문은 비밀이 아니라 그대로 둔다)
+  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" | \
+  curl -sS -m 15 -o /dev/null --config - -X POST "$API" \
+    -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg t "$1" --arg m "$2" '{status:"firing", title:$t, message:$m}')"
 }
 
