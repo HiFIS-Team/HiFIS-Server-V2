@@ -191,8 +191,14 @@ def _absent_today(employee: Employee, now_kst: datetime) -> bool:
     그 전에는 **미출근**(판정 없음)이다. 아침 9시에 결근으로 뜨면 아직 오는 중인
     사람을 결근으로 부르는 셈이라, 본인이 설정한 근무시간이 다 지나야 찍는다.
     근무시간을 설정 안 한 사람은 기준이 없어 판정하지 않는다.
+
+    **가입한 날은 결근으로 안 찍는다** (2026-08-13 결정). 계정은 보통 근무 중에
+    만들어져서 그날은 출근 스캔이 있을 리가 없다 — 실제로 오후 3시에 가입한
+    두 사람이 그날 결근으로 찍혔다. 캘린더 쪽 `day <= joined_d` 와 같은 규칙이다.
     """
     if not employee.shift_end:
+        return False
+    if _joined(employee) == now_kst.date():
         return False
     return _kst_min(now_kst) > _hhmm_to_min(employee.shift_end)
 
@@ -468,8 +474,16 @@ async def attendance_calendar(
                     date=day, status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
                 )
             )
-        elif day < joined_d:
-            pass  # 입사 전 — 계정이 없던 날이라 결근도 휴무도 아니다(그릴 것 없음)
+        elif day <= joined_d:
+            # **가입한 날까지** 안 그린다 (2026-08-13 결정).
+            #
+            # 예전에는 `day < joined_d` 라 가입 **전날**까지만 뺐다. 그런데 계정은
+            # 보통 근무 중에 만들어져서(실제로 오후 3시였다) 그날은 출근 스캔이
+            # 있을 리가 없는데 근무 요일이면 그대로 결근으로 찍혔다.
+            #
+            # 가입 첫날 지각·조기퇴근을 안 매기는 것과 같은 이유다
+            # (`_attendance_status` 의 `first_day`) — 그때 결근을 빠뜨렸다.
+            pass
         elif work_days:
             if day.isoweekday() not in work_days:
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
@@ -569,8 +583,8 @@ async def attendance_calendar_all(
                     status = None  # 근무시간 미설정 — 그릴 자리가 없다
             elif on_leave is not None:
                 status = AttendanceStatus.ON_LEAVE
-            elif day < joined_d:
-                status = None  # 입사 전 — 계정이 없던 날
+            elif day <= joined_d:
+                status = None  # 가입한 날까지 — 위 사람별 캘린더와 같은 규칙
             elif work_days and day.isoweekday() in work_days:
                 if day < today or _absent_today(emp, now_kst):
                     status = AttendanceStatus.ABSENT
