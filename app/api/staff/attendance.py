@@ -394,6 +394,7 @@ async def attendance_calendar(
         return None
 
     work_days = set(target.work_days or [])
+    joined_d = target.joined_at.astimezone(KST).date()  # 입사 전은 판정 대상이 아니다
     out: list[AttendanceDayOut] = []
     day = start_d
     while day < limit_d:
@@ -415,6 +416,8 @@ async def attendance_calendar(
                     date=day, status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
                 )
             )
+        elif day < joined_d:
+            pass  # 입사 전 — 계정이 없던 날이라 결근도 휴무도 아니다(그릴 것 없음)
         elif work_days:
             if day.isoweekday() not in work_days:
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
@@ -500,6 +503,7 @@ async def attendance_calendar_all(
         mine = recs[emp.id]
         my_leaves = leaves[emp.id]
         work_days = set(emp.work_days or [])
+        joined_d = emp.joined_at.astimezone(KST).date()  # 입사 전은 판정 대상이 아니다
         day = start_d
         while day < limit_d:
             rec = mine.get(day)
@@ -511,6 +515,8 @@ async def attendance_calendar_all(
                     status = None  # 근무시간 미설정 — 그릴 자리가 없다
             elif on_leave is not None:
                 status = AttendanceStatus.ON_LEAVE
+            elif day < joined_d:
+                status = None  # 입사 전 — 계정이 없던 날
             elif work_days and day.isoweekday() in work_days:
                 if day < today or _absent_today(emp, now_kst):
                     status = AttendanceStatus.ABSENT
