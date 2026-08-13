@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     apns_private_key: str = ""
     apns_topic: str = "app.hifis.hifis"  # 번들 ID (네 플랫폼 공통)
 
+    # 앱 푸시 FCM (§9.4) — **안드로이드 전용.** 둘 다 있어야 보낸다.
+    #
+    # 구글이 다른 길을 안 줘서 안드로이드만 FCM 을 거친다 (애플은 APNs 직접).
+    # Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성.
+    # fcm_service_account 는 받은 **JSON 파일 내용 그대로**다 —
+    # .env 한 줄에 넣어야 하므로 개행 없이 압축해서 적는다
+    # (`python3 -c "import json,sys;print(json.dumps(json.load(open(sys.argv[1]))))"`).
+    fcm_project_id: str = ""
+    fcm_service_account: str = ""
+
     # 서버 내부 훅 토큰 (§보안) — 사람 계정이 아니라 **서버 자신**이 부르는 자리.
     # 지금은 `POST /security/ssh-login` 하나가 쓴다 (SSH 접속 알림).
     # 비면 그 엔드포인트가 **항상 401** 이다 — 실수로 열려 있는 상태가 안 생긴다.
