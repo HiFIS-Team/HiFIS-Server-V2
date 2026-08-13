@@ -70,6 +70,8 @@ class EmployeeOut(CamelModel):
     joined_at: datetime
     resigned_at: datetime | None = None  # 퇴사 시각 (§58) — null=재직 중
     last_active_at: datetime | None = None
+    # 처음 로그인한 시각 — null 이면 가입만 하고 아직 안 들어온 사람이다
+    first_login_at: datetime | None = None
     shift_start: str | None = None  # 기본 근무 시간 "HH:MM" (null=미설정 → 첫 로그인 시 설정 유도)
     shift_end: str | None = None
     work_days: list[int] | None = None  # 근무 요일 ISO 1(월)~7(일). null=미설정

@@ -62,6 +62,11 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # 퇴사 시각 — status=RESIGNED 로 바뀌거나 삭제(퇴사) 시 기록. null=재직 중 (§58)
     resigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 처음 로그인한 시각 — 프로필 상세가 '가입일'과 나란히 보여준다 (2026-08-13).
+    # 가입만 하고 안 들어온 사람을 가리는 값이라 **한 번 찍히면 안 바뀐다.**
+    first_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # 급여 공제 방식 (§5) — 직원별 설정
     deduction_method: Mapped[DeductionMethod] = mapped_column(

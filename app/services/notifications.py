@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.enums import EmployeeStatus, Role
+from app.enums import EmployeeStatus, Rank, Role
 from app.models.chat.device_token import DeviceToken
 from app.models.chat.notification import Notification, PushSubscription
 from app.models.staff.employee import Employee
@@ -56,6 +56,29 @@ async def boss_ids(db: AsyncSession, *, exclude: str | None = None) -> list[str]
 async def notify_bosses(db: AsyncSession, *, exclude: str | None = None, **text) -> None:
     """[boss_ids] 전원에게 같은 알림 — 부르는 쪽이 매번 루프를 돌지 않게."""
     for eid in await boss_ids(db, exclude=exclude):
+        await notify(db, employee_id=eid, **text)
+
+
+async def developer_ids(db: AsyncSession) -> list[str]:
+    """서버 사고를 받는 사람 — **직군이 개발자인 재직자.**
+
+    권한(Role)이 아니라 직군(Rank)으로 고른다. 디스크가 찼다·인증서가 곧
+    만료된다 같은 것은 **고칠 수 있는 사람**이 받아야 뜻이 있다. 대표는
+    MASTER 지만 서버에 못 들어간다.
+    """
+    rows = await db.scalars(
+        select(Employee.id).where(
+            Employee.rank == Rank.DEVELOPER,
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    return list(rows)
+
+
+async def notify_developers(db: AsyncSession, **text) -> None:
+    """[developer_ids] 전원에게 같은 알림. commit 은 호출자."""
+    for eid in await developer_ids(db):
         await notify(db, employee_id=eid, **text)
 
 

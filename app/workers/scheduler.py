@@ -26,6 +26,7 @@ from app.workers.ranking_jobs import (
     ranking_change_scan,
 )
 from app.workers.anomaly_scan import anomaly_scan
+from app.workers.error_rate_scan import error_rate_scan
 from app.workers.metrics_flush import flush_metrics
 from app.workers.retention import purge_old_access_logs
 
@@ -91,6 +92,9 @@ def _register_jobs() -> None:
     # 5분마다 — 이상행동 감지(로그인 반복 실패·권한 없는 요청·새 기기·대량 삭제/열람)
     scheduler.add_job(anomaly_scan, CronTrigger(minute="*/5"),
                       id="anomaly_scan", replace_existing=True)
+    # 5분마다 — 5xx 급증 감지(개발자에게). 위 잡과 달리 사람이 아니라 **서버**를 본다
+    scheduler.add_job(error_rate_scan, CronTrigger(minute="*/5"),
+                      id="error_rate_scan", replace_existing=True)
     # 검증용 하트비트 — 환경변수로만 켬(운영 기본 꺼짐). 멀티워커 단일실행 확인에 사용.
     if os.getenv("SCHED_HEARTBEAT_TEST"):
         scheduler.add_job(_heartbeat, CronTrigger(second="*/2"),
