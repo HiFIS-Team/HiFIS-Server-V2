@@ -64,7 +64,13 @@ async def my_home(
     att = HomeAttendanceOut()
     if rec is not None:
         att = HomeAttendanceOut(
-            status=_attendance_status(rec, current.shift_start, current.shift_end, now_kst),
+            status=_attendance_status(
+                rec,
+                current.shift_start,
+                current.shift_end,
+                now_kst,
+                current.joined_at.astimezone(KST).date(),
+            ),
             check_in=rec.check_in,
             check_out=rec.check_out,
             work_minutes=rec.work_minutes,

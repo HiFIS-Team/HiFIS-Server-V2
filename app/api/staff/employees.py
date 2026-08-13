@@ -112,7 +112,9 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
         model = EmployeeOut.model_validate(e)
         rec = recs.get(e.id)
         if rec is not None:
-            model.today_attendance_status = _attendance_status(rec, e.shift_start, e.shift_end, now_kst)
+            model.today_attendance_status = _attendance_status(
+                rec, e.shift_start, e.shift_end, now_kst, e.joined_at.astimezone(KST).date()
+            )
         elif _still_overnight(prevs.get(e.id), now_kst):
             # 자정을 넘겨서도 안 갔다 — 계속 야근이다
             model.today_attendance_status = AttendanceStatus.OVERTIME
