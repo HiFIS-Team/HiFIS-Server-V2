@@ -43,6 +43,10 @@ _SCORE_FIELD = {
     ScoreCategory.BLOG: "blogScore",
     ScoreCategory.INSTAGRAM: "instaScore",
     ScoreCategory.OT_PT: "otptScore",
+    # 센터 기여도 — **랭킹 탭은 없지만** 점수 내역에는 줄로 뜬다.
+    # 종합에는 원래부터 들어가고 있었는데 따로 안 내보내서, 내역을 다 더해도
+    # 종합이 안 맞았다 (근무 외 출근 자동 10점이 여기 들어간다).
+    ScoreCategory.CONTRIB: "contribScore",
 }
 
 
@@ -97,6 +101,8 @@ def _blank(employee: Employee) -> dict:
         "blogScore": 0,
         "instaScore": 0,
         "otptScore": 0,
+        # 센터 기여도 — 근무 외 출근 자동 점수와 아이디어·목표 업무 부여분
+        "contribScore": 0,
         # 종합의 재료 — 그 달 점수 원장 합(카테고리별로 음수는 0), 그리고
         # 말일에 한 번 얹는 매출 점수. 둘을 더한 것이 종합이다.
         "ledger": 0,
