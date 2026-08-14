@@ -19,6 +19,13 @@ class ProjectCreate(CamelModel):
     # 맡을 사람 — 안 주면 만든 사람이 담당이 된다
     owner_id: str | None = None
     color: str | None = None
+    # 만들면서 같이 붙이는 체크리스트 — **한 트랜잭션으로 들어간다**
+    #
+    # 예전에는 앱이 프로젝트를 만든 뒤 할 일마다 `POST /todos` 를 따로 불렀다.
+    # 그런데 그 라우트는 **이 프로젝트 사람만** 통과하므로(2026-08-14),
+    # 대표·관리자가 남에게 맡기는 프로젝트를 만들면 자기가 멤버가 아니라
+    # 할 일부터 403 이 났다 (실제로 겪었다). 만들기의 일부지 손대는 것이 아니다.
+    todos: list["ProjectTodoCreate"] = Field(default_factory=list)
 
 
 class ProjectUpdate(CamelModel):
