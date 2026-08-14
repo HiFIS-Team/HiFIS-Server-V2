@@ -53,6 +53,22 @@ async def boss_ids(db: AsyncSession, *, exclude: str | None = None) -> list[str]
     return [eid for eid in rows if eid != exclude]
 
 
+async def master_ids(db: AsyncSession, *, exclude: str | None = None) -> list[str]:
+    """**MASTER 만** — 대표가 판단해야 하는 일에 쓴다.
+
+    [boss_ids] 와 갈라 둔 이유: 결재(승인·반려)는 2026-08-14 에 대표 전용이
+    됐다. 관리자에게까지 보내면 **누를 수 없는 알림**이 매번 간다.
+    """
+    rows = await db.scalars(
+        select(Employee.id).where(
+            Employee.role == Role.MASTER,
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    return [eid for eid in rows if eid != exclude]
+
+
 async def notify_bosses(db: AsyncSession, *, exclude: str | None = None, **text) -> None:
     """[boss_ids] 전원에게 같은 알림 — 부르는 쪽이 매번 루프를 돌지 않게."""
     for eid in await boss_ids(db, exclude=exclude):

@@ -29,6 +29,7 @@ from app.enums import (
     Role,
     ScoreCategory,
 )
+from app.models.scoring.my_task import MyTask, MyTaskCheck
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
@@ -44,7 +45,7 @@ from app.schemas.staff.attendance import (
     LeaveRequestOut,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify, notify_bosses
+from app.services.notifications import master_ids, notify, notify_bosses
 from app.services.scoring import accrue_score
 
 router = APIRouter(tags=["attendance"])
@@ -229,6 +230,42 @@ async def _award_offhours(
 
 
 # ---------- 근태 ----------
+async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) -> None:
+    """내 업무를 남기고 퇴근했으면 **본인과 대표에게** 알린다 (2026-08-14).
+
+    공통 업무(환경정비)는 몇 번을 하든 자유라 누락이라는 게 없다. 내 업무는
+    그날 다 해야 하는 목록이라, 안 한 채로 나가면 알려 줘야 한다.
+
+    **업무를 하나도 안 정한 사람은 조용하다** — 할 일을 안 만든 것이지
+    안 한 것이 아니다. 대표·관리자는 애초에 이 화면이 없어서 늘 0개다.
+    """
+    tasks = list(
+        await db.scalars(
+            select(MyTask)
+            .where(MyTask.employee_id == target.id, MyTask.deleted_at.is_(None))
+            .order_by(MyTask.sort, MyTask.created_at)
+        )
+    )
+    if not tasks:
+        return
+    done = set(
+        await db.scalars(
+            select(MyTaskCheck.my_task_id).where(
+                MyTaskCheck.my_task_id.in_([t.id for t in tasks]),
+                MyTaskCheck.date == day,
+            )
+        )
+    )
+    left = [t.content for t in tasks if t.id not in done]
+    if not left:
+        return
+    await notify(db, employee_id=target.id, **ntext.my_task_missing(left))
+    # 대표에게만 — 관리자까지 받으면 매일 저녁 알림이 두 배가 된다
+    for eid in await master_ids(db):
+        if eid != target.id:
+            await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
+
+
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
     payload: AttendanceScanRequest | None = Body(default=None),
@@ -308,6 +345,9 @@ async def scan_attendance(
         if target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
+        # **오늘 첫 퇴근 스캔인가** — 내 업무 누락 알림을 여기서만 보낸다.
+        # 퇴근을 여러 번 찍는 사람이 있어서, 안 가르면 누를 때마다 대표에게 간다.
+        first_out = record.check_out is None
         record.check_out = now
         if record.check_in is not None:
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
@@ -317,6 +357,8 @@ async def scan_attendance(
         out_min = now_min + (1440 if overnight else 0)
         if target.shift_end and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
+        if first_out:
+            await _notify_task_missing(db, target, record.date)
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
     await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
     # 대표·관리자에게도 알린다 — 누가 왔고 누가 갔는지 (2026-08-11 대표 요청).
@@ -344,15 +386,13 @@ async def list_attendance(
     employee_id: str | None = Query(None, alias="employeeId"),
     month: str | None = Query(None),
 ) -> list[AttendanceOut]:
-    # 권한 가드(§60) — 캘린더·연차잔여와 동일. MEMBER 는 본인 근태만(남의 employeeId·미지정 모두 본인 고정).
-    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+    # 권한 가드(§60) — 캘린더·연차잔여와 동일. 남의 근태는 MASTER·ADMIN 만 본다.
+    # 그 밖에는 남의 employeeId 를 넣든 안 넣든 **조용히 본인 것**으로 고정한다
+    # (403 을 내지 않는 이유: 남을 달라고 조른 게 아니라 볼 수 있는 만큼 주는 것).
+    # **MANAGER 도 여기 든다 (2026-08-14)** — 결재가 대표 전용이 되면서 점장이
+    # 남의 근태를 볼 자리가 없어졌다.
+    if current.role not in (Role.MASTER, Role.ADMIN):
         employee_id = current.id
-    elif employee_id and employee_id != current.id and current.role == Role.MANAGER:
-        target = await db.get(Employee, employee_id)
-        if target is None or target.deleted_at is not None:
-            raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
-        if target.branch_id != current.branch_id:
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
     stmt = select(Attendance)
     if scope:
         stmt = stmt.join(Employee, Employee.id == Attendance.employee_id).where(
@@ -404,13 +444,14 @@ async def attendance_calendar(
     """
     target = current
     if employee_id and employee_id != current.id:
-        if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        # **남의 근태는 MASTER·ADMIN 만** (2026-08-14 에 MANAGER 를 뺐다).
+        # 결재가 대표 전용이 되면서 점장은 남의 근태를 볼 자리가 없어졌다 —
+        # 조직도 상세의 근태 요약 카드도 같이 안 그린다(`staff_detail.dart`).
+        if current.role not in (Role.MASTER, Role.ADMIN):
             raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
         target = await db.get(Employee, employee_id)
         if target is None or target.deleted_at is not None:
             raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
-        if current.role == Role.MANAGER and target.branch_id != current.branch_id:
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
 
     start, end = period_range(month)
     start_d, end_d = start.date(), end.date()
@@ -649,9 +690,14 @@ async def list_leaves(
     status: LeaveStatus | None = Query(None),
     current: Employee = Depends(get_current_user),
 ) -> list[LeaveRequest]:
-    # 일반 직원은 **본인 것만** — 남의 휴가 사유까지 보이면 안 된다.
+    # 결재하지 않는 사람은 **본인 것만** — 남의 휴가 사유까지 보이면 안 된다.
     # `/attendance` 와 같은 규칙이다 (403 대신 조용히 본인으로 고정).
-    if current.role == Role.MEMBER:
+    #
+    # **MANAGER 도 여기 든다 (2026-08-14).** 승인·반려가 대표 전용이 되면서
+    # 점장은 월차를 내는 쪽이지 받는 쪽이 아니다. 앱은 이미 본인 것만
+    # 부르는데(`attendance_models.dart`) 서버가 열려 있어서, 토큰으로 직접
+    # 부르면 지점 전원의 사유가 그대로 나왔다.
+    if current.role in (Role.MEMBER, Role.MANAGER):
         employee_id = current.id
     stmt = select(LeaveRequest)
     if scope:
@@ -675,13 +721,14 @@ async def leave_balance(
     """연차 부여/사용/잔여 — 입사일 기준 근로기준법 산정. 기본 본인, employeeId 지정은 매니저↑."""
     target = current
     if employee_id and employee_id != current.id:
-        if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        # **남의 근태는 MASTER·ADMIN 만** (2026-08-14 에 MANAGER 를 뺐다).
+        # 결재가 대표 전용이 되면서 점장은 남의 근태를 볼 자리가 없어졌다 —
+        # 조직도 상세의 근태 요약 카드도 같이 안 그린다(`staff_detail.dart`).
+        if current.role not in (Role.MASTER, Role.ADMIN):
             raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
         target = await db.get(Employee, employee_id)
         if target is None or target.deleted_at is not None:
             raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
-        if current.role == Role.MANAGER and target.branch_id != current.branch_id:
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
 
     as_of = datetime.now(timezone.utc).astimezone(KST).date()
     joined = target.joined_at.astimezone(KST).date()
@@ -777,12 +824,12 @@ async def _decide_leave(
     return leave
 
 
-@router.post("/leaves/{request_id}/approve", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/leaves/{request_id}/approve", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def approve_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> LeaveRequest:
     return await _decide_leave(request_id, LeaveStatus.APPROVED, db)
 
 
-@router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def reject_leave(
     request_id: str, payload: LeaveReject, db: AsyncSession = Depends(get_db)
 ) -> LeaveRequest:

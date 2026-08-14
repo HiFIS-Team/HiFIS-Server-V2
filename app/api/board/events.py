@@ -4,7 +4,7 @@
 들어가 승인을 기다리고, 그동안 **올린 사람과 MASTER·ADMIN 에게만** 보인다.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
@@ -21,8 +21,12 @@ from app.services.notifications import notify
 router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_current_user)])
 
 
-#: 승인 없이 올릴 수 있고, 남의 신청을 승인·반려하는 권한
-_DECIDERS = (Role.MASTER, Role.ADMIN)
+#: 결재를 **안 거치고** 올릴 수 있고, 남의 대기 일정도 볼 수 있는 권한
+#:
+#: **승인·반려하는 사람이 아니다** — 그건 MASTER 만이다(아래 라우트).
+#: 이름이 `_DECIDERS` 였을 때 둘을 같은 것으로 읽어서 ADMIN 이 남의 일정을
+#: 결재할 수 있었다 (2026-08-14 에 갈랐다).
+_OVERSEERS = (Role.MASTER, Role.ADMIN)
 
 
 def _not_found() -> HTTPException:
@@ -46,9 +50,12 @@ async def list_events(
     to: datetime | None = Query(None, alias="to"),
     scope: str | None = Query(None),
 ) -> list[Event]:
-    stmt = select(Event)
+    # 반려된 일정은 아무에게도 안 보인다 — 행은 결재 이력으로 남기지만
+    # 달력에 죽은 일정이 서면 칸만 어지럽힌다 (EventStatus 참고).
+    # **이력은 `GET /me/inbox?status=REJECTED` 로 본다.**
+    stmt = select(Event).where(Event.status != EventStatus.REJECTED)
     # 승인 대기는 올린 사람과 결재자에게만 — 남의 달력을 미리 어지럽히지 않는다
-    if current.role not in _DECIDERS:
+    if current.role not in _OVERSEERS:
         stmt = stmt.where(
             or_(Event.status == EventStatus.APPROVED, Event.owner_id == current.id)
         )
@@ -82,7 +89,7 @@ async def create_event(
         memo=payload.memo,
         owner_id=current.id,
         status=(
-            EventStatus.APPROVED if current.role in _DECIDERS else EventStatus.PENDING
+            EventStatus.APPROVED if current.role in _OVERSEERS else EventStatus.PENDING
         ),
     )
     db.add(event)
@@ -102,7 +109,7 @@ async def update_event(
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(event, key, value)
     # 승인받은 뒤 내용을 갈아치우면 승인의 뜻이 없다 — 결재자가 아니면 다시 대기로
-    if current.role not in _DECIDERS:
+    if current.role not in _OVERSEERS:
         event.status = EventStatus.PENDING
     await db.commit()
     await db.refresh(event)
@@ -112,7 +119,7 @@ async def update_event(
 @router.post(
     "/{event_id}/approve",
     response_model=EventOut,
-    dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
+    dependencies=[Depends(require_role(Role.MASTER))],  # 승인·반려는 대표만
 )
 async def approve_event(
     event_id: str,
@@ -127,6 +134,8 @@ async def approve_event(
             400, detail={"code": "NOT_PENDING", "message": "대기 중인 일정이 아닙니다"}
         )
     event.status = EventStatus.APPROVED
+    # 결재를 거쳤다는 표시 — 자동 승인(대표가 올린 것)과 가르는 자리다
+    event.decided_at = datetime.now(timezone.utc)
     await notify(
         db,
         employee_id=event.owner_id,
@@ -143,16 +152,18 @@ async def approve_event(
 @router.post(
     "/{event_id}/reject",
     status_code=204,
-    dependencies=[Depends(require_role(Role.ADMIN))],
+    dependencies=[Depends(require_role(Role.MASTER))],  # 승인·반려는 대표만
 )
 async def reject_event(
     event_id: str,
     reason: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """일정 신청 반려 — **행을 지운다.**
+    """일정 신청 반려 — **행은 남기고 달력에서만 뺀다.**
 
-    반려된 일정이 달력에 남으면 칸만 어지럽힌다. 신청자는 알림으로 안다.
+    예전에는 지웠다. 그러면 급여·월차·전자결재는 다 남는 반려 이력이
+    **일정만 없어서**, 결재 화면 `반려` 칸에 일정이 한 건도 안 섰다.
+    지금은 `REJECTED` 로 두고 `GET /events` 가 그걸 뺀다 — 달력은 그대로다.
     """
     event = await db.get(Event, event_id)
     if event is None:
@@ -161,6 +172,9 @@ async def reject_event(
         raise HTTPException(
             400, detail={"code": "NOT_PENDING", "message": "대기 중인 일정이 아닙니다"}
         )
+    event.status = EventStatus.REJECTED
+    event.decided_at = datetime.now(timezone.utc)
+    event.reject_reason = reason
     await notify(
         db,
         employee_id=event.owner_id,
@@ -169,7 +183,6 @@ async def reject_event(
         body=f"{event.title}{f' · {reason}' if reason else ''}",
         link="/schedule",
     )
-    await db.delete(event)
     await db.commit()
     return None
 

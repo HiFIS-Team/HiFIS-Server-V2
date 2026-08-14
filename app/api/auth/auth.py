@@ -47,7 +47,10 @@ _DUMMY_HASH = hash_password("timing-equalizer-placeholder")
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=201)
-async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> SignupResponse:
+@limiter.limit("20/minute")  # IP당 분 20회 — 초대키 대입·가입 스팸 방지
+async def signup(
+    request: Request, payload: SignupRequest, db: AsyncSession = Depends(get_db)
+) -> SignupResponse:
     if (await db.execute(select(Employee).where(Employee.email == payload.email))).scalar_one_or_none():
         raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
 
@@ -136,7 +139,10 @@ async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depe
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
-async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -> AccessTokenResponse:
+@limiter.limit("60/minute")  # 넉넉하게 — 실사용자가 걸리면 로그아웃되는 자리다
+async def refresh(
+    request: Request, payload: RefreshRequest, db: AsyncSession = Depends(get_db)
+) -> AccessTokenResponse:
     data = decode_token(payload.refresh_token, expected_type="refresh")
     employee = await db.get(Employee, data.get("sub"))
     if employee is None or employee.deleted_at is not None:
@@ -194,8 +200,9 @@ async def password_reset_verify(
 
 
 @router.post("/password-reset/confirm", status_code=204)
+@limiter.limit("10/minute")  # verify 와 같은 값 — 한 흐름의 마지막 단계다
 async def password_reset_confirm(
-    payload: PasswordResetConfirmReq, db: AsyncSession = Depends(get_db)
+    request: Request, payload: PasswordResetConfirmReq, db: AsyncSession = Depends(get_db)
 ) -> None:
     employee_id = await consume_reset_token(payload.reset_token)
     employee = await db.get(Employee, employee_id)

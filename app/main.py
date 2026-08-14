@@ -33,7 +33,7 @@ from app.api.public import (
     survey as public_survey,
     tv as public_tv,
 )
-from app.api.scoring import contributions, env, kindness, peer_reviews, scores
+from app.api.scoring import contributions, env, kindness, my_tasks, peer_reviews, scores
 from app.api.staff import attendance, branches, employees, home
 from app.core.audit_middleware import AuditMiddleware
 from app.core.metrics_middleware import MetricsMiddleware
@@ -62,7 +62,7 @@ _DOCS_OPEN = settings.environment != "production"
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.13.0",
+    version="0.14.0",
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_OPEN else None,
     redoc_url="/redoc" if _DOCS_OPEN else None,
@@ -119,6 +119,7 @@ app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회�
 # scoring — 점수
 app.include_router(scores.router)
 app.include_router(env.router)
+app.include_router(my_tasks.router)
 app.include_router(peer_reviews.router)
 app.include_router(contributions.router)
 app.include_router(kindness.router)

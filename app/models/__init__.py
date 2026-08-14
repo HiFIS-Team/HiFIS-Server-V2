@@ -14,6 +14,7 @@ from app.models.scoring.contribution import ContributionGrant
 from app.models.platform.document import Document, Folder
 from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog, SupplyOrder
+from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskRequest
 from app.models.board.event import Event
 from app.models.auth.invite import InviteKey
 from app.models.auth.scan_terminal import ScanTerminal
@@ -65,6 +66,9 @@ __all__ = [
     "KindnessSurvey",
     "Meeting",
     "Member",
+    "MyTask",
+    "MyTaskCheck",
+    "MyTaskRequest",
     "Notice",
     "Notification",
     "PushSubscription",

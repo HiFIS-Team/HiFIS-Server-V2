@@ -104,10 +104,27 @@ class ProjectStatus(StrEnum):
 
 
 class ProjectRequestType(StrEnum):
-    """프로젝트 기한 변경 요청 종류 (매니저·멤버 → 어드민 승인)."""
+    """프로젝트 결재 요청 종류 (담당자·참여 멤버 → MASTER 승인).
 
-    EXTENSION = "EXTENSION"  # 기한 연장 요청 (마감 전)
-    OVERDUE = "OVERDUE"      # 누락 사유 (마감 지남 — 왜 늦었고 언제까지 끝내겠다)
+    **EDIT·DELETE 는 2026-08-14 에 붙었다.** "수정 및 삭제는 마스터의 허가가
+    있어야 가능하다" — 그 전에는 담당자가 그냥 고치고 그냥 지웠다.
+    기한 연장이 이미 쓰던 통로를 그대로 탄다.
+    """
+
+    EXTENSION = "EXTENSION"  # 기한 연장 요청 (마감 전) — new_due 필수
+    OVERDUE = "OVERDUE"      # 누락 사유 (마감 지남 — 왜 늦었고 언제까지 끝내겠다) — new_due 필수
+    EDIT = "EDIT"            # 이름·설명·색 수정 — payload 필수
+    DELETE = "DELETE"        # 프로젝트 삭제 — 둘 다 없음
+
+
+class MyTaskRequestType(StrEnum):
+    """내 업무 수정·삭제 결재 종류 (본인 → MASTER 승인, 2026-08-14).
+
+    **추가는 여기 없다.** 할 일을 늘리는 것은 결재 없이 스스로 한다.
+    """
+
+    EDIT = "EDIT"      # 내용 수정 — payload 필수
+    DELETE = "DELETE"  # 삭제 — payload 없음
 
 
 class ProjectRequestStatus(StrEnum):
@@ -282,12 +299,16 @@ class EventStatus(StrEnum):
     """일정 승인 상태.
 
     MASTER·ADMIN 이 올린 것은 바로 APPROVED, 나머지는 PENDING 으로 들어간다.
-    **반려하면 행을 지우므로 REJECTED 는 없다** — 달력이 유일한 목록이라
-    죽은 일정이 남으면 칸만 어지럽힌다. 신청자에게는 알림으로 알린다.
+
+    **반려해도 행을 남긴다 (2026-08-14).** 예전에는 지웠는데, 그러면 급여·월차·
+    전자결재는 다 남는 반려 이력이 **일정만 없었다**. 대신 `GET /events` 가
+    REJECTED 를 빼서 달력에는 안 뜬다 — 죽은 일정이 칸을 어지럽히지 않는 것은
+    그대로다.
     """
 
     PENDING = "PENDING"
     APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class InboxKind(StrEnum):
@@ -297,6 +318,21 @@ class InboxKind(StrEnum):
     LEAVE = "LEAVE"        # POST /leaves/{id}/approve|reject
     APPROVAL = "APPROVAL"  # POST /approvals/{id}/approve|reject
     EVENT = "EVENT"        # POST /events/{id}/approve|reject
+    MY_TASK = "MY_TASK"    # POST /my-task-requests/{id}/approve|reject
+    PROJECT = "PROJECT"    # POST /projects/requests/{id}/approve|reject
+
+
+class InboxStatus(StrEnum):
+    """홈 결재함이 어느 칸을 보여줄지 — 앱의 `대기 · 승인 · 반려` 탭.
+
+    네 테이블의 상태 이름이 제각각이라(급여 SUBMITTED, 전자결재 IN_PROGRESS …)
+    앱이 종류별로 물어보면 분기만 는다. **이 셋으로만 묻고** 어느 상태가
+    거기 속하는지는 서버가 안다.
+    """
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"  # 본인이 물린 것(월차 취소·결재 회수)도 여기 들어간다
 
 
 class AccessEvent(StrEnum):

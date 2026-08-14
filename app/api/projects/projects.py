@@ -17,6 +17,7 @@ from app.enums import (
     ScoreCategory,
 )
 from app.models.projects.project import Project
+from app.models.scoring.env import EnvItem, EnvTaskLog
 from app.models.projects.project_activity import ProjectActivity
 from app.models.projects.project_request import ProjectRequest
 from app.models.projects.project_todo import ProjectTodo
@@ -36,13 +37,14 @@ from app.schemas.projects.project import (
     ProjectUpdate,
 )
 from app.schemas.projects.project_request import (
+    ProjectEditPayload,
     ProjectRequestCreate,
     ProjectRequestOut,
     ProjectRequestReject,
 )
 from app.services import notification_texts as ntext
 from app.services.notifications import notify, notify_bosses
-from app.services.scoring import accrue_score
+from app.services.scoring import accrue_score, scores_apply_to
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(get_current_user)])
 
@@ -186,13 +188,135 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
             await db.delete(event)
 
 
-def _can_touch(project: Project, current: Employee) -> bool:
-    # 체크리스트 편집 = 관리자·작성자·담당자
+# ---------- 프로젝트 할 일 ↔ 환경정비 (2026-08-14) ----------
+
+#: 손으로 적는 칸이라 매칭에서 뺀다 — `기타 정리` 같은 할 일이 전부 걸린다
+_ENV_MATCH_EXCLUDE = {"기타"}
+
+
+async def _env_item_for(db: AsyncSession, branch_id: str, content: str) -> EnvItem | None:
+    """할 일 내용에서 그 지점의 환경정비 항목을 찾는다 — **단어가 똑같을 때만.**
+
+    `현수막 설치 1` → 단어 `현수막` `설치` `1` 중 `현수막` 이 항목 이름과
+    정확히 같아서 걸린다. `세탁기 수리` 는 **안 걸린다** (`세탁기` ≠ `세탁`) —
+    글자가 들어 있기만 해도 치면 엉뚱한 할 일이 점수를 받는다.
+
+    배점은 지점마다 다를 수 있어서 **사람마다 자기 지점 항목**으로 찾는다.
+    """
+    words = {w for w in content.split() if w and w not in _ENV_MATCH_EXCLUDE}
+    if not words:
+        return None
     return (
-        current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER)
-        or project.created_by_id == current.id
-        or current.id in (project.assignee_ids or [])
+        await db.execute(
+            select(EnvItem).where(EnvItem.branch_id == branch_id, EnvItem.name.in_(words))
+        )
+    ).scalars().first()
+
+
+async def _award_todo_env(
+    db: AsyncSession, todo: ProjectTodo, actor: Employee
+) -> None:
+    """할 일을 체크했다 — 환경정비 항목과 이름이 맞으면 수행 기록·점수를 남긴다.
+
+    **할 일 담당자와 누른 사람 둘 다** 각자 항목 배점만큼 받는다 (2026-08-14 결정).
+    담당자가 못 할 때 남이 대신 해 줄 수 있어서다. 같은 사람이면 한 번만.
+
+    컴플레인 → `클레임해결` 과 같은 길이다 (`kindness._award_claim_resolved`).
+    지점에 그 항목이 없으면 조용히 넘어간다 — 점수가 안 붙을 뿐이고 체크 자체가
+    실패하면 안 된다.
+
+    **대표·관리자는 뺀다.** `POST /env-logs` 가 그 둘을 막고 있고, 점수도
+    `accrue_score` 가 안 쌓아서 기록만 남으면 환경정비 내역이 어지러워진다.
+    """
+    seen: set[str] = set()
+    for employee_id in (todo.assignee_id, actor.id):
+        if employee_id is None or employee_id in seen:
+            continue
+        seen.add(employee_id)
+        person = await db.get(Employee, employee_id)
+        if person is None or not scores_apply_to(person) or person.branch_id is None:
+            continue
+        item = await _env_item_for(db, person.branch_id, todo.content)
+        if item is None:
+            continue
+        log = EnvTaskLog(
+            employee_id=person.id,
+            branch_id=person.branch_id,
+            env_item_id=item.id,
+            item_name=item.name,
+            points=item.points,
+            note=todo.content[:200],
+            source_todo_id=todo.id,
+        )
+        db.add(log)
+        await db.flush()
+        await accrue_score(
+            db,
+            employee_id=person.id,
+            branch_id=person.branch_id,
+            category=ScoreCategory.ENV,
+            points=item.points,
+            created_by_id=actor.id,
+            source_ref_id=log.id,
+            reason=item.name,
+        )
+
+
+async def _retract_todo_env(db: AsyncSession, todo: ProjectTodo) -> None:
+    """체크를 풀었다 — 그 할 일에서 나온 환경정비 기록과 점수를 걷는다.
+
+    **안 걷으면 체크·해제를 반복해 점수를 무한히 쌓을 수 있다.**
+    컴플레인은 '해결 완료를 못 되돌리게' 막아서 이 문제를 피했는데, 할 일은
+    풀 수 있어야 하는 자리라 대신 걷는다 (프로젝트 완료 점수 회수와 같은 결).
+    """
+    logs = (
+        (await db.execute(select(EnvTaskLog).where(EnvTaskLog.source_todo_id == todo.id)))
+        .scalars()
+        .all()
     )
+    if not logs:
+        return
+    await db.execute(
+        delete(ScoreEvent).where(
+            ScoreEvent.category == ScoreCategory.ENV,
+            ScoreEvent.source_ref_id.in_([log.id for log in logs]),
+        )
+    )
+    for log in logs:
+        await db.delete(log)
+
+
+def _is_member(project: Project, current: Employee) -> bool:
+    """이 프로젝트 사람인가 — **담당자와 참여 멤버뿐이다.**
+
+    2026-08-14 정해졌다: "프로젝트 안에서 손댈 수 있는 건 그 프로젝트의
+    담당자와 참여 멤버만." 역할 예외도, **만든 사람 예외도 없다.**
+
+    **만든 사람을 안 본다**는 것이 핵심이다. 대표·관리자는 프로젝트를 만들 때
+    자기가 담당자도 참여자도 아니고 **남을 지정해서** 만든다. 만든 사람을
+    통과시키면 그 둘이 자기가 만든 프로젝트를 계속 손대게 된다.
+
+    직원·점장은 만들 때 본인이 담당자로 들어가므로(앱 폼이 담당자를 반드시
+    받고, 고르면 참여 멤버에도 넣는다) 자기 프로젝트에서 잠기지 않는다.
+
+    **결재와 점수는 여기 안 건다** — 기한 연장 승인·반려와 점수 부여는
+    남의 프로젝트를 판단해 주는 자리라 MASTER 전용 그대로다.
+    **댓글도 안 건다** — 밖에서 물어보는 자리다 (2026-08-14 "댓글은 예외").
+    """
+    return project.owner_id == current.id or current.id in (
+        project.assignee_ids or []
+    )
+
+
+def _ensure_member(project: Project, current: Employee) -> None:
+    if not _is_member(project, current):
+        raise HTTPException(
+            403,
+            detail={
+                "code": "NOT_PROJECT_MEMBER",
+                "message": "이 프로젝트의 담당자만 할 수 있습니다",
+            },
+        )
 
 
 def _ensure_open(project: Project, current: Employee) -> None:
@@ -270,23 +394,51 @@ async def create_project(
     )
     db.add(project)
     await db.flush()
+    # 폼에서 같이 적은 체크리스트 — **여기서 붙인다.**
+    # 앱이 만든 뒤 따로 `POST /todos` 를 부르면, 그 라우트가 이 프로젝트 사람만
+    # 통과시켜서 **대표·관리자가 남에게 맡기는 프로젝트를 못 만든다.**
+    for index, todo in enumerate(payload.todos):
+        db.add(
+            ProjectTodo(
+                project_id=project.id,
+                content=todo.content,
+                assignee_id=todo.assignee_id,
+                sort=todo.sort or index,
+                created_by_id=current.id,  # NOT NULL — 빠뜨리면 만들기가 통째로 죽는다
+            )
+        )
+    await db.flush()
     await _log_activity(db, project.id, current.id, ProjectActivityKind.CREATED, "프로젝트를 만들었어요")
     await notify_bosses(
         db, exclude=current.id, **ntext.project_created(project.title, current.name, project.id)
     )
-    await _settle_completion(db, project)  # 드물지만 처음부터 100% 로 만드는 경우
+    # 체크리스트가 붙었으면 진행률이 그걸 따라간다 (0/N → 0%).
+    # `_recompute_progress` 안에서 `_settle_completion` 도 같이 돈다 —
+    # 드물지만 처음부터 100% 로 만드는 경우가 거기서 정산된다.
+    await _recompute_progress(db, project)
     await db.commit()
     await db.refresh(project)
-    return _to_out(project)  # 새 프로젝트는 체크리스트 0
+    return await _single_out(db, project)
 
 
-# ---------- 프로젝트 기한 변경 요청 (연장/누락 사유 → 어드민 승인) ----------
+# ---------- 프로젝트 결재 요청 (연장·누락·수정·삭제 → MASTER 승인) ----------
+
+#: 알림·타임라인에 찍히는 이름 — 종류가 넷이라 한 곳에서 만든다
+_REQUEST_LABEL = {
+    ProjectRequestType.EXTENSION: "기한 연장",
+    ProjectRequestType.OVERDUE: "누락 사유",
+    ProjectRequestType.EDIT: "프로젝트 수정",
+    ProjectRequestType.DELETE: "프로젝트 삭제",
+}
+
+
 def _req_out(r: ProjectRequest) -> ProjectRequestOut:
     return ProjectRequestOut(
         id=r.id,
         project_id=r.project_id,
         type=r.type,
         new_due=r.new_due,
+        payload=ProjectEditPayload(**r.payload) if r.payload else None,
         reason=r.reason,
         status=r.status,
         requested_by_id=r.requested_by_id,
@@ -320,10 +472,31 @@ async def create_project_request(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRequestOut:
-    """매니저·멤버가 기한 연장(EXTENSION)/누락 사유(OVERDUE)를 새 기한+사유로 제출."""
+    """이 프로젝트 사람이 MASTER 에게 올리는 결재 — 네 종류다.
+
+    | 종류 | 누가 | 승인하면 |
+    |---|---|---|
+    | EXTENSION·OVERDUE | 담당자·참여 멤버 | 기한이 바뀐다 |
+    | EDIT | **담당자만** | 이름·설명·색이 바뀐다 |
+    | DELETE | **담당자만** | 프로젝트가 지워진다 |
+
+    **여기만 아무 가드가 없었다 (2026-08-14 고침).** 프로젝트를 볼 수 있으면
+    누구나 남의 프로젝트 기한을 늘려 달라고 대표에게 올릴 수 있었다.
+    """
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    _ensure_member(project, current)
+    # 수정·삭제는 담당자만 올린다 — 예전에 직접 하던 때의 기준(`is_owner`)
+    # 그대로다. 참여 멤버에게 열면 지금보다 넓어진다.
+    if (
+        payload.type in (ProjectRequestType.EDIT, ProjectRequestType.DELETE)
+        and project.owner_id != current.id
+    ):
+        raise HTTPException(
+            403,
+            detail={"code": "NOT_PROJECT_OWNER", "message": "프로젝트 담당자만 올릴 수 있습니다"},
+        )
     _ensure_open(project, current)
     # 프로젝트당 대기 요청은 하나만 (중복 방지)
     existing = await db.scalar(
@@ -338,6 +511,7 @@ async def create_project_request(
         project_id=project_id,
         type=payload.type,
         new_due=payload.new_due,
+        payload=payload.payload.model_dump(exclude_none=True) if payload.payload else None,
         reason=payload.reason,
         requested_by_id=current.id,
     )
@@ -345,7 +519,7 @@ async def create_project_request(
     await db.commit()
     await db.refresh(req)
     # 승인권자(MASTER)에게 알림 (best-effort) — 승인·반려는 MASTER 전용
-    label = "누락 사유" if payload.type == ProjectRequestType.OVERDUE else "기한 연장"
+    label = _REQUEST_LABEL[payload.type]
     await _log_activity(db, project_id, current.id, ProjectActivityKind.DUE, f"{label} 신청")  # 승인 전 신청도 타임라인
     approvers = (await db.execute(select(Employee).where(Employee.role == Role.MASTER))).scalars().all()
     for approver in approvers:
@@ -374,32 +548,42 @@ async def _decide_request(
     req.status = status
     req.decided_by_id = current.id
     req.decided_at = datetime.now(timezone.utc)
-    label = "누락 사유" if req.type == ProjectRequestType.OVERDUE else "기한 연장"
+    label = _REQUEST_LABEL[req.type]
     title = project.title if project else ""
-    if status == ProjectRequestStatus.APPROVED:
-        if project is not None:
+    approved = status == ProjectRequestStatus.APPROVED
+
+    if approved and project is not None:
+        if req.type is ProjectRequestType.DELETE:
+            # 타임라인을 **먼저** 남긴다 — 지우고 나면 붙일 프로젝트가 없다
+            await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 승인")
+            await _purge_project(db, project)
+        elif req.type is ProjectRequestType.EDIT:
+            for key, value in (req.payload or {}).items():
+                setattr(project, key, value)
+            await _log_activity(db, project.id, current.id, ProjectActivityKind.CREATED, f"{label} 승인")
+        else:
             project.due = req.new_due  # 새 기한 반영
             project.extension_reason = req.reason
             project.overdue_notified_at = None  # 마감 변경 → 누락 알림 재무장
             await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 승인 — 기한 변경")
-    else:
+    elif not approved:
         req.reject_reason = reason
         if project is not None:  # 반려도 타임라인
             await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 반려")
+
     await notify(
         db,
         employee_id=req.requested_by_id,
-        **ntext.project_request_decided(
-            label,
-            status == ProjectRequestStatus.APPROVED,
-            title,
-            reason,
-            req.project_id,
-        ),
+        **ntext.project_request_decided(label, approved, title, reason, req.project_id),
     )
+    # 삭제를 승인하면 프로젝트와 함께 이 행도 CASCADE 로 사라진다 —
+    # commit 뒤에는 못 읽으므로 응답을 **미리** 만들어 둔다
+    out = _req_out(req)
     await db.commit()
-    await db.refresh(req)
-    return _req_out(req)
+    if not (approved and req.type is ProjectRequestType.DELETE):
+        await db.refresh(req)
+        out = _req_out(req)
+    return out
 
 
 @router.post("/requests/{request_id}/approve", response_model=ProjectRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
@@ -579,8 +763,7 @@ async def create_project_todo(
     db: AsyncSession = Depends(get_db),
 ) -> ProjectTodoOut:
     project = await _get_project_or_404(db, project_id)
-    if not _can_touch(project, current):
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    _ensure_member(project, current)
     _ensure_open(project, current)
     todo = ProjectTodo(
         project_id=project_id,
@@ -607,8 +790,7 @@ async def update_project_todo(
 ) -> ProjectTodoOut:
     todo = await _get_todo_or_404(db, project_id, todo_id)
     project = await _get_project_or_404(db, project_id)
-    if not _can_touch(project, current):
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    _ensure_member(project, current)
     _ensure_open(project, current)
     was_done = todo.done
     for key, value in payload.model_dump(exclude_unset=True).items():
@@ -617,8 +799,11 @@ async def update_project_todo(
     await _recompute_progress(db, project)  # 완료 토글 → 진행률 재계산
     if todo.done and not was_done:  # 완료로 바뀜 → 타임라인
         await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"완료: {todo.content}")
+        # 이름이 환경정비 항목과 맞으면 그 수행도 같이 찍힌다
+        await _award_todo_env(db, todo, current)
     elif was_done and not todo.done:  # 완료 취소 → 타임라인
         await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"완료 취소: {todo.content}")
+        await _retract_todo_env(db, todo)
     await db.commit()
     await db.refresh(todo)
     return _todo_out(todo)
@@ -633,8 +818,7 @@ async def delete_project_todo(
 ) -> None:
     todo = await _get_todo_or_404(db, project_id, todo_id)
     project = await _get_project_or_404(db, project_id)
-    if not _can_touch(project, current):
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "체크리스트를 편집할 권한이 없습니다"})
+    _ensure_member(project, current)
     _ensure_open(project, current)
     content = todo.content  # 삭제 전 스냅샷(타임라인 표시용)
     await db.delete(todo)
@@ -729,15 +913,26 @@ async def update_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    # ADMIN/MANAGER·작성자 = 전체 수정 / 담당자 = 진행률만 / 그 외 = 금지
-    is_manager = current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER) or project.created_by_id == current.id
-    is_assignee = current.id in (project.assignee_ids or [])
-    if not (is_manager or is_assignee):
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 수정할 권한이 없습니다"})
+    # **진행률만 직접 바꾼다 (2026-08-14).** 이름·설명·색은 MASTER 허가를 받아야
+    # 해서 `POST /{id}/requests` 의 `EDIT` 로 가고, 기한은 예전부터 `EXTENSION`
+    # 이 맡는다. 그래서 이 자리에 남는 것은 진행률뿐이다.
+    #
+    # 진행률은 보통 할 일 체크가 서버에서 다시 셈하지만(`_recompute_progress`),
+    # 체크리스트가 없는 프로젝트는 여기로 직접 올린다.
+    #
+    # **역할로도 만든 사람으로도 통과하지 않는다.** 예전에는 MASTER·ADMIN·
+    # MANAGER 가 남의 프로젝트도 제목·기한·담당자까지 다 갈 수 있었다.
+    _ensure_member(project, current)
     _ensure_open(project, current)
     fields = payload.model_dump(exclude_unset=True)
-    if not is_manager and set(fields) - {"progress"}:
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당자는 진행률만 변경할 수 있습니다"})
+    if set(fields) - {"progress"}:
+        raise HTTPException(
+            403,
+            detail={
+                "code": "NEEDS_APPROVAL",
+                "message": "프로젝트 수정은 대표 승인이 필요합니다",
+            },
+        )
     old_progress, old_due = project.progress, project.due
     old_assignees = set(project.assignee_ids or [])
     for key, value in fields.items():
@@ -769,21 +964,39 @@ async def delete_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and project.created_by_id != current.id:
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "프로젝트를 삭제할 권한이 없습니다"})
-    _ensure_open(project, current)
+    # **아무도 여기로 못 지운다 (2026-08-14).** 삭제는 MASTER 허가를 받아야 한다 —
+    # 담당자가 `POST /{id}/requests` 로 `DELETE` 를 올리고, 승인되면 그때 지워진다.
+    # 라우트를 없애지 않는 이유는 MASTER 가 결재를 안 거치고 치울 길은 남겨야
+    # 하기 때문이다 (잘못 올라온 프로젝트가 결재함에 걸려 못 지워지면 안 된다).
+    if current.role != Role.MASTER:
+        raise HTTPException(
+            403,
+            detail={
+                "code": "NEEDS_APPROVAL",
+                "message": "프로젝트 삭제는 대표 승인이 필요합니다",
+            },
+        )
+    await _purge_project(db, project)
+    await db.commit()
+    return None
+
+
+async def _purge_project(db: AsyncSession, project: Project) -> None:
+    """프로젝트와 딸린 것을 다 치운다. commit 은 부르는 쪽이 한다.
+
+    직접 삭제(MASTER)와 삭제 결재 승인이 **같은 길을 탄다** — 한쪽만 고치면
+    지워진 프로젝트의 점수가 랭킹에 남는 식으로 갈린다.
+    """
     # 자식(FK) 먼저 정리 — 체크리스트·기한변경요청·타임라인
-    await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project_id))
-    await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project_id))
-    await db.execute(delete(ProjectActivity).where(ProjectActivity.project_id == project_id))
+    await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project.id))
+    await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project.id))
+    await db.execute(delete(ProjectActivity).where(ProjectActivity.project_id == project.id))
     # 완료 점수도 같이 지운다. `source_ref_id` 는 FK 가 아니라 그냥 두면 남는데,
     # 없어진 프로젝트 때문에 랭킹 점수가 올라가 있고 근거를 찾을 길이 없게 된다.
     await db.execute(
         delete(ScoreEvent).where(
             ScoreEvent.category == ScoreCategory.PROJECT,
-            ScoreEvent.source_ref_id == project_id,
+            ScoreEvent.source_ref_id == project.id,
         )
     )
     await db.delete(project)
-    await db.commit()
-    return None

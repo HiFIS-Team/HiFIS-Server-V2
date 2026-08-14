@@ -78,6 +78,38 @@ async def branch_filter(
     return scope or branch_id
 
 
+async def branch_pick(
+    current: Employee = Depends(get_current_user),
+    scope: str | None = Depends(branch_scope),
+    branch_id: str | None = Query(None, alias="branchId"),
+) -> str | None:
+    """볼 지점 — **MANAGER 도 고른다.** 지금 쓰는 곳은 `/env-logs` 하나다.
+
+    점장에게 지점을 준 이유가 '다른 지점이 어떻게 하나 보라'는 것인데,
+    업무 화면에서 그게 실제로 뜻이 있는 자리는 **환경정비 기록 하나뿐**이다.
+    나머지 탭(동료평가·친절도·수업개수·기여도)은 점장에게 **본인 것만**
+    보여주는 화면이라, 지점을 걸면 보이던 내 것이 0건이 된다.
+
+    | | 무엇을 쓰나 | 왜 |
+    |---|---|---|
+    | `/env-logs` | **이 함수** | 다른 지점이 오늘 뭘 했는지 보는 자리 |
+    | `/env-items` | `branch_filter` | 누르는 칩이라 늘 본인 지점 (전사면 22개가 겹친다) |
+    | 회원·등록권·싸인·친절도·기여도 | `branch_filter`·`branch_scope` | 어차피 본인 것만 그린다 |
+
+    **여는 것은 보는 것뿐이다.** 승인·반려는 MASTER 전용이고 남의 근태·급여는
+    MASTER·ADMIN 만 본다 — 그쪽은 각자의 권한 가드가 그대로 막는다.
+    이 함수는 그 판단에 손대지 않는다.
+
+    ⚠️ **`branch_scope` 를 열어서 이걸 하면 안 된다.** 그건 아홉 갈래가 같이
+    쓰는 공용 스코프라, 한 번 열었더니 환경정비 항목이 22개가 아니라 88개로
+    오고 근태에 남의 지점이 섞였다 (실제로 겪었다). 갈래를 나눠서 연다.
+    """
+    if current.role == Role.MANAGER:
+        # 안 고르면 전 지점 — MASTER·ADMIN 과 같은 뜻이 되게 한다
+        return branch_id
+    return scope or branch_id
+
+
 # ---------- 지점 출퇴근 단말 ----------
 #
 # 사람이 아닌 기기가 부르는 길이다. 이 토큰으로 할 수 있는 것은
