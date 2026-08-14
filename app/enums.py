@@ -319,6 +319,7 @@ class InboxKind(StrEnum):
     APPROVAL = "APPROVAL"  # POST /approvals/{id}/approve|reject
     EVENT = "EVENT"        # POST /events/{id}/approve|reject
     MY_TASK = "MY_TASK"    # POST /my-task-requests/{id}/approve|reject
+    PROJECT = "PROJECT"    # POST /projects/requests/{id}/approve|reject
 
 
 class InboxStatus(StrEnum):

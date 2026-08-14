@@ -31,6 +31,7 @@ from app.enums import (
     MyTaskRequestType,
     PayslipStatus,
     ProjectRequestStatus,
+    ProjectRequestType,
     Role,
 )
 from app.models.board.approval import Approval
@@ -39,6 +40,7 @@ from app.models.board.notice import Notice
 from app.models.board.notice_read import NoticeRead
 from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
+from app.models.projects.project_request import ProjectRequest
 from app.models.scoring.my_task import MyTask, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
@@ -193,6 +195,16 @@ _MY_TASK_IN = {
     InboxStatus.APPROVED: (ProjectRequestStatus.APPROVED,),
     InboxStatus.REJECTED: (ProjectRequestStatus.REJECTED,),
 }
+#: 프로젝트 기한 연장·누락 사유·수정·삭제 — 내 업무와 같은 enum
+_PROJECT_IN = _MY_TASK_IN
+
+#: 프로젝트 신청 종류를 화면 말로 — 앱 프로젝트 화면과 같은 이름을 쓴다
+_PROJECT_LABEL = {
+    ProjectRequestType.EXTENSION: "기한 연장",
+    ProjectRequestType.OVERDUE: "누락 사유",
+    ProjectRequestType.EDIT: "프로젝트 수정",
+    ProjectRequestType.DELETE: "프로젝트 삭제",
+}
 
 
 @router.get(
@@ -204,7 +216,11 @@ async def my_inbox(
     status: InboxStatus = Query(InboxStatus.PENDING),
     db: AsyncSession = Depends(get_db),
 ) -> list[InboxItemOut]:
-    """결재 목록 — 급여·월차·전자결재·일정을 한 목록으로 (홈 카드·결재 화면).
+    """결재 목록 — 승인·반려를 받는 것을 **여섯 계열 전부** 한 목록으로.
+
+    급여 · 월차 · 전자결재 · 일정 · 내 업무 · **프로젝트**. 승인·반려 엔드포인트가
+    있는데 여기 없으면 대표가 홈에서 영영 못 본다 (프로젝트가 실제로 그랬다 —
+    대기 3건이 묻혀 있었다, 2026-08-14).
 
     **전사 기준이다.** ADMIN 은 결재선에 없어서 '내 차례'로 세면 늘 비는데,
     지켜보는 자리라 목록은 같이 봐야 한다. 승인·반려 버튼만 앱이 MASTER 에게 낸다.
@@ -339,6 +355,33 @@ async def my_inbox(
                     id=req.id,
                     employee_id=req.requested_by_id,
                     title=f"내 업무 {'수정' if req.type == MyTaskRequestType.EDIT else '삭제'}",
+                    detail=detail,
+                    created_at=req.created_at,
+                ),
+            )
+        )
+
+    for req in (
+        await db.scalars(
+            select(ProjectRequest).where(ProjectRequest.status.in_(_PROJECT_IN[status]))
+        )
+    ).all():
+        project = await db.get(Project, req.project_id)
+        title = project.title if project else "지워진 프로젝트"
+        # 무엇을 해 달라는 건지 한 줄로 — 종류마다 봐야 하는 값이 다르다
+        if req.type in (ProjectRequestType.EXTENSION, ProjectRequestType.OVERDUE):
+            due = req.new_due.astimezone(KST).date() if req.new_due else None
+            detail = f"{title} · {due.month}.{due.day}까지" if due else title
+        else:
+            detail = title
+        rows.append(
+            (
+                req.created_at if pending else (req.decided_at or req.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.PROJECT,
+                    id=req.id,
+                    employee_id=req.requested_by_id,
+                    title=_PROJECT_LABEL.get(req.type, "프로젝트"),
                     detail=detail,
                     created_at=req.created_at,
                 ),
