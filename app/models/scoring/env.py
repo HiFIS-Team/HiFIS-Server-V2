@@ -36,6 +36,16 @@ class EnvTaskLog(UUIDMixin, TimestampMixin, Base):
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)
     points: Mapped[int] = mapped_column(Integer, nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 프로젝트 할 일을 체크해서 저절로 생긴 기록이면 그 할 일 (2026-08-14)
+    #
+    # `현수막 설치 1` 처럼 할 일에 환경정비 항목 이름이 들어 있으면, 체크하는
+    # 순간 이 기록이 같이 생긴다. **체크를 풀 때 정확히 걷으려고** 어디서 나온
+    # 것인지 남긴다 — 없으면 그날 같은 항목 기록을 통째로 뒤져야 한다.
+    #
+    # 칩을 눌러 직접 남긴 기록은 null 이다.
+    source_todo_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_todos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
 
 class SupplyOrder(UUIDMixin, TimestampMixin, Base):
