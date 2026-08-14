@@ -1,7 +1,7 @@
 """Meeting 라우터 — CLAUDE.md §6.3. 작성=인증, 수정/삭제=작성자/관리자."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
