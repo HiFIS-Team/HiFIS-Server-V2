@@ -57,7 +57,7 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     # 관리
     ("기구관리", 2, False),
     ("회원지도", 2, False),
-    ("TM회원관리", 1, False),
+    ("TM회원관리", 5, False),  # 1 → 5 (2026-08-14 대표 결정)
     # 홍보 — 온라인부터 오프라인
     ("게시물", 3, False),
     ("스토리", 3, False),
