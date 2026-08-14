@@ -24,19 +24,22 @@ def _not_found() -> HTTPException:
 
 
 def _visible_filter(current: Employee):
-    """목록 가시성 (§6.3). MASTER/ADMIN=전사 조회, 그 외=작성자·참석자·(PROJECT면)담당·COMPANY."""
+    """목록 가시성 — **`PEOPLE` 만 가린다** (2026-08-14 대표 결정).
+
+    예전에는 `PROJECT` 회의록을 **그 프로젝트 담당자에게만** 보여줬다.
+    그런데 담당자·참석자는 **누가 하느냐를 지정하는 값이지 볼 권한이 아니다** —
+    프로젝트 자체도 전 직원이 다 본다(`list_projects` 에 필터가 없다).
+    회의록을 프로젝트에 거는 순간 전 직원이 보던 글이 사라지는 것이 그 증거였다.
+
+    `PEOPLE` 만 남긴 이유: 그건 담당이 아니라 **쓰는 사람이 고른 비공개**다.
+    면담·인사 이야기가 들어가는 자리라 작성자·참석자만 본다.
+    """
     if current.role in (Role.MASTER, Role.ADMIN):
         return None  # 필터 없음 = 전부
     return or_(
-        Meeting.scope == MeetingScope.COMPANY,
+        Meeting.scope != MeetingScope.PEOPLE,
         Meeting.author_id == current.id,
         Meeting.attendee_ids.contains([current.id]),
-        and_(
-            Meeting.scope == MeetingScope.PROJECT,
-            Meeting.project_id.in_(
-                select(Project.id).where(Project.assignee_ids.contains([current.id]))
-            ),
-        ),
     )
 
 
@@ -45,13 +48,8 @@ async def _can_view(db: AsyncSession, meeting: Meeting, current: Employee) -> bo
         return True
     if meeting.author_id == current.id or current.id in (meeting.attendee_ids or []):
         return True
-    if meeting.scope == MeetingScope.COMPANY:
-        return True
-    if meeting.scope == MeetingScope.PROJECT and meeting.project_id:
-        project = await db.get(Project, meeting.project_id)
-        if project and current.id in (project.assignee_ids or []):
-            return True
-    return False
+    # 목록과 같은 규칙 — 갈리면 목록에 뜬 줄을 눌렀는데 403 이 난다
+    return meeting.scope != MeetingScope.PEOPLE
 
 
 def _forbidden_view() -> HTTPException:
