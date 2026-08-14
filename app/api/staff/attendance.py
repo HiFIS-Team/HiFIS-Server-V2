@@ -344,15 +344,13 @@ async def list_attendance(
     employee_id: str | None = Query(None, alias="employeeId"),
     month: str | None = Query(None),
 ) -> list[AttendanceOut]:
-    # 권한 가드(§60) — 캘린더·연차잔여와 동일. MEMBER 는 본인 근태만(남의 employeeId·미지정 모두 본인 고정).
-    if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+    # 권한 가드(§60) — 캘린더·연차잔여와 동일. 남의 근태는 MASTER·ADMIN 만 본다.
+    # 그 밖에는 남의 employeeId 를 넣든 안 넣든 **조용히 본인 것**으로 고정한다
+    # (403 을 내지 않는 이유: 남을 달라고 조른 게 아니라 볼 수 있는 만큼 주는 것).
+    # **MANAGER 도 여기 든다 (2026-08-14)** — 결재가 대표 전용이 되면서 점장이
+    # 남의 근태를 볼 자리가 없어졌다.
+    if current.role not in (Role.MASTER, Role.ADMIN):
         employee_id = current.id
-    elif employee_id and employee_id != current.id and current.role == Role.MANAGER:
-        target = await db.get(Employee, employee_id)
-        if target is None or target.deleted_at is not None:
-            raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
-        if target.branch_id != current.branch_id:
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
     stmt = select(Attendance)
     if scope:
         stmt = stmt.join(Employee, Employee.id == Attendance.employee_id).where(
@@ -404,13 +402,14 @@ async def attendance_calendar(
     """
     target = current
     if employee_id and employee_id != current.id:
-        if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        # **남의 근태는 MASTER·ADMIN 만** (2026-08-14 에 MANAGER 를 뺐다).
+        # 결재가 대표 전용이 되면서 점장은 남의 근태를 볼 자리가 없어졌다 —
+        # 조직도 상세의 근태 요약 카드도 같이 안 그린다(`staff_detail.dart`).
+        if current.role not in (Role.MASTER, Role.ADMIN):
             raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
         target = await db.get(Employee, employee_id)
         if target is None or target.deleted_at is not None:
             raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
-        if current.role == Role.MANAGER and target.branch_id != current.branch_id:
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
 
     start, end = period_range(month)
     start_d, end_d = start.date(), end.date()
@@ -680,13 +679,14 @@ async def leave_balance(
     """연차 부여/사용/잔여 — 입사일 기준 근로기준법 산정. 기본 본인, employeeId 지정은 매니저↑."""
     target = current
     if employee_id and employee_id != current.id:
-        if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        # **남의 근태는 MASTER·ADMIN 만** (2026-08-14 에 MANAGER 를 뺐다).
+        # 결재가 대표 전용이 되면서 점장은 남의 근태를 볼 자리가 없어졌다 —
+        # 조직도 상세의 근태 요약 카드도 같이 안 그린다(`staff_detail.dart`).
+        if current.role not in (Role.MASTER, Role.ADMIN):
             raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "권한이 없습니다"})
         target = await db.get(Employee, employee_id)
         if target is None or target.deleted_at is not None:
             raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
-        if current.role == Role.MANAGER and target.branch_id != current.branch_id:
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 조회할 수 없습니다"})
 
     as_of = datetime.now(timezone.utc).astimezone(KST).date()
     joined = target.joined_at.astimezone(KST).date()
