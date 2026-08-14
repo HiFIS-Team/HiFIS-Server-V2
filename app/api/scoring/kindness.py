@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import branch_filter, get_current_user
+from app.core.deps import branch_pick, get_current_user
 from app.core.ratelimit import limiter
 from app.db.session import get_db
 from app.enums import ComplaintStatus, ScoreCategory
@@ -84,7 +84,7 @@ async def receive_kindness_survey(
 @router.get("/kindness-surveys", response_model=list[KindnessSurveyOut], dependencies=[Depends(get_current_user)])
 async def list_kindness_surveys(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_filter),  # ?branchId= 로 지점을 고를 수 있다
+    scope: str | None = Depends(branch_pick),  # ?branchId= 로 지점을 고를 수 있다 (MANAGER 포함)
     praised_employee_id: str | None = Query(None, alias="praisedEmployeeId"),
 ) -> list[KindnessSurvey]:
     stmt = select(KindnessSurvey)

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user, require_role
+from app.core.deps import branch_pick, branch_scope, get_current_user, require_role
 from app.core.periods import KST, period_range
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
@@ -90,13 +90,11 @@ async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
 @router.get("/env-items", response_model=list[EnvItemOut], dependencies=[Depends(get_current_user)])
 async def list_env_items(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
-    branch_id: str | None = Query(None, alias="branchId"),
+    scope: str | None = Depends(branch_pick),
 ) -> list[EnvItem]:
     # 기본 항목 자동 보충: 특정 지점이 대상이면 그 지점, 아니면(ADMIN 전체 조회) 모든 지점
-    target = branch_id or scope
-    if target:
-        await _ensure_base_items(db, target)
+    if scope:
+        await _ensure_base_items(db, scope)
     else:
         for (bid,) in (await db.execute(select(Branch.id))).all():
             await _ensure_base_items(db, bid)
@@ -104,8 +102,6 @@ async def list_env_items(
     stmt = select(EnvItem)
     if scope:
         stmt = stmt.where(EnvItem.branch_id == scope)
-    if branch_id:
-        stmt = stmt.where(EnvItem.branch_id == branch_id)
     result = await db.execute(stmt.order_by(EnvItem.sort_order, EnvItem.name))  # 고정 순서(§4.2 #31)
     return list(result.scalars().all())
 
@@ -151,6 +147,12 @@ async def create_env_log(
     item = await db.get(EnvItem, payload.env_item_id)
     if item is None:
         raise HTTPException(400, detail={"code": "ENV_ITEM_NOT_FOUND", "message": "환경정비 항목이 존재하지 않습니다"})
+    # 남의 지점 항목은 수행으로 안 받는다. MANAGER 가 헤더 고르개로 다른 지점을
+    # 볼 수 있게 되면서(`branch_pick`) 생긴 자리다 — 그 지점 칩을 누르면
+    # `branch_id=item.branch_id` 라 **남의 지점에 내 점수가 쌓인다.**
+    # 보는 것만 열고 하는 것은 본인 지점에 둔다.
+    if item.branch_id != current.branch_id:
+        raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점의 항목은 수행할 수 없습니다"})
     # 기타 등 write-in: 적은 내용을 라벨에 접어 "기타(창고정리)" 로 스냅샷(점수 원장·랭킹 사유도 동일). item_name String(100) 보호.
     label = f"{item.name}({payload.note})"[:100] if payload.note else item.name
     log = EnvTaskLog(
@@ -181,8 +183,7 @@ async def create_env_log(
 @router.get("/env-logs", response_model=list[EnvTaskLogOut], dependencies=[Depends(get_current_user)])
 async def list_env_logs(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
-    branch_id: str | None = Query(None, alias="branchId"),
+    scope: str | None = Depends(branch_pick),
     employee_id: str | None = Query(None, alias="employeeId"),
     date: str | None = Query(None),      # "YYYY-MM-DD" — 하루치(KST). 앱 '오늘' 필터
     period: str | None = Query(None),    # "YYYY-MM" — 월치(세션 싸인과 동일)
@@ -190,8 +191,6 @@ async def list_env_logs(
     stmt = select(EnvTaskLog)
     if scope:
         stmt = stmt.where(EnvTaskLog.branch_id == scope)
-    if branch_id:
-        stmt = stmt.where(EnvTaskLog.branch_id == branch_id)
     if employee_id:
         stmt = stmt.where(EnvTaskLog.employee_id == employee_id)
     if date:

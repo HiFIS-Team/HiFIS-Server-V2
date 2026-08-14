@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_scope, get_current_user
+from app.core.deps import branch_pick, get_current_user
 from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import RegistrationStatus, RegistrationType, Role
@@ -23,7 +23,7 @@ router = APIRouter(
 @router.get("", response_model=list[RegistrationOut])
 async def list_registrations(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_scope),
+    scope: str | None = Depends(branch_pick),  # 업무 화면(수업 개수) — 회원 목록과 짝이다
     trainer_id: str | None = Query(None, alias="trainerId"),
     reg_type: RegistrationType | None = Query(None, alias="type"),
     period: str | None = Query(None),

@@ -78,6 +78,33 @@ async def branch_filter(
     return scope or branch_id
 
 
+async def branch_pick(
+    current: Employee = Depends(get_current_user),
+    scope: str | None = Depends(branch_scope),
+    branch_id: str | None = Query(None, alias="branchId"),
+) -> str | None:
+    """볼 지점 — **업무 화면 전용.** `branch_filter` 와 달리 MANAGER 도 고른다.
+
+    점장에게 지점을 준 이유가 '다른 지점이 어떻게 하나 보라'는 것이라,
+    **업무 화면이 읽는 것만** 연다 — 환경정비(항목·기록) · 회원 · 등록권 ·
+    세션싸인 · 친절도 · 기여도.
+
+    **여는 것은 보는 것뿐이다.** 승인·반려는 MASTER 전용이고, 남의 근태·급여는
+    MASTER·ADMIN 만 본다 — 그쪽은 `branch_scope` · `branch_filter` 와 각자의
+    권한 가드가 그대로 막는다. 이 함수는 그 판단에 손대지 않는다.
+
+    **안 고르면(None) MANAGER 는 본인 지점이다 — 전 지점이 아니다.**
+    이게 이 함수의 핵심이다. 예전에 `branch_scope` 자체를 열어서 MANAGER 의
+    기본값이 전 지점이 된 적이 있는데, 그러자 지점 수만큼 같은 것이 겹쳐 왔다
+    (환경정비 항목이 22개가 아니라 88개로 왔다). 고르기 전에는 오늘과 똑같아야 한다.
+
+    MASTER·ADMIN 은 `branch_filter` 와 완전히 같다 — 안 고르면 전 지점.
+    """
+    if current.role == Role.MANAGER:
+        return branch_id or current.branch_id
+    return scope or branch_id
+
+
 # ---------- 지점 출퇴근 단말 ----------
 #
 # 사람이 아닌 기기가 부르는 길이다. 이 토큰으로 할 수 있는 것은
