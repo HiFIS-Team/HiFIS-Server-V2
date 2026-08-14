@@ -117,6 +117,16 @@ class ProjectRequestType(StrEnum):
     DELETE = "DELETE"        # 프로젝트 삭제 — 둘 다 없음
 
 
+class MyTaskRequestType(StrEnum):
+    """내 업무 수정·삭제 결재 종류 (본인 → MASTER 승인, 2026-08-14).
+
+    **추가는 여기 없다.** 할 일을 늘리는 것은 결재 없이 스스로 한다.
+    """
+
+    EDIT = "EDIT"      # 내용 수정 — payload 필수
+    DELETE = "DELETE"  # 삭제 — payload 없음
+
+
 class ProjectRequestStatus(StrEnum):
     PENDING = "PENDING"      # 대기 (어드민 승인 전)
     APPROVED = "APPROVED"    # 승인 (새 기한 반영)
