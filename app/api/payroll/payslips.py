@@ -315,7 +315,7 @@ async def _decide(db: AsyncSession, payslip_id: str, actor: Employee) -> Payslip
     return payslip
 
 
-@router.post("/{payslip_id}/approve", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/{payslip_id}/approve", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def approve_payslip(
     payslip_id: str,
     current: Employee = Depends(get_current_user),
@@ -331,7 +331,7 @@ async def approve_payslip(
     return payslip
 
 
-@router.post("/{payslip_id}/reject", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/{payslip_id}/reject", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def reject_payslip(
     payslip_id: str,
     payload: PayslipReject,
@@ -349,7 +349,7 @@ async def reject_payslip(
     return payslip
 
 
-@router.post("/{payslip_id}/pay", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/{payslip_id}/pay", response_model=PayslipOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def pay_payslip(
     payslip_id: str,
     current: Employee = Depends(get_current_user),

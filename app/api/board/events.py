@@ -21,8 +21,12 @@ from app.services.notifications import notify
 router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_current_user)])
 
 
-#: 승인 없이 올릴 수 있고, 남의 신청을 승인·반려하는 권한
-_DECIDERS = (Role.MASTER, Role.ADMIN)
+#: 결재를 **안 거치고** 올릴 수 있고, 남의 대기 일정도 볼 수 있는 권한
+#:
+#: **승인·반려하는 사람이 아니다** — 그건 MASTER 만이다(아래 라우트).
+#: 이름이 `_DECIDERS` 였을 때 둘을 같은 것으로 읽어서 ADMIN 이 남의 일정을
+#: 결재할 수 있었다 (2026-08-14 에 갈랐다).
+_OVERSEERS = (Role.MASTER, Role.ADMIN)
 
 
 def _not_found() -> HTTPException:
@@ -51,7 +55,7 @@ async def list_events(
     # **이력은 `GET /me/inbox?status=REJECTED` 로 본다.**
     stmt = select(Event).where(Event.status != EventStatus.REJECTED)
     # 승인 대기는 올린 사람과 결재자에게만 — 남의 달력을 미리 어지럽히지 않는다
-    if current.role not in _DECIDERS:
+    if current.role not in _OVERSEERS:
         stmt = stmt.where(
             or_(Event.status == EventStatus.APPROVED, Event.owner_id == current.id)
         )
@@ -85,7 +89,7 @@ async def create_event(
         memo=payload.memo,
         owner_id=current.id,
         status=(
-            EventStatus.APPROVED if current.role in _DECIDERS else EventStatus.PENDING
+            EventStatus.APPROVED if current.role in _OVERSEERS else EventStatus.PENDING
         ),
     )
     db.add(event)
@@ -105,7 +109,7 @@ async def update_event(
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(event, key, value)
     # 승인받은 뒤 내용을 갈아치우면 승인의 뜻이 없다 — 결재자가 아니면 다시 대기로
-    if current.role not in _DECIDERS:
+    if current.role not in _OVERSEERS:
         event.status = EventStatus.PENDING
     await db.commit()
     await db.refresh(event)
@@ -115,7 +119,7 @@ async def update_event(
 @router.post(
     "/{event_id}/approve",
     response_model=EventOut,
-    dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
+    dependencies=[Depends(require_role(Role.MASTER))],  # 승인·반려는 대표만
 )
 async def approve_event(
     event_id: str,
@@ -148,7 +152,7 @@ async def approve_event(
 @router.post(
     "/{event_id}/reject",
     status_code=204,
-    dependencies=[Depends(require_role(Role.ADMIN))],
+    dependencies=[Depends(require_role(Role.MASTER))],  # 승인·반려는 대표만
 )
 async def reject_event(
     event_id: str,

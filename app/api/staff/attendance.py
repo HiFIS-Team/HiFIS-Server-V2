@@ -777,12 +777,12 @@ async def _decide_leave(
     return leave
 
 
-@router.post("/leaves/{request_id}/approve", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/leaves/{request_id}/approve", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def approve_leave(request_id: str, db: AsyncSession = Depends(get_db)) -> LeaveRequest:
     return await _decide_leave(request_id, LeaveStatus.APPROVED, db)
 
 
-@router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER, Role.MANAGER))])
+@router.post("/leaves/{request_id}/reject", response_model=LeaveRequestOut, dependencies=[Depends(require_role(Role.MASTER))])
 async def reject_leave(
     request_id: str, payload: LeaveReject, db: AsyncSession = Depends(get_db)
 ) -> LeaveRequest:
