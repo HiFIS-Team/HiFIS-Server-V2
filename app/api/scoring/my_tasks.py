@@ -20,10 +20,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_role
+from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import KST
 from app.db.session import get_db
-from app.enums import MyTaskRequestType, ProjectRequestStatus, Role
+from app.enums import EmployeeStatus, MyTaskRequestType, ProjectRequestStatus, Role
 from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskRequest
 from app.models.staff.employee import Employee
 from app.schemas.scoring.my_task import (
@@ -32,6 +32,7 @@ from app.schemas.scoring.my_task import (
     MyTaskOut,
     MyTaskRequestCreate,
     MyTaskRequestOut,
+    MyTaskRosterRow,
 )
 from app.services.notifications import master_ids, notify
 
@@ -42,6 +43,16 @@ def _today() -> "datetime.date":
     """KST 근무일 — 근태(`Attendance.date`)와 같은 기준이어야
     '누락 상태로 퇴근했나'를 같은 날짜로 맞출 수 있다."""
     return datetime.now(timezone.utc).astimezone(KST).date()
+
+
+def _parse_date(date: str | None) -> "datetime.date":
+    """안 주면 오늘 — 화면이 늘 오늘이라 대개 비어 온다."""
+    if not date:
+        return _today()
+    try:
+        return datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, detail={"code": "INVALID_DATE", "message": "date 형식은 YYYY-MM-DD 입니다"})
 
 
 def _not_found() -> HTTPException:
@@ -76,23 +87,26 @@ async def list_my_tasks(
     db: AsyncSession = Depends(get_db),
     # 지난 날짜를 볼 때만 준다. 안 주면 오늘 (화면이 늘 오늘이다)
     date: str | None = Query(None),
+    # 남의 것 — **MASTER·ADMIN 만.** 그 밖에는 넣어도 본인 것이 온다
+    employee_id: str | None = Query(None, alias="employeeId"),
 ) -> MyTaskDayOut:
     """내 업무 목록 + **그날 체크 여부**를 한 번에 준다.
 
     목록과 체크를 따로 받으면 요청이 두 배고, 앱이 id 로 맞춰야 한다.
+
+    대표·관리자는 `employeeId` 로 **남의 것을 본다** (읽기만 — 체크·수정은
+    본인만 한다). 그 밖에는 403 이 아니라 **조용히 본인 것**으로 고정한다
+    (`/attendance` 와 같은 규칙 — backend-gap 60).
     """
-    if date:
-        try:
-            day = datetime.strptime(date, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(400, detail={"code": "INVALID_DATE", "message": "date 형식은 YYYY-MM-DD 입니다"})
-    else:
-        day = _today()
+    target_id = current.id
+    if employee_id and current.role in (Role.MASTER, Role.ADMIN):
+        target_id = employee_id
+    day = _parse_date(date)
 
     tasks = list(
         await db.scalars(
             select(MyTask)
-            .where(MyTask.employee_id == current.id, MyTask.deleted_at.is_(None))
+            .where(MyTask.employee_id == target_id, MyTask.deleted_at.is_(None))
             .order_by(MyTask.sort, MyTask.created_at)
         )
     )
@@ -125,6 +139,73 @@ async def list_my_tasks(
         # 항목이 하나도 없으면 완료가 아니다 — 할 일을 안 정한 것이지 다 한 게 아니다
         complete=bool(tasks) and done == len(tasks),
     )
+
+
+@router.get(
+    "/my-tasks/roster",
+    response_model=list[MyTaskRosterRow],
+    dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
+)
+async def my_task_roster(
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(branch_filter),
+    date: str | None = Query(None),
+) -> list[MyTaskRosterRow]:
+    """오늘 누가 몇 개 중 몇 개를 했나 — **한 번에** 준다.
+
+    사람마다 `/my-tasks?employeeId=` 를 부르면 인원수만큼 요청이 나간다.
+    전사 근태 달력(`/attendance/calendar/all`)과 같은 판단이다.
+
+    **MASTER·ADMIN 은 세지 않는다.** 그들에게는 내 업무 화면이 없어서 늘 0개다.
+    업무를 하나도 안 만든 사람도 목록에는 선다 — 안 정했다는 것도 봐야 한다.
+    """
+    day = _parse_date(date)
+    stmt = select(Employee).where(
+        Employee.role.notin_([Role.MASTER, Role.ADMIN]),
+        Employee.status == EmployeeStatus.ACTIVE,
+        Employee.deleted_at.is_(None),
+    )
+    if scope:
+        stmt = stmt.where(Employee.branch_id == scope)
+    people = list(await db.scalars(stmt.order_by(Employee.name)))
+    if not people:
+        return []
+
+    ids = [p.id for p in people]
+    tasks = list(
+        await db.scalars(
+            select(MyTask).where(
+                MyTask.employee_id.in_(ids), MyTask.deleted_at.is_(None)
+            )
+        )
+    )
+    total: dict[str, int] = {}
+    task_owner: dict[str, str] = {}
+    for t in tasks:
+        total[t.employee_id] = total.get(t.employee_id, 0) + 1
+        task_owner[t.id] = t.employee_id
+
+    done: dict[str, int] = {}
+    if tasks:
+        for tid in await db.scalars(
+            select(MyTaskCheck.my_task_id).where(
+                MyTaskCheck.my_task_id.in_(list(task_owner)), MyTaskCheck.date == day
+            )
+        ):
+            owner = task_owner[tid]
+            done[owner] = done.get(owner, 0) + 1
+
+    return [
+        MyTaskRosterRow(
+            employee_id=p.id,
+            name=p.name,
+            total=total.get(p.id, 0),
+            done=done.get(p.id, 0),
+            # 항목이 없으면 완료가 아니다 — 목록과 같은 규칙
+            complete=total.get(p.id, 0) > 0 and done.get(p.id, 0) == total[p.id],
+        )
+        for p in people
+    ]
 
 
 @router.post("/my-tasks", response_model=list[MyTaskOut], status_code=201)

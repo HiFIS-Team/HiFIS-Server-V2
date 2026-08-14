@@ -42,6 +42,21 @@ class MyTaskDayOut(CamelModel):
     complete: bool
 
 
+class MyTaskRosterRow(CamelModel):
+    """대표·관리자가 보는 사람 한 줄 — 오늘 몇 개 중 몇 개를 했나.
+
+    **이름을 그대로 싣는다.** 화면에 찍히는 값이 이름이라, uuid 로 주고 앱이
+    명단에서 찾게 하면 명단을 못 받은 화면에서 빈칸이 된다
+    (전사 근태 달력과 같은 판단 — backend-gap 70).
+    """
+
+    employee_id: str
+    name: str
+    total: int
+    done: int
+    complete: bool
+
+
 class MyTaskRequestCreate(CamelModel):
     type: MyTaskRequestType
     #: EDIT 만 채운다 — `{"content": "..."}`
