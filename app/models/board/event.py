@@ -31,3 +31,14 @@ class Event(UUIDMixin, TimestampMixin, Base):
         default=EventStatus.APPROVED,
         index=True,
     )
+    # 결재한 시각(승인·반려 둘 다) — **올리자마자 APPROVED 가 된 것은 null 이다.**
+    #
+    # 결재 이력(GET /me/inbox?status=APPROVED)에서 '대표가 승인해 준 일정'과
+    # '대표가 올려서 그냥 선 일정'을 가르는 유일한 단서다. status 만 보면
+    # 전사 달력 일정이 통째로 결재 이력에 선다.
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 반려 사유 — 급여·월차·전자결재와 같은 칸이다.
+    # 예전에는 알림 본문에만 실어 보내고 어디에도 안 남겼다.
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -6,7 +6,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.enums import (
     AttendanceStatus,
     EventStatus,
     InboxKind,
+    InboxStatus,
     LeaveStatus,
     LeaveType,
     PayslipStatus,
@@ -164,41 +165,73 @@ _LEAVE_LABEL = {
 }
 
 
+#: 종류마다 상태 이름이 달라서 앱의 세 칸에 뭐가 들어가는지를 여기서 정한다.
+#: **본인이 물린 것(월차 취소·결재 회수)은 반려 칸에 같이 넣는다** — 흔치 않아
+#: 탭을 따로 두면 늘 비고, 전자결재 화면도 회수를 반려 탭에 두고 있다.
+_PAYSLIP_IN = {
+    InboxStatus.PENDING: (PayslipStatus.SUBMITTED,),
+    # 지급 완료도 승인을 거친 것이다 — 결재 이력에서 빠지면 안 된다
+    InboxStatus.APPROVED: (PayslipStatus.APPROVED, PayslipStatus.PAID),
+    InboxStatus.REJECTED: (PayslipStatus.REJECTED,),
+}
+_LEAVE_IN = {
+    InboxStatus.PENDING: (LeaveStatus.PENDING,),
+    InboxStatus.APPROVED: (LeaveStatus.APPROVED,),
+    InboxStatus.REJECTED: (LeaveStatus.REJECTED, LeaveStatus.CANCELLED),
+}
+_APPROVAL_IN = {
+    InboxStatus.PENDING: (ApprovalStatus.IN_PROGRESS,),
+    InboxStatus.APPROVED: (ApprovalStatus.APPROVED,),
+    InboxStatus.REJECTED: (ApprovalStatus.REJECTED, ApprovalStatus.WITHDRAWN),
+}
+
+
 @router.get(
     "/me/inbox",
     response_model=list[InboxItemOut],
     dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
 )
-async def my_inbox(db: AsyncSession = Depends(get_db)) -> list[InboxItemOut]:
-    """결재를 기다리는 것 — 급여·월차·전자결재·일정을 한 목록으로 (홈 카드).
+async def my_inbox(
+    status: InboxStatus = Query(InboxStatus.PENDING),
+    db: AsyncSession = Depends(get_db),
+) -> list[InboxItemOut]:
+    """결재 목록 — 급여·월차·전자결재·일정을 한 목록으로 (홈 카드·결재 화면).
 
     **전사 기준이다.** ADMIN 은 결재선에 없어서 '내 차례'로 세면 늘 비는데,
     지켜보는 자리라 목록은 같이 봐야 한다. 승인·반려 버튼만 앱이 MASTER 에게 낸다.
 
-    올린 지 오래된 것부터 준다 — 오래 묵은 게 먼저 처리돼야 한다.
+    `status` 가 앱 결재 화면의 `대기 · 승인 · 반려` 탭이다 (기본 `PENDING` —
+    홈 카드가 인자 없이 부른다). **대기는 오래 묵은 것부터**(먼저 처리돼야 한다),
+    **처리된 것은 최근 것부터** 준다.
+
+    **일정 반려는 목록에 없다** — 반려하면 행을 지우기 때문이다(`EventStatus`).
+    승인된 일정도 **결재를 거친 것만** 센다 (`Event.decided_at`).
     """
-    items: list[InboxItemOut] = []
+    # (정렬 키, 줄) — 종류마다 처리 시각을 들고 있는 칸이 달라서 따로 모은다
+    rows: list[tuple[datetime, InboxItemOut]] = []
+    pending = status is InboxStatus.PENDING
 
     for slip in (
-        await db.scalars(
-            select(Payslip).where(Payslip.status == PayslipStatus.SUBMITTED)
-        )
+        await db.scalars(select(Payslip).where(Payslip.status.in_(_PAYSLIP_IN[status])))
     ).all():
         year, month = slip.year_month.split("-")
-        items.append(
-            InboxItemOut(
-                kind=InboxKind.PAYSLIP,
-                id=slip.id,
-                employee_id=slip.employee_id,
-                title=f"{year}년 {int(month)}월 급여",
-                detail=f"실수령 {slip.net:,}원",
-                created_at=slip.updated_at,  # 제출한 시각(마지막 상태 변경)
+        rows.append(
+            (
+                slip.updated_at if pending else (slip.decided_at or slip.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.PAYSLIP,
+                    id=slip.id,
+                    employee_id=slip.employee_id,
+                    title=f"{year}년 {int(month)}월 급여",
+                    detail=f"실수령 {slip.net:,}원",
+                    created_at=slip.updated_at,  # 제출한 시각(마지막 상태 변경)
+                ),
             )
         )
 
     for leave in (
         await db.scalars(
-            select(LeaveRequest).where(LeaveRequest.status == LeaveStatus.PENDING)
+            select(LeaveRequest).where(LeaveRequest.status.in_(_LEAVE_IN[status]))
         )
     ).all():
         span = (
@@ -208,36 +241,55 @@ async def my_inbox(db: AsyncSession = Depends(get_db)) -> list[InboxItemOut]:
             f" ~ {leave.end_date.month}.{leave.end_date.day}"
         )
         days = int(leave.days) if leave.days == int(leave.days) else leave.days
-        items.append(
-            InboxItemOut(
-                kind=InboxKind.LEAVE,
-                id=leave.id,
-                employee_id=leave.employee_id,
-                title=_LEAVE_LABEL.get(leave.type, "월차"),
-                detail=f"{span} · {days}일",
-                created_at=leave.created_at,
+        rows.append(
+            (
+                leave.created_at if pending else leave.updated_at,
+                InboxItemOut(
+                    kind=InboxKind.LEAVE,
+                    id=leave.id,
+                    employee_id=leave.employee_id,
+                    title=_LEAVE_LABEL.get(leave.type, "월차"),
+                    detail=f"{span} · {days}일",
+                    created_at=leave.created_at,
+                ),
             )
         )
 
     for doc in (
-        await db.scalars(
-            select(Approval).where(Approval.status == ApprovalStatus.IN_PROGRESS)
-        )
+        await db.scalars(select(Approval).where(Approval.status.in_(_APPROVAL_IN[status])))
     ).all():
-        items.append(
-            InboxItemOut(
-                kind=InboxKind.APPROVAL,
-                id=doc.id,
-                employee_id=doc.requester_id,
-                title=doc.kind,
-                detail=doc.title,
-                created_at=doc.created_at,
+        rows.append(
+            (
+                doc.created_at if pending else doc.updated_at,
+                InboxItemOut(
+                    kind=InboxKind.APPROVAL,
+                    id=doc.id,
+                    employee_id=doc.requester_id,
+                    title=doc.kind,
+                    detail=doc.title,
+                    created_at=doc.created_at,
+                ),
             )
         )
 
-    for event in (
-        await db.scalars(select(Event).where(Event.status == EventStatus.PENDING))
-    ).all():
+    # 일정만 승인 칸에 조건이 하나 더 붙는다.
+    # **`decided_at` 이 있는 것만** — 없으면 대표가 올려서 그냥 선 일정이라,
+    # 상태만 보면 전사 달력이 통째로 결재 이력에 서 버린다.
+    if status is InboxStatus.APPROVED:
+        event_q = select(Event).where(
+            Event.status == EventStatus.APPROVED, Event.decided_at.isnot(None)
+        )
+    else:
+        event_q = select(Event).where(
+            Event.status
+            == (
+                EventStatus.PENDING
+                if status is InboxStatus.PENDING
+                else EventStatus.REJECTED
+            )
+        )
+
+    for event in (await db.scalars(event_q)).all():
         start = event.start_at.astimezone(KST)
         end = event.end_at.astimezone(KST)
         span = (
@@ -245,16 +297,20 @@ async def my_inbox(db: AsyncSession = Depends(get_db)) -> list[InboxItemOut]:
             if start.date() == end.date()
             else f"{start.month}.{start.day} ~ {end.month}.{end.day}"
         )
-        items.append(
-            InboxItemOut(
-                kind=InboxKind.EVENT,
-                id=event.id,
-                employee_id=event.owner_id,
-                title=event.title,
-                detail=f"{span} · {event.category}",
-                created_at=event.created_at,
+        rows.append(
+            (
+                event.created_at if pending else (event.decided_at or event.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.EVENT,
+                    id=event.id,
+                    employee_id=event.owner_id,
+                    title=event.title,
+                    detail=f"{span} · {event.category}",
+                    created_at=event.created_at,
+                ),
             )
         )
 
-    items.sort(key=lambda item: item.created_at)
-    return items
+    # 대기는 오래된 것부터(먼저 처리돼야 한다), 처리된 것은 최근 것부터
+    rows.sort(key=lambda row: row[0], reverse=not pending)
+    return [item for _, item in rows]

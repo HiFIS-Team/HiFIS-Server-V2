@@ -282,12 +282,16 @@ class EventStatus(StrEnum):
     """일정 승인 상태.
 
     MASTER·ADMIN 이 올린 것은 바로 APPROVED, 나머지는 PENDING 으로 들어간다.
-    **반려하면 행을 지우므로 REJECTED 는 없다** — 달력이 유일한 목록이라
-    죽은 일정이 남으면 칸만 어지럽힌다. 신청자에게는 알림으로 알린다.
+
+    **반려해도 행을 남긴다 (2026-08-14).** 예전에는 지웠는데, 그러면 급여·월차·
+    전자결재는 다 남는 반려 이력이 **일정만 없었다**. 대신 `GET /events` 가
+    REJECTED 를 빼서 달력에는 안 뜬다 — 죽은 일정이 칸을 어지럽히지 않는 것은
+    그대로다.
     """
 
     PENDING = "PENDING"
     APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class InboxKind(StrEnum):
@@ -297,6 +301,19 @@ class InboxKind(StrEnum):
     LEAVE = "LEAVE"        # POST /leaves/{id}/approve|reject
     APPROVAL = "APPROVAL"  # POST /approvals/{id}/approve|reject
     EVENT = "EVENT"        # POST /events/{id}/approve|reject
+
+
+class InboxStatus(StrEnum):
+    """홈 결재함이 어느 칸을 보여줄지 — 앱의 `대기 · 승인 · 반려` 탭.
+
+    네 테이블의 상태 이름이 제각각이라(급여 SUBMITTED, 전자결재 IN_PROGRESS …)
+    앱이 종류별로 물어보면 분기만 는다. **이 셋으로만 묻고** 어느 상태가
+    거기 속하는지는 서버가 안다.
+    """
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"  # 본인이 물린 것(월차 취소·결재 회수)도 여기 들어간다
 
 
 class AccessEvent(StrEnum):
