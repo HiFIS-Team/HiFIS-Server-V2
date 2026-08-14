@@ -649,9 +649,14 @@ async def list_leaves(
     status: LeaveStatus | None = Query(None),
     current: Employee = Depends(get_current_user),
 ) -> list[LeaveRequest]:
-    # 일반 직원은 **본인 것만** — 남의 휴가 사유까지 보이면 안 된다.
+    # 결재하지 않는 사람은 **본인 것만** — 남의 휴가 사유까지 보이면 안 된다.
     # `/attendance` 와 같은 규칙이다 (403 대신 조용히 본인으로 고정).
-    if current.role == Role.MEMBER:
+    #
+    # **MANAGER 도 여기 든다 (2026-08-14).** 승인·반려가 대표 전용이 되면서
+    # 점장은 월차를 내는 쪽이지 받는 쪽이 아니다. 앱은 이미 본인 것만
+    # 부르는데(`attendance_models.dart`) 서버가 열려 있어서, 토큰으로 직접
+    # 부르면 지점 전원의 사유가 그대로 나왔다.
+    if current.role in (Role.MEMBER, Role.MANAGER):
         employee_id = current.id
     stmt = select(LeaveRequest)
     if scope:

@@ -265,7 +265,10 @@ async def my_payslip_list(
     return list(result.scalars().all())
 
 
-@router.get("", response_model=list[PayslipOut], dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))])
+# 남의 급여 명세 목록 — **MASTER·ADMIN 만** (2026-08-14 에 MANAGER 를 뺐다).
+# 결재가 대표 전용이 되면서 점장이 이걸 부를 자리가 앱에 하나도 없다.
+# 본인 것은 권한 없이 `/payslips/me/list` 로 받는다.
+@router.get("", response_model=list[PayslipOut], dependencies=[Depends(require_role(Role.ADMIN))])
 async def list_payslips(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -291,7 +294,9 @@ async def list_payslips(
         stmt = stmt.where(
             Payslip.status.in_([PayslipStatus.APPROVED, PayslipStatus.PAID, PayslipStatus.REJECTED])
         )
-    # MANAGER는 항상 자기 지점만(box 유무와 무관), ADMIN은 전체
+    # 지금은 MASTER·ADMIN 만 들어오므로 이 줄에 걸리는 사람이 없다.
+    # **그래도 지운다면 게이트를 다시 넓힐 때 지점 제한이 같이 사라진다** —
+    # 안전망으로 남겨 둔다 (MANAGER 가 열리면 그때 자기 지점만 보게 된다).
     if current.role not in (Role.MASTER, Role.ADMIN) and not branch_id:
         branch_id = current.branch_id
     if branch_id:
