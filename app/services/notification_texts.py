@@ -231,6 +231,28 @@ def staff_attendance(name: str, action: str, when: datetime, note: str | None = 
     return {"type": "ATTENDANCE", "title": f"{name}님이 {action}했어요", "body": body, "link": "/attendance"}
 
 
+def my_task_missing(left: list[str]) -> dict:
+    """본인에게 — 내 업무를 남기고 퇴근했다."""
+    head = left[0] if left else ""
+    body = head if len(left) == 1 else f"{head} 외 {len(left) - 1}개"
+    return {
+        "type": "MY_TASK",
+        "title": "안 한 업무가 있어요",
+        "body": f"{body}를 아직 못 했어요",
+        "link": "/work",
+    }
+
+
+def staff_task_missing(name: str, left: int) -> dict:
+    """대표에게 — 누가 업무를 남기고 퇴근했다."""
+    return {
+        "type": "MY_TASK",
+        "title": f"{name}님이 업무를 남기고 퇴근했어요",
+        "body": f"내 업무 {left}개가 안 됐어요",
+        "link": "/work",
+    }
+
+
 def staff_absent(name: str) -> dict:
     return {
         "type": "ATTENDANCE",

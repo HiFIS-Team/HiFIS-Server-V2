@@ -33,7 +33,7 @@ from app.schemas.scoring.my_task import (
     MyTaskRequestCreate,
     MyTaskRequestOut,
 )
-from app.services.notifications import notify
+from app.services.notifications import master_ids, notify
 
 router = APIRouter(tags=["my-tasks"], dependencies=[Depends(get_current_user)])
 
@@ -236,7 +236,7 @@ async def create_my_task_request(
     db.add(req)
     await db.flush()
     label = "수정" if payload.type == MyTaskRequestType.EDIT else "삭제"
-    for eid in await _master_ids(db):
+    for eid in await master_ids(db, exclude=current.id):
         await notify(
             db,
             employee_id=eid,
@@ -248,15 +248,6 @@ async def create_my_task_request(
     await db.commit()
     await db.refresh(req)
     return MyTaskRequestOut.model_validate(req)
-
-
-async def _master_ids(db: AsyncSession) -> list[str]:
-    """**MASTER 만** — 이 결재는 대표 전용이다 (2026-08-14 정책)."""
-    return list(
-        await db.scalars(
-            select(Employee.id).where(Employee.role == Role.MASTER, Employee.deleted_at.is_(None))
-        )
-    )
 
 
 @router.get("/my-task-requests", response_model=list[MyTaskRequestOut])

@@ -29,6 +29,7 @@ from app.enums import (
     Role,
     ScoreCategory,
 )
+from app.models.scoring.my_task import MyTask, MyTaskCheck
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
@@ -44,7 +45,7 @@ from app.schemas.staff.attendance import (
     LeaveRequestOut,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify, notify_bosses
+from app.services.notifications import master_ids, notify, notify_bosses
 from app.services.scoring import accrue_score
 
 router = APIRouter(tags=["attendance"])
@@ -229,6 +230,42 @@ async def _award_offhours(
 
 
 # ---------- 근태 ----------
+async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) -> None:
+    """내 업무를 남기고 퇴근했으면 **본인과 대표에게** 알린다 (2026-08-14).
+
+    공통 업무(환경정비)는 몇 번을 하든 자유라 누락이라는 게 없다. 내 업무는
+    그날 다 해야 하는 목록이라, 안 한 채로 나가면 알려 줘야 한다.
+
+    **업무를 하나도 안 정한 사람은 조용하다** — 할 일을 안 만든 것이지
+    안 한 것이 아니다. 대표·관리자는 애초에 이 화면이 없어서 늘 0개다.
+    """
+    tasks = list(
+        await db.scalars(
+            select(MyTask)
+            .where(MyTask.employee_id == target.id, MyTask.deleted_at.is_(None))
+            .order_by(MyTask.sort, MyTask.created_at)
+        )
+    )
+    if not tasks:
+        return
+    done = set(
+        await db.scalars(
+            select(MyTaskCheck.my_task_id).where(
+                MyTaskCheck.my_task_id.in_([t.id for t in tasks]),
+                MyTaskCheck.date == day,
+            )
+        )
+    )
+    left = [t.content for t in tasks if t.id not in done]
+    if not left:
+        return
+    await notify(db, employee_id=target.id, **ntext.my_task_missing(left))
+    # 대표에게만 — 관리자까지 받으면 매일 저녁 알림이 두 배가 된다
+    for eid in await master_ids(db):
+        if eid != target.id:
+            await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
+
+
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
     payload: AttendanceScanRequest | None = Body(default=None),
@@ -308,6 +345,9 @@ async def scan_attendance(
         if target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
+        # **오늘 첫 퇴근 스캔인가** — 내 업무 누락 알림을 여기서만 보낸다.
+        # 퇴근을 여러 번 찍는 사람이 있어서, 안 가르면 누를 때마다 대표에게 간다.
+        first_out = record.check_out is None
         record.check_out = now
         if record.check_in is not None:
             record.work_minutes = int((now - record.check_in).total_seconds() // 60)
@@ -317,6 +357,8 @@ async def scan_attendance(
         out_min = now_min + (1440 if overnight else 0)
         if target.shift_end and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
+        if first_out:
+            await _notify_task_missing(db, target, record.date)
     # 스캔 즉시 알림(+웹푸시) — 스캔한 본인에게
     await notify(db, employee_id=target.id, **ntext.attendance_scan(action, now_kst))
     # 대표·관리자에게도 알린다 — 누가 왔고 누가 갔는지 (2026-08-11 대표 요청).

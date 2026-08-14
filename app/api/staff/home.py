@@ -28,7 +28,9 @@ from app.enums import (
     InboxStatus,
     LeaveStatus,
     LeaveType,
+    MyTaskRequestType,
     PayslipStatus,
+    ProjectRequestStatus,
     Role,
 )
 from app.models.board.approval import Approval
@@ -37,6 +39,7 @@ from app.models.board.notice import Notice
 from app.models.board.notice_read import NoticeRead
 from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
+from app.models.scoring.my_task import MyTask, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
@@ -184,6 +187,12 @@ _APPROVAL_IN = {
     InboxStatus.APPROVED: (ApprovalStatus.APPROVED,),
     InboxStatus.REJECTED: (ApprovalStatus.REJECTED, ApprovalStatus.WITHDRAWN),
 }
+#: 내 업무 수정·삭제 — 프로젝트 결재와 같은 상태 enum 을 쓴다
+_MY_TASK_IN = {
+    InboxStatus.PENDING: (ProjectRequestStatus.PENDING,),
+    InboxStatus.APPROVED: (ProjectRequestStatus.APPROVED,),
+    InboxStatus.REJECTED: (ProjectRequestStatus.REJECTED,),
+}
 
 
 @router.get(
@@ -307,6 +316,31 @@ async def my_inbox(
                     title=event.title,
                     detail=f"{span} · {event.category}",
                     created_at=event.created_at,
+                ),
+            )
+        )
+
+    for req in (
+        await db.scalars(
+            select(MyTaskRequest).where(MyTaskRequest.status.in_(_MY_TASK_IN[status]))
+        )
+    ).all():
+        task = await db.get(MyTask, req.my_task_id)
+        # 무엇을 어떻게 고치겠다는 건지 한 줄로 — 결재하는 사람이 봐야 하는 값이다
+        if req.type == MyTaskRequestType.EDIT:
+            detail = f"{task.content if task else ''} → {(req.payload or {}).get('content', '')}"
+        else:
+            detail = task.content if task else ""
+        rows.append(
+            (
+                req.created_at if pending else (req.decided_at or req.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.MY_TASK,
+                    id=req.id,
+                    employee_id=req.requested_by_id,
+                    title=f"내 업무 {'수정' if req.type == MyTaskRequestType.EDIT else '삭제'}",
+                    detail=detail,
+                    created_at=req.created_at,
                 ),
             )
         )
