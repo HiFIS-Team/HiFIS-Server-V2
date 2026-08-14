@@ -104,10 +104,17 @@ class ProjectStatus(StrEnum):
 
 
 class ProjectRequestType(StrEnum):
-    """프로젝트 기한 변경 요청 종류 (매니저·멤버 → 어드민 승인)."""
+    """프로젝트 결재 요청 종류 (담당자·참여 멤버 → MASTER 승인).
 
-    EXTENSION = "EXTENSION"  # 기한 연장 요청 (마감 전)
-    OVERDUE = "OVERDUE"      # 누락 사유 (마감 지남 — 왜 늦었고 언제까지 끝내겠다)
+    **EDIT·DELETE 는 2026-08-14 에 붙었다.** "수정 및 삭제는 마스터의 허가가
+    있어야 가능하다" — 그 전에는 담당자가 그냥 고치고 그냥 지웠다.
+    기한 연장이 이미 쓰던 통로를 그대로 탄다.
+    """
+
+    EXTENSION = "EXTENSION"  # 기한 연장 요청 (마감 전) — new_due 필수
+    OVERDUE = "OVERDUE"      # 누락 사유 (마감 지남 — 왜 늦었고 언제까지 끝내겠다) — new_due 필수
+    EDIT = "EDIT"            # 이름·설명·색 수정 — payload 필수
+    DELETE = "DELETE"        # 프로젝트 삭제 — 둘 다 없음
 
 
 class ProjectRequestStatus(StrEnum):
