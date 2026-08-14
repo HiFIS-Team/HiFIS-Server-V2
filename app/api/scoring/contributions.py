@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_pick, get_current_user, require_role
+from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import ContribType, Role, ScoreCategory
@@ -81,7 +81,7 @@ async def create_contribution(
 @router.get("", response_model=list[ContributionGrantOut], dependencies=[Depends(get_current_user)])
 async def list_contributions(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_pick),  # ?branchId= 로 지점을 고를 수 있다 (MANAGER 포함)
+    scope: str | None = Depends(branch_filter),  # ?branchId= 로 지점을 고를 수 있다
     employee_id: str | None = Query(None, alias="employeeId"),
     # 준 사람으로 거르기 — 대표·관리자·점장의 '내가 준 기여 내역'이 쓴다.
     # 받은 사람(employeeId)과 **같이 주면 둘 다** 걸린다 (AND).

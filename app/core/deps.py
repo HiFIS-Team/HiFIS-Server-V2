@@ -83,25 +83,30 @@ async def branch_pick(
     scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
 ) -> str | None:
-    """볼 지점 — **업무 화면 전용.** `branch_filter` 와 달리 MANAGER 도 고른다.
+    """볼 지점 — **MANAGER 도 고른다.** 지금 쓰는 곳은 `/env-logs` 하나다.
 
-    점장에게 지점을 준 이유가 '다른 지점이 어떻게 하나 보라'는 것이라,
-    **업무 화면이 읽는 것만** 연다 — 환경정비(항목·기록) · 회원 · 등록권 ·
-    세션싸인 · 친절도 · 기여도.
+    점장에게 지점을 준 이유가 '다른 지점이 어떻게 하나 보라'는 것인데,
+    업무 화면에서 그게 실제로 뜻이 있는 자리는 **환경정비 기록 하나뿐**이다.
+    나머지 탭(동료평가·친절도·수업개수·기여도)은 점장에게 **본인 것만**
+    보여주는 화면이라, 지점을 걸면 보이던 내 것이 0건이 된다.
 
-    **여는 것은 보는 것뿐이다.** 승인·반려는 MASTER 전용이고, 남의 근태·급여는
-    MASTER·ADMIN 만 본다 — 그쪽은 `branch_scope` · `branch_filter` 와 각자의
-    권한 가드가 그대로 막는다. 이 함수는 그 판단에 손대지 않는다.
+    | | 무엇을 쓰나 | 왜 |
+    |---|---|---|
+    | `/env-logs` | **이 함수** | 다른 지점이 오늘 뭘 했는지 보는 자리 |
+    | `/env-items` | `branch_filter` | 누르는 칩이라 늘 본인 지점 (전사면 22개가 겹친다) |
+    | 회원·등록권·싸인·친절도·기여도 | `branch_filter`·`branch_scope` | 어차피 본인 것만 그린다 |
 
-    **안 고르면(None) MANAGER 는 본인 지점이다 — 전 지점이 아니다.**
-    이게 이 함수의 핵심이다. 예전에 `branch_scope` 자체를 열어서 MANAGER 의
-    기본값이 전 지점이 된 적이 있는데, 그러자 지점 수만큼 같은 것이 겹쳐 왔다
-    (환경정비 항목이 22개가 아니라 88개로 왔다). 고르기 전에는 오늘과 똑같아야 한다.
+    **여는 것은 보는 것뿐이다.** 승인·반려는 MASTER 전용이고 남의 근태·급여는
+    MASTER·ADMIN 만 본다 — 그쪽은 각자의 권한 가드가 그대로 막는다.
+    이 함수는 그 판단에 손대지 않는다.
 
-    MASTER·ADMIN 은 `branch_filter` 와 완전히 같다 — 안 고르면 전 지점.
+    ⚠️ **`branch_scope` 를 열어서 이걸 하면 안 된다.** 그건 아홉 갈래가 같이
+    쓰는 공용 스코프라, 한 번 열었더니 환경정비 항목이 22개가 아니라 88개로
+    오고 근태에 남의 지점이 섞였다 (실제로 겪었다). 갈래를 나눠서 연다.
     """
     if current.role == Role.MANAGER:
-        return branch_id or current.branch_id
+        # 안 고르면 전 지점 — MASTER·ADMIN 과 같은 뜻이 되게 한다
+        return branch_id
     return scope or branch_id
 
 

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_pick, get_current_user, require_role
+from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
 from app.core.storage import save_signature
 from app.enums import RegistrationStatus, Role, ScoreCategory
@@ -94,7 +94,7 @@ async def create_session_sign(
 @router.get("", response_model=list[SessionSignOut], dependencies=[Depends(get_current_user)])
 async def list_session_signs(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_pick),  # ?branchId= 로 지점을 고를 수 있다 (MANAGER 포함)
+    scope: str | None = Depends(branch_filter),  # ?branchId= 로 지점을 고를 수 있다
     trainer_id: str | None = Query(None, alias="trainerId"),
     member_id: str | None = Query(None, alias="memberId"),
     period: str | None = Query(None),

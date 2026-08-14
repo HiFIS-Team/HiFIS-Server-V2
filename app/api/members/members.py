@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_pick, branch_scope, get_current_user
+from app.core.deps import branch_filter, branch_scope, get_current_user
 from app.db.session import get_db
 from app.enums import VISIT_PATH_SCORE, RegistrationStatus, Role
 from app.models.staff.branch import Branch
@@ -42,7 +42,10 @@ def _not_found() -> HTTPException:
 @router.get("", response_model=list[MemberOut])
 async def list_members(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_pick),  # 업무 화면(수업 개수) — MANAGER 도 고른다
+    # **MANAGER 는 고정이다.** 이 화면이 보여주는 건 '내가 담당하는 회원'
+    # (`myMembers`)이라 다른 지점을 골라 봐야 0명이다. 회원 등록의 소개 회원
+    # 고르개도 이 목록을 쓰는데, 거기까지 전사로 열 이유가 없다.
+    scope: str | None = Depends(branch_filter),
     owner_trainer_id: str | None = Query(None, alias="ownerTrainerId"),
     q: str | None = Query(None),
 ) -> list[Member]:

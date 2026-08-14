@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_pick, branch_scope, get_current_user, require_role
+from app.core.deps import branch_filter, branch_pick, branch_scope, get_current_user, require_role
 from app.core.periods import KST, period_range
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
@@ -90,7 +90,11 @@ async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
 @router.get("/env-items", response_model=list[EnvItemOut], dependencies=[Depends(get_current_user)])
 async def list_env_items(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_pick),
+    # **점검 항목(칩)은 늘 본인 지점이다** — 누르는 것이라 남의 지점 것이
+    # 떠 봐야 403 이다(아래 `create_env_log`). 게다가 항목 22개가 지점마다
+    # 한 벌씩 있어서 전 지점으로 받으면 **같은 항목이 지점 수만큼 겹친다.**
+    # 기록(`/env-logs`)만 고른 지점을 따라간다.
+    scope: str | None = Depends(branch_filter),
 ) -> list[EnvItem]:
     # 기본 항목 자동 보충: 특정 지점이 대상이면 그 지점, 아니면(ADMIN 전체 조회) 모든 지점
     if scope:
