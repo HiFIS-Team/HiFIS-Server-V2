@@ -11,6 +11,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.enums import Role
@@ -29,7 +30,29 @@ async def get_current_user(
         raise HTTPException(401, detail={"code": "INVALID_TOKEN", "message": "유효하지 않은 사용자입니다"})
     if payload.get("ver", 0) != employee.token_version:  # 로그아웃/비번변경으로 폐기된 세션
         raise HTTPException(401, detail={"code": "TOKEN_REVOKED", "message": "세션이 만료되었어요. 다시 로그인해주세요"})
+    ensure_not_locked(employee.role)
     return employee
+
+
+def ensure_not_locked(role: Role) -> None:
+    """대표 전용 잠금(`settings.master_only`) — 켜져 있으면 MASTER 만 지나간다.
+
+    **로그인만 막으면 모자란다.** 이미 받아 둔 access 토큰은 만료될 때까지
+    그대로 먹혀서, 잠근 뒤에도 앱을 켜 둔 사람은 한동안 멀쩡히 쓴다. 그래서
+    로그인이 아니라 **모든 요청이 지나는 이 자리**에서 막는다.
+
+    **401 이 아니라 503 이다.** 401 을 주면 앱이 '세션 만료'로 읽고 토큰을 지운
+    뒤 로그인 화면으로 보낸다. 503 은 서버 사정으로 읽어 토큰을 그대로 두므로,
+    잠금을 풀면 **다시 로그인할 필요 없이** 그냥 이어진다.
+    """
+    if settings.master_only and role != Role.MASTER:
+        raise HTTPException(
+            503,
+            detail={
+                "code": "LOCKED_DOWN",
+                "message": "점검 중이에요. 잠시 뒤에 다시 시도해 주세요",
+            },
+        )
 
 
 def require_role(*roles: Role) -> Callable[..., Coroutine[Any, Any, Employee]]:

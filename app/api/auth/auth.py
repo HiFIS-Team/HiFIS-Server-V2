@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user
+from app.core.deps import ensure_not_locked, get_current_user
 from app.core.ratelimit import client_key, limiter
 from app.core.security import (
     create_access_token,
@@ -116,6 +116,10 @@ async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depe
         raise HTTPException(
             401, detail={"code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}
         )
+    # 대표 전용 잠금 — **비밀번호는 맞았지만** 지금은 못 들어간다.
+    # 로그인 성공으로 안 남긴다 (실제로 세션이 안 생겼다)
+    ensure_not_locked(employee.role)
+
     # 처음 들어온 순간을 한 번만 찍는다 — 프로필 상세의 '첫 접속일' (2026-08-13).
     # **응답을 만들기 전에** 세워야 그 자리에서 바로 값이 실린다.
     if employee.first_login_at is None:
@@ -149,6 +153,8 @@ async def refresh(
         raise HTTPException(401, detail={"code": "INVALID_TOKEN", "message": "유효하지 않은 사용자입니다"})
     if data.get("ver", 0) != employee.token_version:  # 폐기된 refresh 토큰
         raise HTTPException(401, detail={"code": "TOKEN_REVOKED", "message": "세션이 만료되었어요. 다시 로그인해주세요"})
+    # 잠겨 있으면 새 access 도 안 준다 — 안 막으면 켜 둔 앱이 계속 갱신해 쓴다
+    ensure_not_locked(employee.role)
     return AccessTokenResponse(access_token=create_access_token(employee.id, employee.token_version))
 
 
