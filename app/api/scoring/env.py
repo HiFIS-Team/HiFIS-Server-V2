@@ -6,12 +6,13 @@
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, branch_pick, branch_scope, get_current_user, require_role
 from app.core.periods import KST, period_range
+from app.core.storage import save_env_photo
 from app.db.session import get_db
 from app.enums import Role, ScoreCategory
 from app.models.staff.branch import Branch
@@ -23,6 +24,7 @@ from app.schemas.scoring.env import (
     EnvItemOut,
     EnvItemUpdate,
     EnvLogCreate,
+    EnvLogPhotoOut,
     EnvTaskLogOut,
     SupplyOrderCreate,
     SupplyOrderOut,
@@ -69,6 +71,28 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     ("클레임해결", 10, False),
     ("기타", 1, True),  # 1~10 범위 → 지점별 조정 가능
 ]
+
+
+# 사진과 위치를 **반드시** 받아야 하는 항목 (2026-08-18 대표 요청).
+#
+# 걸었다고 칩만 누르면 실제로 걸었는지 확인할 방법이 없다. 눈으로 확인되는
+# 것만 점수로 인정하려는 것이라, 안 채우면 기록 자체를 안 만든다.
+#
+# **여기 없는 항목은 지금처럼 그냥 눌러 남긴다.** 족자·전단지도 같이 받을지는
+# 정해진 바 없다 — 늘리려면 이 집합에 이름을 더하면 된다(앱도 같이 고칠 것).
+PHOTO_REQUIRED_ITEMS = {"현수막"}
+
+
+def _env_key(name: str) -> str:
+    """항목 이름 비교용 — 공백을 떼고 소문자로. 앱의 `_envKey` 와 같은 규칙이다."""
+    return name.replace(" ", "").lower()
+
+
+_PHOTO_REQUIRED_KEYS = {_env_key(n) for n in PHOTO_REQUIRED_ITEMS}
+
+
+def _needs_photo(item: EnvItem) -> bool:
+    return _env_key(item.name) in _PHOTO_REQUIRED_KEYS
 
 
 async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
@@ -141,6 +165,25 @@ async def update_env_item(
 
 
 # ---------- EnvTaskLog (수행 기록 → 점수) ----------
+@router.post("/env-logs/photo", response_model=EnvLogPhotoOut, status_code=201)
+async def upload_env_photo(
+    file: UploadFile = File(...),
+    # 수행하는 사람과 같은 권한 — 올릴 수 있는 사람이 남길 수 있는 사람이다
+    current: Employee = Depends(require_role(Role.MEMBER, Role.MANAGER)),
+) -> EnvLogPhotoOut:
+    """수행 사진을 먼저 올리고 주소를 받는다 → 그 주소를 `POST /env-logs` 에 실어 보낸다.
+
+    **기록 만들기와 나눈 이유** — `POST /env-logs` 는 지금 JSON 을 받는데
+    파일을 실으려면 multipart 로 바꿔야 한다. 그러면 이미 나가 있는 앱의
+    모든 환경정비 칩이 같이 깨진다. 사진이 필요한 건 한 항목뿐이라
+    그 항목만 한 번 더 부르는 쪽이 싸다.
+
+    올려 놓고 기록을 안 만들면 파일만 남는다 — 큰 문제는 아니지만
+    쌓이면 청소가 필요할 수 있다 (지금은 안 지운다).
+    """
+    return EnvLogPhotoOut(url=await save_env_photo(file))
+
+
 @router.post("/env-logs", response_model=EnvTaskLogOut, status_code=201)
 async def create_env_log(
     payload: EnvLogCreate,
@@ -157,6 +200,17 @@ async def create_env_log(
     # 보는 것만 열고 하는 것은 본인 지점에 둔다.
     if item.branch_id != current.branch_id:
         raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점의 항목은 수행할 수 없습니다"})
+    # 현수막처럼 확인이 필요한 항목은 **사진과 위치가 없으면 기록을 안 만든다.**
+    # 앱에서도 막지만 여기서 다시 본다 — 앱을 안 거치고 부르면 그냥 통과한다.
+    place = (payload.place or "").strip()
+    if _needs_photo(item) and (not payload.photo_url or not place):
+        raise HTTPException(
+            400,
+            detail={
+                "code": "PHOTO_REQUIRED",
+                "message": f"{item.name}은(는) 사진과 위치를 함께 남겨야 합니다",
+            },
+        )
     # 기타 등 write-in: 적은 내용을 라벨에 접어 "기타(창고정리)" 로 스냅샷(점수 원장·랭킹 사유도 동일). item_name String(100) 보호.
     label = f"{item.name}({payload.note})"[:100] if payload.note else item.name
     log = EnvTaskLog(
@@ -166,6 +220,8 @@ async def create_env_log(
         item_name=label,
         points=item.points,
         note=payload.note,
+        photo_url=payload.photo_url,
+        place=place or None,
     )
     db.add(log)
     await db.flush()

@@ -86,6 +86,19 @@ class Settings(BaseSettings):
     solapi_api_secret: str = ""
     solapi_sender: str = ""
 
+    #: **대표만 쓸 수 있게 잠근다** — 사고 대응용 임시 스위치 (2026-08-18)
+    #:
+    #: 켜면 MASTER 가 아닌 사람은 로그인도, 이미 받아 둔 토큰으로 부르는 것도
+    #: 전부 `503 LOCKED_DOWN` 이다.
+    #:
+    #: **끄고 켜는 데 코드 배포가 필요 없다** — `.env` 의 `MASTER_ONLY` 를 바꾸고
+    #: 컨테이너를 다시 띄우면 된다 (`.env` 는 뜰 때 한 번만 읽는다).
+    #:
+    #: **지점 출퇴근 단말은 안 막힌다** — 사람 토큰이 아니라 `X-Terminal-Token`
+    #: 으로 들어와서 이 검사를 안 거친다. 잠가 두는 동안에도 카운터에서 출퇴근은
+    #: 계속 찍힌다 (그것도 막아야 하면 단말을 폐기한다).
+    master_only: bool = False
+
     # 초기 부트스트랩 시드 (app.seed) — 첫 지점(전사 HQ)·관리자
     seed_branch_name: str = "전 지점"  # HQ 지점명 (§62). 기존 HQ 는 type 으로 찾아 재사용.
     seed_admin_name: str = "관리자"

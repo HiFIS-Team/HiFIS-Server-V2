@@ -77,8 +77,17 @@ class CaptureReport(CamelModel):
     # 무엇이 찍혔나 (`급여`·`조직도` 같은 화면 이름). 모르면 비운다
     screen: str | None = Field(default=None, max_length=60)
 
-    # screenshot(찍힘) · recording(녹화·미러링 시작)
+    # screenshot(찍힘) · recording(녹화·미러링 시작) · recording_end(끝)
+    #
+    # **시작과 끝을 둘 다 받는다** (2026-08-18). 예전에는 시작만 받아서
+    # 얼마나 오래 내보냈는지 알 방법이 없었다 — 8/12 건이 그래서 한 줄뿐이다.
     kind: str = Field(default="screenshot", max_length=20)
+
+    # 몇 초 동안 내보냈나 — `recording_end` 만 채운다.
+    #
+    # **앱이 잰다.** 서버가 시작 기록을 뒤져 짝을 맞추려 하면 앱을 껐다 켜거나
+    # 알림이 유실됐을 때 짝이 어긋나 엉뚱한 값이 나온다.
+    seconds: int | None = Field(default=None, ge=0, le=86400)
 
 
 class SshLoginReport(CamelModel):

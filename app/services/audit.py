@@ -47,6 +47,9 @@ SKIP: frozenset[tuple[str, str]] = frozenset(
         ("DELETE", "/push/subscribe"),
         ("POST", "/documents/{id}/favorite"),
         ("DELETE", "/documents/{id}/favorite"),
+        # 앱 사용 기록 — `app_trails` 에 통째로 들어간다. 여기까지 담으면
+        # 같은 것이 두 벌이고, 셋 중 제일 양이 많은 자리라 감당이 안 된다
+        ("POST", "/trails"),
     }
 )
 

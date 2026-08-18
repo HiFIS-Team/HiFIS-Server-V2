@@ -67,6 +67,39 @@ async def _own_task(task_id: str, current: Employee, db: AsyncSession) -> MyTask
     return task
 
 
+async def _reject_duplicate(
+    db: AsyncSession,
+    employee_id: str,
+    contents: list[str],
+    *,
+    skip_id: str | None = None,
+) -> None:
+    """이미 있는 업무와 이름이 같으면 막는다.
+
+    **똑같은 줄이 둘이면 손쓸 방법이 없다.** 어느 쪽을 체크했는지 알 수 없고,
+    하나를 지워도 남은 쪽이 그대로라 **'삭제가 안 됐다'로 보인다.**
+
+    운영에서 실제로 겪었다 (2026-08-15) — 한 사람의 목록에 `알바몬체크` 가
+    두 줄이 됐다. 추가할 때가 아니라 **수정 결재로** 생겼다: 다른 줄의 내용을
+    이미 있는 이름으로 고쳐 달라고 올렸고, 승인되면서 둘이 같아졌다.
+    그래서 추가뿐 아니라 **수정 신청도 같이 막는다.**
+
+    [skip_id] 는 수정 신청이 자기 자신과 비교되지 않게 뺄 때 쓴다.
+    """
+    stmt = select(MyTask.content).where(
+        MyTask.employee_id == employee_id, MyTask.deleted_at.is_(None)
+    )
+    if skip_id:
+        stmt = stmt.where(MyTask.id != skip_id)
+    existing = set(await db.scalars(stmt))
+    dup = next((c for c in contents if c in existing), None)
+    if dup is not None:
+        raise HTTPException(
+            400,
+            detail={"code": "DUPLICATE_CONTENT", "message": f"이미 있는 업무예요 — {dup}"},
+        )
+
+
 async def _pending_of(db: AsyncSession, task_ids: list[str]) -> dict[str, MyTaskRequest]:
     """업무별 대기 중인 결재 — 하나뿐이다."""
     if not task_ids:
@@ -218,12 +251,19 @@ async def create_my_tasks(
 
     빈 줄은 걸러 낸다 (앱에서 입력칸을 비운 채 넘어오는 경우).
     새로 만든 것은 **목록 맨 뒤**에 붙는다 — 쓰던 차례가 안 흔들린다.
+
+    **같은 내용을 두 줄로 만들지 않는다** (아래 [_reject_duplicate] 참고).
     """
     contents = [c.strip() for c in payload.contents if c.strip()]
     if not contents:
         raise HTTPException(400, detail={"code": "CONTENT_REQUIRED", "message": "업무를 적어 주세요"})
     if any(len(c) > 200 for c in contents):
         raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
+
+    # 한 번에 올린 것들끼리 겹치면 **조용히 하나로 합친다** — 같은 줄을 두 번
+    # 담은 것이라 하나만 만드는 게 적은 대로다. `dict` 라 차례는 그대로 간다
+    contents = list(dict.fromkeys(contents))
+    await _reject_duplicate(db, current.id, contents)
 
     last = await db.scalar(
         select(MyTask.sort)
@@ -295,6 +335,10 @@ async def create_my_task_request(
         content = (payload.payload or {}).get("content", "").strip()
         if not content:
             raise HTTPException(400, detail={"code": "CONTENT_REQUIRED", "message": "고칠 내용을 적어 주세요"})
+        if content == task.content:
+            raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "내용이 그대로예요"})
+        # 승인되고 나서야 겹치는 걸 알면 이미 두 줄이다 — 올릴 때 막는다
+        await _reject_duplicate(db, current.id, [content], skip_id=task.id)
 
     # 업무 하나에 대기 요청은 하나뿐 — 수정 대기 중에 삭제까지 오면
     # 처리 순서에 따라 결과가 갈린다

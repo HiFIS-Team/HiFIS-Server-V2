@@ -17,14 +17,18 @@ _AVATAR_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
 _AVATAR_MAX = 5 * 1024 * 1024  # 5MB
 
 
-async def save_avatar(upload: UploadFile) -> str:
-    """아바타 이미지를 uploads/avatars/ 에 저장하고 서빙 경로 반환(이미지·용량 검증)."""
+async def _save_image(upload: UploadFile, folder: str) -> str:
+    """이미지를 uploads/{folder}/ 에 저장하고 서빙 경로 반환(확장자·용량 검증).
+
+    아바타와 환경정비 사진이 같이 쓴다 — 검증 기준이 갈리면 한쪽만 큰 파일을
+    받아 디스크가 찬다.
+    """
     filename = upload.filename or ""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in _AVATAR_EXTS:
         raise HTTPException(400, detail={"code": "INVALID_IMAGE", "message": "이미지 파일만 업로드할 수 있습니다(png/jpg/gif/webp)"})
     now = datetime.now(timezone.utc)
-    rel_dir = f"{UPLOAD_ROOT}/avatars/{now:%Y}/{now:%m}"
+    rel_dir = f"{UPLOAD_ROOT}/{folder}/{now:%Y}/{now:%m}"
     os.makedirs(rel_dir, exist_ok=True)
     rel_path = f"{rel_dir}/{uuid.uuid4().hex}.{ext}"
     size = 0
@@ -37,6 +41,19 @@ async def save_avatar(upload: UploadFile) -> str:
                 raise HTTPException(400, detail={"code": "IMAGE_TOO_LARGE", "message": "이미지는 5MB 이하만 가능합니다"})
             out.write(chunk)
     return f"/{rel_path}"
+
+
+async def save_avatar(upload: UploadFile) -> str:
+    """아바타 이미지를 uploads/avatars/ 에 저장하고 서빙 경로 반환."""
+    return await _save_image(upload, "avatars")
+
+
+async def save_env_photo(upload: UploadFile) -> str:
+    """환경정비 수행 사진을 uploads/env/ 에 저장하고 서빙 경로 반환.
+
+    현수막처럼 **한 것을 눈으로 확인해야 하는 항목**이 쓴다 (2026-08-18).
+    """
+    return await _save_image(upload, "env")
 
 
 async def save_upload(upload: UploadFile) -> tuple[str, str, int]:

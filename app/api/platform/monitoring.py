@@ -34,7 +34,7 @@ from app.schemas.platform.monitoring import (
     SshLoginReport,
 )
 from app.services.geoip import region_of
-from app.services.notifications import notify_developers
+from app.services.notifications import master_ids, notify, notify_developers
 
 router = APIRouter(tags=["monitoring"])
 
@@ -245,21 +245,64 @@ async def resolve_anomaly(
 # ---------------------------------------------------------------------------
 
 
+def _duration_label(seconds: int | None) -> str:
+    """`3분 12초 동안` — 멈춤 알림 본문. 값이 없으면 빈 문자열."""
+    if not seconds:
+        return ""
+    minutes, rest = divmod(seconds, 60)
+    if minutes and rest:
+        return f"{minutes}분 {rest}초 동안"
+    if minutes:
+        return f"{minutes}분 동안"
+    return f"{rest}초 동안"
+
+
 @router.post("/security/capture", status_code=204)
 async def report_capture(
     body: CaptureReport,
     current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """앱이 '화면이 찍혔다'고 알려 온다 — 받아 두기만 하면 된다.
+    """앱이 '화면이 찍혔다'고 알려 온다.
 
-    **여기서 따로 저장하지 않는다.** 쓰기 요청이라 `AuditMiddleware` 가
+    **스크린샷은 받아 두기만 한다.** 쓰기 요청이라 `AuditMiddleware` 가
     이미 본문째 활동 로그에 남기고, `anomaly_scan` 이 그 줄을 세어
-    짧은 시간에 여러 장 찍은 사람을 이상 징후로 올린다.
+    짧은 시간에 여러 장 찍은 사람을 이상 징후로 올린다 (문턱 10분 5장).
+
+    **녹화·미러링은 다르다 — 한 번만으로 바로 대표에게 푸시한다**
+    (2026-08-18 대표 결정). 스크린샷은 자기가 한 일을 단톡방에 올리려고
+    찍는 일이 흔한데, 화면을 통째로 밖으로 내보내는 것은 드물어서 한 번이
+    곧 사건이다. 실제로 그때까지 쌓인 20건 중 녹화는 1건뿐이었고, 그 1건이
+    문턱(5장)에 안 걸려 **아무에게도 안 알려졌다.**
+
+    **시작과 끝을 둘 다 알린다.** 끝에는 얼마나 오래 내보냈는지가 붙는다.
 
     막을 수 있는 플랫폼에서는 캡처가 아예 안 되므로 실제로는 iOS 만 부른다.
     MASTER 는 앱이 캡처 방지를 안 걸므로 신고도 안 보낸다.
     """
-    del body, current  # 미들웨어가 다 적는다 — 여기서 쓸 일이 없다
+    if body.kind in ("recording", "recording_end"):
+        started = body.kind == "recording"
+        for eid in await master_ids(db, exclude=current.id):
+            await notify(
+                db,
+                employee_id=eid,
+                type="SECURITY",
+                title=(
+                    f"{current.name}님이 화면 녹화를 시작했어요"
+                    if started
+                    else f"{current.name}님이 화면 녹화를 멈췄어요"
+                ),
+                # 녹화·에어플레이 미러링·화면 공유가 **한 값으로 들어온다**
+                # (iOS `UIScreen.isCaptured`). 셋을 가릴 방법이 없으므로 본문에
+                # 그대로 적는다 — 받는 사람이 '녹화'로만 읽고 단정하면 안 된다
+                body=(
+                    _duration_label(body.seconds)
+                    if not started and body.seconds
+                    else "미러링·화면 공유도 이렇게 잡혀요"
+                ),
+                link="/monitoring",
+            )
+        await db.commit()
     return Response(status_code=204)
 
 # ---------------------------------------------------------------------------

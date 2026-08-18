@@ -21,6 +21,7 @@ from app.api.platform import (
     accounts,
     audit_logs,
     monitoring,
+    trails,
     chat_audit,
     dashboard,
     documents,
@@ -62,7 +63,7 @@ _DOCS_OPEN = settings.environment != "production"
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.14.0",
+    version="0.15.0",
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_OPEN else None,
     redoc_url="/redoc" if _DOCS_OPEN else None,
@@ -142,6 +143,7 @@ app.include_router(accounts.router)
 app.include_router(access_logs.router)
 app.include_router(audit_logs.router)
 app.include_router(monitoring.router)  # 성능 지표·이상행동 감지
+app.include_router(trails.router)  # 앱 사용 기록 — 어느 화면을 열고 무엇을 봤나
 app.include_router(chat_audit.router)  # 사내톡 열람(관리자 이상)
 app.include_router(documents.router)
 app.include_router(search.router)

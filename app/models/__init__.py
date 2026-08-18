@@ -5,6 +5,7 @@ from app.models.platform.anomaly import Anomaly
 from app.models.platform.api_metric import ApiMetric
 from app.models.platform.ssh_host import SshHost
 from app.models.platform.account import Account, AccountAccessLog
+from app.models.platform.app_trail import AppTrail
 from app.models.platform.audit_log import AuditLog
 from app.models.board.approval import Approval
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
@@ -45,6 +46,7 @@ __all__ = [
     "Anomaly",
     "ApiMetric",
     "SshHost",
+    "AppTrail",
     "AuditLog",
     "Approval",
     "ChatRoom",

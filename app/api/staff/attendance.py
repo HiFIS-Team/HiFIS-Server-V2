@@ -32,6 +32,7 @@ from app.enums import (
 from app.models.scoring.my_task import MyTask, MyTaskCheck
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
+from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
     AttendanceDayOut,
@@ -45,6 +46,7 @@ from app.schemas.staff.attendance import (
     LeaveRequestOut,
 )
 from app.services import notification_texts as ntext
+from app.services.duty import duty_hours
 from app.services.notifications import master_ids, notify, notify_bosses
 from app.services.scoring import accrue_score
 
@@ -58,6 +60,13 @@ OFFHOURS_POINTS = 10
 # **시계로도** 잡는다(아직 일하는 중이면 '출근'이 아니라 '야근'이다).
 # 근무 외 출근 점수와 같은 값으로 둔다: 점수를 받는 날과 화면에 야근으로 뜨는 날이 갈리면 헷갈린다.
 OVERTIME_THRESHOLD_MIN = OFFHOURS_THRESHOLD_MIN
+
+# 지각 차감 (2026-08-18 대표 결정) — 지각할 때마다 **종합 점수**에서 뺀다.
+# 1회 -10 · 2회 -15 · **3회부터 -20 고정.**
+#
+# **누적이다 — 달이 바뀌어도 안 되돌린다.** 매달 리셋하면 달마다 첫 지각이
+# 제일 싸져서, 늘 지각하는 사람과 처음 지각한 사람이 같은 값을 문다.
+LATE_PENALTY = (-10, -15, -20)
 
 # 조기퇴근 유예 — 퇴근시간보다 이 분수까지 일찍 찍은 건 그냥 퇴근으로 본다.
 # 정리하고 나오느라 몇 분 이른 사람까지 조기퇴근으로 부르면 매일 걸린다.
@@ -103,6 +112,7 @@ def _attendance_status(
     shift_end: str | None,
     now_kst: datetime,
     joined: date | None = None,
+    branch_name: str | None = None,
 ) -> AttendanceStatus:
     """근무시간 대비 판정(§6.9) — 정상/지각/조기퇴근/야근. 근무시간 미설정이면 UNKNOWN.
 
@@ -122,7 +132,21 @@ def _attendance_status(
     전원이 첫날부터 지각으로 찍힌다 (실제로 그랬다 — 8/12 가입자 전원). 야근은
     그대로 둔다 — 늦게까지 일한 것은 첫날이어도 사실이다.
     """
-    if not shift_start or not shift_end or rec.check_in is None:
+    if rec.check_in is None:
+        return AttendanceStatus.UNKNOWN
+    # 토·일·공휴일은 **당직이라 스캔된 대로만 보여준다** (2026-08-18 대표 결정).
+    # 여러 명이 시간을 나눠 서는데 누가 어느 칸인지가 시스템에 없어서,
+    # 몇 시에 왔는지로 지각·조기퇴근을 매길 근거가 없다.
+    # (결근은 그대로 찍는다 — 그건 왔나 안 왔나지 몇 시냐가 아니다)
+    if duty_hours(rec.date, branch_name) is not None:
+        if rec.check_out is None:
+            return (
+                AttendanceStatus.NO_CHECKOUT
+                if rec.date < now_kst.date()
+                else AttendanceStatus.IN_PROGRESS
+            )
+        return AttendanceStatus.NORMAL
+    if not shift_start or not shift_end:
         return AttendanceStatus.UNKNOWN
     first_day = joined is not None and rec.date == joined
     end_min = _hhmm_to_min(shift_end)
@@ -186,7 +210,9 @@ _SCAN_NOTES = {
 }
 
 
-def _absent_today(employee: Employee, now_kst: datetime) -> bool:
+def _absent_today(
+    employee: Employee, now_kst: datetime, branch_name: str | None = None
+) -> bool:
     """오늘 근무일인데 스캔이 없을 때 결근으로 볼지 — 퇴근 시간이 지났으면 결근이다.
 
     그 전에는 **미출근**(판정 없음)이다. 아침 9시에 결근으로 뜨면 아직 오는 중인
@@ -197,11 +223,16 @@ def _absent_today(employee: Employee, now_kst: datetime) -> bool:
     만들어져서 그날은 출근 스캔이 있을 리가 없다 — 실제로 오후 3시에 가입한
     두 사람이 그날 결근으로 찍혔다. 캘린더 쪽 `day <= joined_d` 와 같은 규칙이다.
     """
-    if not employee.shift_end:
-        return False
     if _joined(employee) == now_kst.date():
         return False
-    return _kst_min(now_kst) > _hhmm_to_min(employee.shift_end)
+    # 토·일·공휴일은 **당직 종료 시각**이 기준이다 (2026-08-18). 본인이 설정한
+    # 근무시간은 평일 것이라 그날에 들이대면 엉뚱한 시각에 결근이 찍힌다.
+    # 부르는 쪽이 근무 요일인지를 이미 봤으므로 여기서는 시각만 본다.
+    duty = duty_hours(now_kst.date(), branch_name)
+    end = duty[1] if duty else employee.shift_end
+    if not end:
+        return False
+    return _kst_min(now_kst) > _hhmm_to_min(end)
 
 
 async def _award_offhours(
@@ -227,6 +258,54 @@ async def _award_offhours(
         source_ref_id=ref,
     )
     await notify(db, employee_id=target.id, **ntext.offhours_award(kind_label, OFFHOURS_POINTS))
+
+
+async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
+    """지각 차감 — **여태까지 지각한 횟수**가 커질수록 많이 뺀다 ([LATE_PENALTY]).
+
+    점수 원장에 음수로 한 줄 넣는 것이 전부다. 랭킹 '종합'이 원장 전체 합이라
+    (`services/ranking.py`) **넣기만 하면 종합 점수가 깎이고**, 매출·친절 같은
+    다른 탭은 카테고리로 걸러서 영향이 없다.
+
+    **하루에 한 번뿐이다** (`late:<날짜>`). 출근 스캔은 하루 한 번이지만
+    기록을 지웠다 다시 찍는 경우가 있어 원장 쪽에서도 막는다 — 근무외출근
+    점수와 같은 방식이다.
+
+    대표·관리자는 `accrue_score` 가 알아서 건너뛴다 (점수를 매기는 쪽이라
+    원장에 아예 안 들어간다). 그래서 여기서 권한을 따로 안 본다.
+    """
+    ref = f"late:{day.isoformat()}"
+    exists = await db.scalar(
+        select(ScoreEvent.id).where(
+            ScoreEvent.employee_id == target.id, ScoreEvent.source_ref_id == ref
+        )
+    )
+    if exists is not None:
+        return
+    before = (
+        await db.scalar(
+            select(func.count())
+            .select_from(ScoreEvent)
+            .where(
+                ScoreEvent.employee_id == target.id,
+                ScoreEvent.category == ScoreCategory.LATE,
+            )
+        )
+    ) or 0
+    nth = before + 1
+    points = LATE_PENALTY[min(nth, len(LATE_PENALTY)) - 1]
+    event = await accrue_score(
+        db,
+        employee_id=target.id,
+        branch_id=target.branch_id,
+        category=ScoreCategory.LATE,
+        points=points,
+        reason=f"지각 {nth}회 (자동)",
+        source_ref_id=ref,
+    )
+    # 안 쌓였으면(대표·관리자) 알림도 안 보낸다 — 안 깎였는데 깎였다고 알리면 안 된다
+    if event is not None:
+        await notify(db, employee_id=target.id, **ntext.late_penalty(nth, points))
 
 
 # ---------- 근태 ----------
@@ -301,6 +380,12 @@ async def scan_attendance(
     now_kst = now.astimezone(KST)
     today = now_kst.date()  # KST 근무일 기준(자정 넘는 UTC 분리 방지 → 이른 출근도 같은 날 퇴근과 페어링)
     now_min = now_kst.hour * 60 + now_kst.minute
+    # 토요일 당직 시간이 지점마다 달라서 이름이 필요하다 (화순 09~18 / 나머지 11~19)
+    branch = await db.get(Branch, target.branch_id)
+    branch_name = branch.name if branch else None
+    # 오늘의 기준 시각 — 당직일이면 당직 시간, 아니면 본인이 설정한 근무시간
+    in_duty = duty_hours(today, branch_name)
+    start_ref = in_duty[0] if in_duty else target.shift_start
     record = (
         await db.execute(
             select(Attendance).where(
@@ -331,7 +416,7 @@ async def scan_attendance(
         if last is not None and (now - last) < timedelta(minutes=RESCAN_IGNORE_MIN):
             out = AttendanceOut.model_validate(record)
             out.status = _attendance_status(
-                record, target.shift_start, target.shift_end, now_kst, _joined(target)
+                record, target.shift_start, target.shift_end, now_kst, _joined(target), branch_name
             )
             return out
 
@@ -341,9 +426,24 @@ async def scan_attendance(
         )
         db.add(record)
         action = "출근"
-        # 기본 출근보다 1시간+ 이르게 왔으면 조기출근 자동 점수
-        if target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
+        # 기준 출근시각보다 1시간+ 이르게 왔으면 조기출근 자동 점수.
+        # **토·일·공휴일은 본인 근무시간이 아니라 당직 여는 시각을 본다** (2026-08-18).
+        if start_ref and now_min <= _hhmm_to_min(start_ref) - OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
+        # 지각이면 종합 점수에서 뺀다. **조건을 `_attendance_status` 의 지각과
+        # 똑같이 맞춘다** — 화면에는 '지각'인데 점수는 안 깎이거나 그 반대면
+        # 어느 쪽이 맞는지 알 수 없게 된다.
+        #   · 당직일(토·일·공휴일)은 지각을 안 매긴다 — 사람마다 서는 칸이 다르다
+        #   · 근무시간을 설정 안 했으면 판정 자체가 안 된다
+        #   · 입사 첫날은 뺀다 (오전에 서류 쓰고 오후에 첫 스캔을 찍는다)
+        if (
+            in_duty is None
+            and target.shift_start
+            and target.shift_end
+            and _joined(target) != today
+            and now_min > _hhmm_to_min(target.shift_start)
+        ):
+            await _deduct_late(db, target, today)
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
         # **오늘 첫 퇴근 스캔인가** — 내 업무 누락 알림을 여기서만 보낸다.
         # 퇴근을 여러 번 찍는 사람이 있어서, 안 가르면 누를 때마다 대표에게 간다.
@@ -355,7 +455,11 @@ async def scan_attendance(
         # 기본 퇴근보다 1시간+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만).
         # 자정을 넘겼으면 하루를 더해야 '몇 분 늦었나'가 나온다. 점수는 그 근무일 몫이다.
         out_min = now_min + (1440 if overnight else 0)
-        if target.shift_end and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
+        # 퇴근도 같다 — 당직일이면 당직 닫는 시각이 기준이다.
+        # 기록이 어제 것일 수 있어 `record.date` 로 다시 고른다 (자정 넘긴 퇴근).
+        out_duty = duty_hours(record.date, branch_name)
+        end_ref = out_duty[1] if out_duty else target.shift_end
+        if end_ref and out_min >= _hhmm_to_min(end_ref) + OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
         if first_out:
             await _notify_task_missing(db, target, record.date)
@@ -364,7 +468,7 @@ async def scan_attendance(
     # 대표·관리자에게도 알린다 — 누가 왔고 누가 갔는지 (2026-08-11 대표 요청).
     # **정상이 아닐 때만** 한 마디 붙인다. '정상'을 매번 적으면 읽을 게 늘기만 한다.
     status = _attendance_status(
-        record, target.shift_start, target.shift_end, now_kst, _joined(target)
+        record, target.shift_start, target.shift_end, now_kst, _joined(target), branch_name
     )
     await notify_bosses(
         db,
@@ -526,6 +630,8 @@ async def attendance_calendar(
             # (`_attendance_status` 의 `first_day`) — 그때 결근을 빠뜨렸다.
             pass
         elif work_days:
+            # 토·일·공휴일이어도 **본인 근무 요일이면 결근을 찍는다** (2026-08-18).
+            # 나와야 하는 날에 안 나온 것이라, 당직이라고 넘어가지 않는다.
             if day.isoweekday() not in work_days:
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
             elif day < today:  # 근무일인데 과거·기록없음·휴가없음 → 결근
