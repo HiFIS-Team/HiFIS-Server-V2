@@ -351,3 +351,72 @@ async def delete_employee(
     await notify_bosses(db, exclude=current.id, **ntext.employee_resigned(employee.name))
     await db.commit()
     return None
+
+
+# ---------------------------------------------------------------------------
+# 계정 정지 — **MASTER 만** (이용약관 제8조 1항)
+# ---------------------------------------------------------------------------
+
+#: 사유를 안 적었을 때 로그인 화면에 뜨는 기본 안내
+SUSPEND_DEFAULT_REASON = (
+    "이용약관 위반으로 계정이 정지되었습니다.\n"
+    "해제를 원하시면 대표에게 경위서를 제출해 주세요."
+)
+
+
+@router.post(
+    "/{employee_id}/suspend",
+    response_model=EmployeeOut,
+    dependencies=[Depends(require_role(Role.MASTER))],  # 정지는 대표가 판단한다
+)
+async def suspend_employee(
+    employee_id: str,
+    reason: str | None = Query(None, max_length=500, description="로그인 화면에 그대로 뜬다"),
+    db: AsyncSession = Depends(get_db),
+) -> Employee:
+    """계정을 정지한다 — **재직 상태는 안 건드린다.**
+
+    `RESIGNED`·`INACTIVE` 로 밀면 조직도·근태 판정·인원수에서 통째로 사라진다.
+    그건 정지가 아니라 퇴사다. 정지된 사람도 여전히 재직 중이다.
+
+    **켜 둔 앱의 세션도 끊는다** (`token_version` +1). 안 끊으면 이미 로그인해
+    둔 사람은 토큰이 만료될 때까지 그대로 쓴다.
+
+    **MASTER 는 정지할 수 없다.** 서로 정지시키면 아무도 못 푸는 상태가 된다.
+    """
+    employee = await db.get(Employee, employee_id)
+    if employee is None or employee.deleted_at is not None:
+        raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+    if employee.role == Role.MASTER:
+        raise HTTPException(
+            400, detail={"code": "CANNOT_SUSPEND_MASTER", "message": "대표 계정은 정지할 수 없습니다"}
+        )
+    employee.suspended_at = datetime.now(timezone.utc)
+    employee.suspend_reason = (reason or "").strip() or SUSPEND_DEFAULT_REASON
+    employee.token_version += 1  # 켜 둔 앱의 세션을 그 자리에서 끊는다
+    await db.commit()
+    await db.refresh(employee)
+    return employee
+
+
+@router.post(
+    "/{employee_id}/unsuspend",
+    response_model=EmployeeOut,
+    dependencies=[Depends(require_role(Role.MASTER))],
+)
+async def unsuspend_employee(
+    employee_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Employee:
+    """정지를 푼다 — 사유도 같이 지운다.
+
+    **다시 로그인해야 한다.** 정지할 때 세션을 끊었으므로 토큰이 이미 죽었다.
+    """
+    employee = await db.get(Employee, employee_id)
+    if employee is None or employee.deleted_at is not None:
+        raise HTTPException(404, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원을 찾을 수 없습니다"})
+    employee.suspended_at = None
+    employee.suspend_reason = None
+    await db.commit()
+    await db.refresh(employee)
+    return employee

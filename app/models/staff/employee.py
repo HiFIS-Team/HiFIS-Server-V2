@@ -5,7 +5,7 @@ wire(Employee)엔 없는 password_hash 는 DB 전용 컬럼 (응답 직렬화 �
 
 from datetime import datetime
 
-from sqlalchemy import ARRAY, DateTime, Enum as SAEnum, ForeignKey, Integer, String, func
+from sqlalchemy import ARRAY, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -61,6 +61,21 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 퇴사 시각 — status=RESIGNED 로 바뀌거나 삭제(퇴사) 시 기록. null=재직 중 (§58)
     resigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: 계정 정지 시각 — null 이면 정상 (2026-08-19, 이용약관 제8조 1항)
+    #:
+    #: **재직 상태(`status`)와 다른 축이다.** 정지된 사람도 재직 중이라
+    #: `RESIGNED`·`INACTIVE` 로 밀면 조직도·근태 판정·인원수에서 통째로
+    #: 사라진다 — 그건 정지가 아니라 퇴사다. 고용 형태를 재직 상태와 갈라 둔
+    #: 것과 같은 판단이다 (backend-gap 75).
+    #:
+    #: 정지하면 `token_version` 을 올려 **켜 둔 앱의 세션까지 끊는다.**
+    #: 그다음 로그인 시도에서 아래 사유가 그대로 화면에 뜬다.
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: 정지 안내 — **로그인 화면에 이 글이 그대로 뜬다.**
+    #: 무엇을 어겼고 풀려면 무엇을 해야 하는지를 여기 적는다.
+    suspend_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 처음 로그인한 시각 — 프로필 상세가 '가입일'과 나란히 보여준다 (2026-08-13).
     # 가입만 하고 안 들어온 사람을 가리는 값이라 **한 번 찍히면 안 바뀐다.**
