@@ -61,6 +61,13 @@ OFFHOURS_POINTS = 10
 # 근무 외 출근 점수와 같은 값으로 둔다: 점수를 받는 날과 화면에 야근으로 뜨는 날이 갈리면 헷갈린다.
 OVERTIME_THRESHOLD_MIN = OFFHOURS_THRESHOLD_MIN
 
+# 지각 차감 (2026-08-18 대표 결정) — 지각할 때마다 **종합 점수**에서 뺀다.
+# 1회 -10 · 2회 -15 · **3회부터 -20 고정.**
+#
+# **누적이다 — 달이 바뀌어도 안 되돌린다.** 매달 리셋하면 달마다 첫 지각이
+# 제일 싸져서, 늘 지각하는 사람과 처음 지각한 사람이 같은 값을 문다.
+LATE_PENALTY = (-10, -15, -20)
+
 # 조기퇴근 유예 — 퇴근시간보다 이 분수까지 일찍 찍은 건 그냥 퇴근으로 본다.
 # 정리하고 나오느라 몇 분 이른 사람까지 조기퇴근으로 부르면 매일 걸린다.
 EARLY_LEAVE_GRACE_MIN = 20
@@ -253,6 +260,54 @@ async def _award_offhours(
     await notify(db, employee_id=target.id, **ntext.offhours_award(kind_label, OFFHOURS_POINTS))
 
 
+async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
+    """지각 차감 — **여태까지 지각한 횟수**가 커질수록 많이 뺀다 ([LATE_PENALTY]).
+
+    점수 원장에 음수로 한 줄 넣는 것이 전부다. 랭킹 '종합'이 원장 전체 합이라
+    (`services/ranking.py`) **넣기만 하면 종합 점수가 깎이고**, 매출·친절 같은
+    다른 탭은 카테고리로 걸러서 영향이 없다.
+
+    **하루에 한 번뿐이다** (`late:<날짜>`). 출근 스캔은 하루 한 번이지만
+    기록을 지웠다 다시 찍는 경우가 있어 원장 쪽에서도 막는다 — 근무외출근
+    점수와 같은 방식이다.
+
+    대표·관리자는 `accrue_score` 가 알아서 건너뛴다 (점수를 매기는 쪽이라
+    원장에 아예 안 들어간다). 그래서 여기서 권한을 따로 안 본다.
+    """
+    ref = f"late:{day.isoformat()}"
+    exists = await db.scalar(
+        select(ScoreEvent.id).where(
+            ScoreEvent.employee_id == target.id, ScoreEvent.source_ref_id == ref
+        )
+    )
+    if exists is not None:
+        return
+    before = (
+        await db.scalar(
+            select(func.count())
+            .select_from(ScoreEvent)
+            .where(
+                ScoreEvent.employee_id == target.id,
+                ScoreEvent.category == ScoreCategory.LATE,
+            )
+        )
+    ) or 0
+    nth = before + 1
+    points = LATE_PENALTY[min(nth, len(LATE_PENALTY)) - 1]
+    event = await accrue_score(
+        db,
+        employee_id=target.id,
+        branch_id=target.branch_id,
+        category=ScoreCategory.LATE,
+        points=points,
+        reason=f"지각 {nth}회 (자동)",
+        source_ref_id=ref,
+    )
+    # 안 쌓였으면(대표·관리자) 알림도 안 보낸다 — 안 깎였는데 깎였다고 알리면 안 된다
+    if event is not None:
+        await notify(db, employee_id=target.id, **ntext.late_penalty(nth, points))
+
+
 # ---------- 근태 ----------
 async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) -> None:
     """내 업무를 남기고 퇴근했으면 **본인과 대표에게** 알린다 (2026-08-14).
@@ -375,6 +430,20 @@ async def scan_attendance(
         # **토·일·공휴일은 본인 근무시간이 아니라 당직 여는 시각을 본다** (2026-08-18).
         if start_ref and now_min <= _hhmm_to_min(start_ref) - OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
+        # 지각이면 종합 점수에서 뺀다. **조건을 `_attendance_status` 의 지각과
+        # 똑같이 맞춘다** — 화면에는 '지각'인데 점수는 안 깎이거나 그 반대면
+        # 어느 쪽이 맞는지 알 수 없게 된다.
+        #   · 당직일(토·일·공휴일)은 지각을 안 매긴다 — 사람마다 서는 칸이 다르다
+        #   · 근무시간을 설정 안 했으면 판정 자체가 안 된다
+        #   · 입사 첫날은 뺀다 (오전에 서류 쓰고 오후에 첫 스캔을 찍는다)
+        if (
+            in_duty is None
+            and target.shift_start
+            and target.shift_end
+            and _joined(target) != today
+            and now_min > _hhmm_to_min(target.shift_start)
+        ):
+            await _deduct_late(db, target, today)
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
         # **오늘 첫 퇴근 스캔인가** — 내 업무 누락 알림을 여기서만 보낸다.
         # 퇴근을 여러 번 찍는 사람이 있어서, 안 가르면 누를 때마다 대표에게 간다.

@@ -44,6 +44,17 @@ def offhours_award(kind: str, points: int) -> dict:
     }
 
 
+def late_penalty(nth: int, points: int) -> dict:
+    # 지각 차감 — 모르고 지나가면 안 되니 찍는 순간 본인에게 알린다.
+    # points 가 음수라 그대로 쓰면 "-10점 깎였어요" 로 부호가 두 번 붙는다.
+    return {
+        "type": "ATTENDANCE",
+        "title": f"지각 {nth}회 · 종합 점수 {abs(points)}점 깎였어요",
+        "body": "다음부터는 조금만 일찍 나와 주세요",
+        "link": "/ranking",
+    }
+
+
 def leave_decision(approved: bool, start_date, end_date, reason: str | None = None) -> dict:
     verb = "승인" if approved else "반려"
     body = f"{start_date} ~ {end_date}"

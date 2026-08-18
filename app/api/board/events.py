@@ -28,6 +28,18 @@ router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_
 #: 결재할 수 있었다 (2026-08-14 에 갈랐다).
 _OVERSEERS = (Role.MASTER, Role.ADMIN)
 
+#: 개인 일정 — 본인이 PT 시간 같은 걸 적어 두는 자리 (2026-08-18 대표 결정)
+#:
+#: **`scope` 값 하나가 곧 권한이다.** 예전에는 요청자가 고르는 조회 필터일
+#: 뿐이라 `?scope=` 를 안 주면 남의 것도 다 왔다 — 문서함 '개인' 이 겪은
+#: 것과 같은 자리다 (backend-gap 53).
+#:
+#: | 누가 | 남의 개인 일정 |
+#: |---|---|
+#: | 직원·점장 | **못 본다** |
+#: | MASTER·ADMIN | `?employeeId=` 로 **한 사람씩** 본다 |
+PERSONAL_SCOPE = "개인"
+
 
 def _not_found() -> HTTPException:
     return HTTPException(404, detail={"code": "EVENT_NOT_FOUND", "message": "일정을 찾을 수 없습니다"})
@@ -37,6 +49,14 @@ async def _get_owned(event_id: str, current: Employee, db: AsyncSession) -> Even
     event = await db.get(Event, event_id)
     if event is None:
         raise _not_found()
+    # 개인 일정은 **소유자만** 고치고 지운다. 점장·대표도 남의 것은 못 건드린다 —
+    # 볼 수만 있는 자리에 수정까지 열면 본인이 적어 둔 PT 시간이 남의 손에 바뀐다
+    if event.scope == PERSONAL_SCOPE:
+        if event.owner_id != current.id:
+            raise HTTPException(
+                403, detail={"code": "PERSONAL_EVENT", "message": "본인 일정만 고칠 수 있습니다"}
+            )
+        return event
     if current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER) and event.owner_id != current.id:
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "소유자만 수정할 수 있습니다"})
     return event
@@ -49,11 +69,22 @@ async def list_events(
     from_: datetime | None = Query(None, alias="from"),
     to: datetime | None = Query(None, alias="to"),
     scope: str | None = Query(None),
+    # 누구의 개인 일정을 볼 것인가 — **MASTER·ADMIN 만.** 그 밖에는 넣어도
+    # 본인 것이 온다 (403 이 아니라 조용히 고정 — `/attendance` 와 같은 규칙)
+    employee_id: str | None = Query(None, alias="employeeId"),
 ) -> list[Event]:
     # 반려된 일정은 아무에게도 안 보인다 — 행은 결재 이력으로 남기지만
     # 달력에 죽은 일정이 서면 칸만 어지럽힌다 (EventStatus 참고).
     # **이력은 `GET /me/inbox?status=REJECTED` 로 본다.**
     stmt = select(Event).where(Event.status != EventStatus.REJECTED)
+    # 개인 일정은 **한 사람 것만** 실린다. `?scope=` 를 뭘 넣든 항상 건다 —
+    # 필터로만 두면 안 주는 순간 남의 PT 시간이 통째로 딸려 온다
+    personal_of = current.id
+    if employee_id and current.role in _OVERSEERS:
+        personal_of = employee_id
+    stmt = stmt.where(
+        or_(Event.scope != PERSONAL_SCOPE, Event.owner_id == personal_of)
+    )
     # 승인 대기는 올린 사람과 결재자에게만 — 남의 달력을 미리 어지럽히지 않는다
     if current.role not in _OVERSEERS:
         stmt = stmt.where(
@@ -88,8 +119,12 @@ async def create_event(
         attendee_ids=payload.attendee_ids,
         memo=payload.memo,
         owner_id=current.id,
+        # 개인 일정은 **결재를 안 거친다.** 본인만 보는 자리라 대표가 승인할
+        # 것이 없고, 대기로 두면 PT 시간을 적어 놓고 승인을 기다려야 한다
         status=(
-            EventStatus.APPROVED if current.role in _OVERSEERS else EventStatus.PENDING
+            EventStatus.APPROVED
+            if payload.scope == PERSONAL_SCOPE or current.role in _OVERSEERS
+            else EventStatus.PENDING
         ),
     )
     db.add(event)
@@ -108,8 +143,10 @@ async def update_event(
     event = await _get_owned(event_id, current, db)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(event, key, value)
-    # 승인받은 뒤 내용을 갈아치우면 승인의 뜻이 없다 — 결재자가 아니면 다시 대기로
-    if current.role not in _OVERSEERS:
+    # 승인받은 뒤 내용을 갈아치우면 승인의 뜻이 없다 — 결재자가 아니면 다시 대기로.
+    # **개인 일정은 빼고.** 애초에 결재를 안 거치는데 고칠 때마다 대기로 보내면
+    # 본인이 적은 PT 시간이 승인을 기다리다 달력에서 사라진다
+    if event.scope != PERSONAL_SCOPE and current.role not in _OVERSEERS:
         event.status = EventStatus.PENDING
     await db.commit()
     await db.refresh(event)

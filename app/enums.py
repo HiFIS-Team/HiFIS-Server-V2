@@ -248,6 +248,9 @@ class ScoreCategory(StrEnum):
     CONTRIB = "CONTRIB"    # 센터 기여도
     PROJECT = "PROJECT"    # 프로젝트 달성 (기본 10, 어드민 평가 -100 ~ +100)
     OPERATOR = "OPERATOR"  # 운영자 직접 부여/감점
+    # 지각 차감 — **늘 음수다.** 출근 스캔이 자동으로 넣는다 (`attendance.py`).
+    # 랭킹 탭에는 안 선다(어느 kind 에도 안 걸린다) — 종합 점수만 깎인다.
+    LATE = "LATE"
     # 방문 경로 — 셋을 **따로** 둔다. 랭킹 내역이 '블로그 10 · 인스타 5' 처럼
     # 갈라서 보여줘야 해서 하나로 묶으면 다시 못 나눈다.
     BLOG = "BLOG"              # 블로그 보고 온 회원 등록
