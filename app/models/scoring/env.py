@@ -36,6 +36,15 @@ class EnvTaskLog(UUIDMixin, TimestampMixin, Base):
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)
     points: Mapped[int] = mapped_column(Integer, nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 수행 사진과 위치 — **현수막만 필수다** (2026-08-18 대표 요청).
+    #
+    # 걸었다고 누르기만 하면 실제로 걸었는지 확인할 방법이 없어서, 사진과
+    # 어디에 걸었는지를 같이 받는다. 나머지 항목은 지금처럼 그냥 눌러 남긴다.
+    #
+    # 컬럼 자체는 nullable 이다 — 이미 쌓인 기록에는 값이 없고, 어느 항목이
+    # 필수인지는 라우터의 `PHOTO_REQUIRED_ITEMS` 가 정한다.
+    photo_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    place: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # 프로젝트 할 일을 체크해서 저절로 생긴 기록이면 그 할 일 (2026-08-14)
     #
     # `현수막 설치 1` 처럼 할 일에 환경정비 항목 이름이 들어 있으면, 체크하는

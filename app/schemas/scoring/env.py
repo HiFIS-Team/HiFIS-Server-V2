@@ -34,6 +34,16 @@ class EnvItemOut(CamelModel):
 class EnvLogCreate(CamelModel):
     env_item_id: str
     note: str | None = Field(default=None, max_length=80)  # 기타 등 write-in 텍스트 → 라벨 "기타(내용)"
+    # 현수막처럼 확인이 필요한 항목만 채워 보낸다 (`POST /env-logs/photo` 가 돌려준 주소).
+    # 나머지 항목은 안 보내면 그만이다.
+    photo_url: str | None = Field(default=None, max_length=255)
+    place: str | None = Field(default=None, max_length=100)
+
+
+class EnvLogPhotoOut(CamelModel):
+    """올린 사진의 서빙 주소 — 이걸 [EnvLogCreate.photo_url] 에 실어 보낸다."""
+
+    url: str
 
 
 class EnvTaskLogOut(CamelModel):
@@ -44,6 +54,8 @@ class EnvTaskLogOut(CamelModel):
     item_name: str
     points: int
     note: str | None = None
+    photo_url: str | None = None
+    place: str | None = None
     created_at: datetime
 
 
