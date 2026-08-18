@@ -24,6 +24,8 @@ dependencies = [
     "slowapi>=0.1.9",
     "redis>=5.0",
     "solapi>=5.0.3",
+    # 공휴일 — 결근 판정에서 뺀다. 오프라인 계산이라 바깥 API 가 죽어도 판정이 안 흔들린다
+    "holidays>=0.103",
 ]
 
 [project.optional-dependencies]

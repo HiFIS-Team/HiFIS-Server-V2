@@ -45,6 +45,7 @@ from app.schemas.staff.attendance import (
     LeaveRequestOut,
 )
 from app.services import notification_texts as ntext
+from app.services.holidays import holiday_name, is_holiday
 from app.services.notifications import master_ids, notify, notify_bosses
 from app.services.scoring import accrue_score
 
@@ -124,9 +125,12 @@ def _attendance_status(
     """
     if not shift_start or not shift_end or rec.check_in is None:
         return AttendanceStatus.UNKNOWN
-    first_day = joined is not None and rec.date == joined
+    # 공휴일은 가입 첫날과 같이 다룬다 — **자발적으로 나온 날이다** (2026-08-18).
+    # 쉬는 날 나와 준 사람에게 근무시간 기준을 들이대 지각·조기퇴근을 매기면
+    # 안 나오느니만 못하다. 나온 것 자체에는 기여 점수가 붙는다.
+    free_day = (joined is not None and rec.date == joined) or is_holiday(rec.date)
     end_min = _hhmm_to_min(shift_end)
-    late = _kst_min(rec.check_in) > _hhmm_to_min(shift_start) and not first_day
+    late = _kst_min(rec.check_in) > _hhmm_to_min(shift_start) and not free_day
     if rec.check_out is None:
         if rec.date < now_kst.date():
             return AttendanceStatus.NO_CHECKOUT
@@ -138,7 +142,7 @@ def _attendance_status(
     out_min = _kst_min(rec.check_out) + (
         1440 if rec.check_out.astimezone(KST).date() > rec.date else 0
     )
-    early = out_min < end_min - EARLY_LEAVE_GRACE_MIN and not first_day
+    early = out_min < end_min - EARLY_LEAVE_GRACE_MIN and not free_day
     if late and early:
         return AttendanceStatus.LATE_AND_EARLY
     if late:
@@ -200,6 +204,11 @@ def _absent_today(employee: Employee, now_kst: datetime) -> bool:
     if not employee.shift_end:
         return False
     if _joined(employee) == now_kst.date():
+        return False
+    # **공휴일은 결근으로 안 찍는다** (2026-08-18). 여기가 안 막혀 있어서
+    # 2026-08-17(광복절 대체 휴일)에 안 나온 사람이 전부 결근으로 찍혔다.
+    # 결근 알림 워커(`absence_alerts`)도 이 함수를 부르므로 같이 막힌다.
+    if is_holiday(now_kst.date()):
         return False
     return _kst_min(now_kst) > _hhmm_to_min(employee.shift_end)
 
@@ -341,8 +350,16 @@ async def scan_attendance(
         )
         db.add(record)
         action = "출근"
+        # **공휴일에 나왔으면 그것만으로 점수를 준다** (2026-08-18 결정, 하루 1회).
+        # 쉬는 날 나온 것 자체가 인정이라 시각을 안 본다 — 조기·초과 근무와 달리
+        # 근무시간 기준이 뜻이 없는 날이다. 출근 스캔에만 붙여서, 퇴근을
+        # 깜빡한 사람도 같은 점수를 받는다.
+        if is_holiday(today):
+            await _award_offhours(
+                db, target, today.isoformat(), "holiday", holiday_name(today) or "공휴일 출근"
+            )
         # 기본 출근보다 1시간+ 이르게 왔으면 조기출근 자동 점수
-        if target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
+        elif target.shift_start and now_min <= _hhmm_to_min(target.shift_start) - OFFHOURS_THRESHOLD_MIN:
             await _award_offhours(db, target, today.isoformat(), "in", "조기 출근")
     else:  # 두 번째 이후 = 퇴근(근무시간 갱신)
         # **오늘 첫 퇴근 스캔인가** — 내 업무 누락 알림을 여기서만 보낸다.
@@ -355,7 +372,12 @@ async def scan_attendance(
         # 기본 퇴근보다 1시간+ 늦게 찍으면 초과근무 자동 점수(재스캔해도 하루 1회만).
         # 자정을 넘겼으면 하루를 더해야 '몇 분 늦었나'가 나온다. 점수는 그 근무일 몫이다.
         out_min = now_min + (1440 if overnight else 0)
-        if target.shift_end and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN:
+        # 공휴일은 출근 스캔에서 이미 하루치를 줬다 — 여기서 또 주면 20점이 된다
+        if (
+            not is_holiday(record.date)
+            and target.shift_end
+            and out_min >= _hhmm_to_min(target.shift_end) + OFFHOURS_THRESHOLD_MIN
+        ):
             await _award_offhours(db, target, record.date.isoformat(), "out", "초과 근무")
         if first_out:
             await _notify_task_missing(db, target, record.date)
@@ -526,7 +548,10 @@ async def attendance_calendar(
             # (`_attendance_status` 의 `first_day`) — 그때 결근을 빠뜨렸다.
             pass
         elif work_days:
-            if day.isoweekday() not in work_days:
+            # 공휴일은 근무 요일이어도 쉬는 날이다 — **휴무로 찍는다** (2026-08-18).
+            # 새 상태를 만들지 않고 DAY_OFF 로 두는 이유는 앱이 이미 그리는
+            # 값이라 화면을 안 바꿔도 되기 때문이다.
+            if day.isoweekday() not in work_days or is_holiday(day):
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
             elif day < today:  # 근무일인데 과거·기록없음·휴가없음 → 결근
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.ABSENT))
@@ -626,7 +651,8 @@ async def attendance_calendar_all(
                 status = AttendanceStatus.ON_LEAVE
             elif day <= joined_d:
                 status = None  # 가입한 날까지 — 위 사람별 캘린더와 같은 규칙
-            elif work_days and day.isoweekday() in work_days:
+            elif work_days and day.isoweekday() in work_days and not is_holiday(day):
+                # 공휴일은 결근을 안 찍는다 — 휴무는 이 판에 담지 않으므로 그냥 빠진다
                 if day < today or _absent_today(emp, now_kst):
                     status = AttendanceStatus.ABSENT
                 # 오늘 근무시간 안 → 미출근. 캘린더에는 안 담는다(카드가 보여준다)

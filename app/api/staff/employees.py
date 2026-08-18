@@ -37,6 +37,7 @@ from app.schemas.staff.employee import (
 from app.services import notification_texts as ntext
 from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
+from app.services.holidays import is_holiday
 from app.services.notifications import notify_bosses
 
 router = APIRouter(prefix="/employees", tags=["employees"])
@@ -123,7 +124,8 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
             model.today_attendance_status = AttendanceStatus.NORMAL
         elif e.id in leaves:
             model.today_attendance_status = AttendanceStatus.ON_LEAVE
-        elif e.work_days and today.isoweekday() not in set(e.work_days):
+        elif e.work_days and (today.isoweekday() not in set(e.work_days) or is_holiday(today)):
+            # 공휴일도 휴무로 본다 (2026-08-18) — 안 그러면 결근으로 넘어간다
             model.today_attendance_status = AttendanceStatus.DAY_OFF
         elif e.work_days and _absent_today(e, now_kst):
             # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근
