@@ -19,7 +19,6 @@ from app.api.staff.attendance import (
 )
 from app.core.deps import get_current_user, require_role
 from app.core.periods import KST, current_period
-from app.services.holidays import is_holiday
 from app.db.session import get_db
 from app.enums import (
     ApprovalStatus,
@@ -120,10 +119,7 @@ async def my_home(
             att = HomeAttendanceOut(
                 status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
             )
-        elif current.work_days and (
-            today.isoweekday() not in set(current.work_days) or is_holiday(today)
-        ):
-            # 공휴일도 휴무로 본다 (2026-08-18) — 안 그러면 결근으로 넘어간다
+        elif current.work_days and today.isoweekday() not in set(current.work_days):
             att = HomeAttendanceOut(status=AttendanceStatus.DAY_OFF)
         elif current.work_days and _absent_today(current, now_kst):
             # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근
