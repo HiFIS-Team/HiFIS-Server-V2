@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.staff.employees import SUSPEND_DEFAULT_REASON
 from app.core.deps import ensure_not_locked, get_current_user
 from app.core.ratelimit import client_key, limiter
 from app.core.security import (
@@ -116,6 +117,26 @@ async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depe
         raise HTTPException(
             401, detail={"code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}
         )
+    # 계정 정지 — **비밀번호는 맞았지만** 막는다 (이용약관 제8조 1항).
+    # 사유를 그대로 돌려줘서 로그인 화면에 뜬다. 왜 막혔는지 모르면
+    # 본인은 고장으로 읽고, 풀 방법도 알 수 없다.
+    if employee.suspended_at is not None:
+        db.add(AccessLog(  # 정지된 계정의 시도도 남긴다
+            employee_id=employee.id,
+            email=payload.email,
+            event=AccessEvent.LOGIN_FAIL,
+            ip=ip,
+            user_agent=user_agent,
+        ))
+        await db.commit()
+        raise HTTPException(
+            403,
+            detail={
+                "code": "ACCOUNT_SUSPENDED",
+                "message": employee.suspend_reason or SUSPEND_DEFAULT_REASON,
+            },
+        )
+
     # 대표 전용 잠금 — **비밀번호는 맞았지만** 지금은 못 들어간다.
     # 로그인 성공으로 안 남긴다 (실제로 세션이 안 생겼다)
     ensure_not_locked(employee.role)

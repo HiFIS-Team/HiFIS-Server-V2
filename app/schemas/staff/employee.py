@@ -69,6 +69,10 @@ class EmployeeOut(CamelModel):
     work_status: WorkStatus
     joined_at: datetime
     resigned_at: datetime | None = None  # 퇴사 시각 (§58) — null=재직 중
+    # 계정 정지 (이용약관 제8조 1항) — null 이면 정상.
+    # **재직 상태와 다른 축이다** — 정지돼도 재직 중이라 조직도에는 그대로 선다
+    suspended_at: datetime | None = None
+    suspend_reason: str | None = None
     last_active_at: datetime | None = None
     # 처음 로그인한 시각 — null 이면 가입만 하고 아직 안 들어온 사람이다
     first_login_at: datetime | None = None
