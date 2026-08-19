@@ -109,12 +109,19 @@ class ProjectRequestType(StrEnum):
     **EDIT·DELETE 는 2026-08-14 에 붙었다.** "수정 및 삭제는 마스터의 허가가
     있어야 가능하다" — 그 전에는 담당자가 그냥 고치고 그냥 지웠다.
     기한 연장이 이미 쓰던 통로를 그대로 탄다.
+
+    **MEMBERS 는 2026-08-19 에 붙었다** — "인원 추가도 똑같이 승인 반려 개념".
+    그 전에는 참여 인원을 **만들 때 넣은 것이 끝**이라 나중에 못 바꿨다.
+
+    이 값은 DB 에 `varchar` 로 들어간다 (`native_enum=False`, CHECK 없음) —
+    **값을 더하는 데 마이그레이션이 필요 없다.**
     """
 
     EXTENSION = "EXTENSION"  # 기한 연장 요청 (마감 전) — new_due 필수
     OVERDUE = "OVERDUE"      # 누락 사유 (마감 지남 — 왜 늦었고 언제까지 끝내겠다) — new_due 필수
     EDIT = "EDIT"            # 이름·설명·색 수정 — payload 필수
     DELETE = "DELETE"        # 프로젝트 삭제 — 둘 다 없음
+    MEMBERS = "MEMBERS"      # 참여 인원 **추가** — members 필수 (빼는 건 없다)
 
 
 class MyTaskRequestType(StrEnum):

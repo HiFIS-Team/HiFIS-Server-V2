@@ -10,6 +10,7 @@ from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.services.branch_group import visible_branch_ids
 from app.enums import (
+    EmployeeStatus,
     ProjectActivityKind,
     ProjectRequestStatus,
     ProjectRequestType,
@@ -39,6 +40,7 @@ from app.schemas.projects.project import (
 )
 from app.schemas.projects.project_request import (
     ProjectEditPayload,
+    ProjectMembersPayload,
     ProjectRequestCreate,
     ProjectRequestOut,
     ProjectRequestReject,
@@ -485,16 +487,59 @@ _REQUEST_LABEL = {
     ProjectRequestType.OVERDUE: "누락 사유",
     ProjectRequestType.EDIT: "프로젝트 수정",
     ProjectRequestType.DELETE: "프로젝트 삭제",
+    ProjectRequestType.MEMBERS: "인원 추가",
 }
 
 
+async def _names_of(db: AsyncSession, employee_ids: list[str]) -> str:
+    """`김트레이너 · 박FC` — 타임라인에 **누구를 넣었는지** 남기려고"""
+    rows = await db.scalars(select(Employee.name).where(Employee.id.in_(employee_ids)))
+    return " · ".join(rows) or "(알 수 없음)"
+
+
+async def _check_addable(db: AsyncSession, project: Project, add_ids: list[str]) -> None:
+    """인원 추가 신청을 **올릴 때** 거른다 — 승인할 때 터지면 늦다.
+
+    승인은 대표가 며칠 뒤에 누를 수도 있는데, 그때 "그런 사람 없다"로 실패하면
+    신청한 사람은 왜 안 됐는지 모른다. 낼 때 막는다.
+    """
+    already = set(project.assignee_ids or [])
+    dup = [i for i in add_ids if i in already]
+    if dup:
+        raise HTTPException(
+            400,
+            detail={"code": "ALREADY_MEMBER", "message": "이미 참여 중인 사람이 있습니다"},
+        )
+    rows = await db.scalars(
+        select(Employee.id).where(
+            Employee.id.in_(add_ids),
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    if len(set(rows)) != len(set(add_ids)):
+        raise HTTPException(
+            400,
+            detail={"code": "EMPLOYEE_NOT_FOUND", "message": "재직 중이 아닌 사람이 있습니다"},
+        )
+
+
 def _req_out(r: ProjectRequest) -> ProjectRequestOut:
+    # 두 종류가 `payload` 칸 하나를 나눠 쓴다 — 종류로 갈라 담는다.
+    # 안 가르면 인원 추가 신청이 `ProjectEditPayload` 로 들어가 값이 통째로 빈다
+    edit = members = None
+    if r.payload:
+        if r.type is ProjectRequestType.MEMBERS:
+            members = ProjectMembersPayload(**r.payload)
+        else:
+            edit = ProjectEditPayload(**r.payload)
     return ProjectRequestOut(
         id=r.id,
         project_id=r.project_id,
         type=r.type,
         new_due=r.new_due,
-        payload=ProjectEditPayload(**r.payload) if r.payload else None,
+        payload=edit,
+        members=members,
         reason=r.reason,
         status=r.status,
         requested_by_id=r.requested_by_id,
@@ -543,10 +588,11 @@ async def create_project_request(
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
     _ensure_member(project, current)
-    # 수정·삭제는 담당자만 올린다 — 예전에 직접 하던 때의 기준(`is_owner`)
+    # 수정·삭제·인원 추가는 담당자만 올린다 — 예전에 직접 하던 때의 기준(`is_owner`)
     # 그대로다. 참여 멤버에게 열면 지금보다 넓어진다.
     if (
-        payload.type in (ProjectRequestType.EDIT, ProjectRequestType.DELETE)
+        payload.type
+        in (ProjectRequestType.EDIT, ProjectRequestType.DELETE, ProjectRequestType.MEMBERS)
         and project.owner_id != current.id
     ):
         raise HTTPException(
@@ -554,6 +600,8 @@ async def create_project_request(
             detail={"code": "NOT_PROJECT_OWNER", "message": "프로젝트 담당자만 올릴 수 있습니다"},
         )
     _ensure_open(project, current)
+    if payload.type is ProjectRequestType.MEMBERS:
+        await _check_addable(db, project, payload.members.add_ids)
     # 프로젝트당 대기 요청은 하나만 (중복 방지)
     existing = await db.scalar(
         select(ProjectRequest).where(
@@ -567,7 +615,12 @@ async def create_project_request(
         project_id=project_id,
         type=payload.type,
         new_due=payload.new_due,
-        payload=payload.payload.model_dump(exclude_none=True) if payload.payload else None,
+        # 두 종류가 이 칸 하나를 나눠 쓴다 (EDIT 는 바꿀 값, MEMBERS 는 넣을 사람)
+        payload=(
+            payload.members.model_dump()
+            if payload.type is ProjectRequestType.MEMBERS
+            else payload.payload.model_dump(exclude_none=True) if payload.payload else None
+        ),
         reason=payload.reason,
         requested_by_id=current.id,
     )
@@ -617,6 +670,20 @@ async def _decide_request(
             for key, value in (req.payload or {}).items():
                 setattr(project, key, value)
             await _log_activity(db, project.id, current.id, ProjectActivityKind.CREATED, f"{label} 승인")
+        elif req.type is ProjectRequestType.MEMBERS:
+            # **더하기만 한다.** 신청한 뒤 승인까지 사이에 다른 경로로 사람이
+            # 들어왔을 수 있어서, 통째로 갈아끼우면 그 사람이 조용히 빠진다.
+            add_ids = (req.payload or {}).get("add_ids") or []
+            merged = list(dict.fromkeys([*(project.assignee_ids or []), *add_ids]))
+            project.assignee_ids = merged
+            names = await _names_of(db, add_ids)
+            await _log_activity(
+                db, project.id, current.id, ProjectActivityKind.CREATED,
+                f"{label} 승인: {names}",
+            )
+            # 새로 들어온 사람에게 알린다 — 모르고 있으면 마감 알림만 갑자기 온다
+            for eid in add_ids:
+                await notify(db, employee_id=eid, **ntext.project_member_added(title, project.id))
         else:
             project.due = req.new_due  # 새 기한 반영
             project.extension_reason = req.reason
@@ -627,11 +694,13 @@ async def _decide_request(
         if project is not None:  # 반려도 타임라인
             await _log_activity(db, project.id, current.id, ProjectActivityKind.DUE, f"{label} 반려")
 
-    await notify(
-        db,
-        employee_id=req.requested_by_id,
-        **ntext.project_request_decided(label, approved, title, reason, req.project_id),
-    )
+    if req.type is ProjectRequestType.MEMBERS:
+        # 승인 본문이 `새 마감이 반영됐어요` 라 인원 추가에는 안 맞는다 (전용 문구)
+        who = await _names_of(db, (req.payload or {}).get("add_ids") or [])
+        decided = ntext.project_members_decided(approved, title, who, reason, req.project_id)
+    else:
+        decided = ntext.project_request_decided(label, approved, title, reason, req.project_id)
+    await notify(db, employee_id=req.requested_by_id, **decided)
     # 삭제를 승인하면 프로젝트와 함께 이 행도 CASCADE 로 사라진다 —
     # commit 뒤에는 못 읽으므로 응답을 **미리** 만들어 둔다
     out = _req_out(req)
