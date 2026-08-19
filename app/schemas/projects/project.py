@@ -68,14 +68,6 @@ class ProjectOut(CamelModel):
     created_at: datetime
 
 
-class ProjectCommentCreate(CamelModel):
-    body: str = Field(min_length=1)
-
-
-class ProjectCommentUpdate(CamelModel):
-    body: str = Field(min_length=1)
-
-
 class ProjectActivityOut(CamelModel):
     """타임라인 항목 — kind=COMMENT 는 사용자 댓글, 나머지는 시스템 활동."""
 

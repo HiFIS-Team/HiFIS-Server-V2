@@ -31,8 +31,6 @@ from app.schemas.projects.project import (
     ProjectActivityOut,
     ProjectAwardCreate,
     ProjectAwardOut,
-    ProjectCommentCreate,
-    ProjectCommentUpdate,
     ProjectCreate,
     ProjectOut,
     ProjectTodoCreate,
