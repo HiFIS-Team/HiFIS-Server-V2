@@ -661,6 +661,16 @@ async def attendance_calendar_all(
     사람별 캘린더(`/attendance/calendar`)와 **같은 판정**을 전 직원에게 돌린 것이다.
     사람마다 부르면 인원수만큼 요청이 나가서 여기서 한 번에 준다.
     휴무·판정불가는 담지 않는다 — 대표 달력이 그릴 자리가 없다.
+
+    **미출근(`NOT_IN`)은 여기서만 나온다** (2026-08-19). 두 자리를 덮는다.
+
+    | | 언제 |
+    |---|---|
+    | 아직 안 왔다 | 오늘 · 근무일 · 스캔 없음 · 퇴근시간 전 |
+    | 퇴근 스캔이 없다 | 새벽 5시를 넘기도록 안 찍음 (예전 `NO_CHECKOUT`) |
+
+    사람별 캘린더·홈은 그대로 `NO_CHECKOUT`(퇴근 누락) 을 쓴다 — 본인 화면은
+    "그날 왔는데 안 찍었다"가 보여야 근무일 수에서 안 빠진다.
     **MASTER·ADMIN 은 아예 빼고 센다** (출퇴근을 안 찍어서 매일 결근이 된다).
     MANAGER 는 branch_scope 가 자기 지점으로 좁혀 준다.
     """
@@ -728,6 +738,16 @@ async def attendance_calendar_all(
                 )
                 if status == AttendanceStatus.UNKNOWN:
                     status = None  # 근무시간 미설정 — 그릴 자리가 없다
+                elif status == AttendanceStatus.NO_CHECKOUT:
+                    # **퇴근누락으로 안 부른다** (2026-08-19 대표 결정).
+                    # 새벽 5시까지는 아직 안 간 것으로 보고 야근으로 두고,
+                    # 그때까지도 스캔이 없으면 그냥 미출근이다.
+                    status = (
+                        AttendanceStatus.OVERTIME
+                        if day == today - timedelta(days=1)
+                        and _still_overnight(rec, now_kst)
+                        else AttendanceStatus.NOT_IN
+                    )
             elif on_leave is not None:
                 status = AttendanceStatus.ON_LEAVE
             elif day <= joined_d:
@@ -735,7 +755,12 @@ async def attendance_calendar_all(
             elif work_days and day.isoweekday() in work_days:
                 if day < today or _absent_today(emp, now_kst):
                     status = AttendanceStatus.ABSENT
-                # 오늘 근무시간 안 → 미출근. 캘린더에는 안 담는다(카드가 보여준다)
+                else:
+                    # 오늘인데 아직 근무시간이 안 지났다 — 미출근이다.
+                    # **예전에는 안 담았다.** 그러면 아직 안 온 사람이 명단에서
+                    # 통째로 빠져서, 달력이 남은 사람만 보고 `전원 출근` 으로
+                    # 접었다 (2026-08-19 대표 지적 — 전원이 온 게 아닌데 그렇게 떴다).
+                    status = AttendanceStatus.NOT_IN
             if status is not None:
                 board.setdefault(day, {}).setdefault(status, []).append(emp.name)
             day += timedelta(days=1)

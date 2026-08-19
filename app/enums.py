@@ -173,6 +173,7 @@ class AttendanceStatus(StrEnum):
     OVERTIME = "OVERTIME"              # 야근 — 퇴근 스캔이 설정 퇴근시간보다 1시간+ 늦음
     IN_PROGRESS = "IN_PROGRESS"        # 출근했고 아직 퇴근 전(당일)
     NO_CHECKOUT = "NO_CHECKOUT"        # 지난 날인데 퇴근 기록 없음
+    NOT_IN = "NOT_IN"                  # 미출근 — 아직 안 왔거나(오늘) 퇴근 스캔 없이 새벽 5시를 넘겼다
     ABSENT = "ABSENT"                  # 결근 — 근무일인데 과거·기록 없음·휴가 없음
     ON_LEAVE = "ON_LEAVE"              # 휴가/월차(승인) — 반차 포함
     DAY_OFF = "DAY_OFF"                # 휴무 — 근무 요일 아님
