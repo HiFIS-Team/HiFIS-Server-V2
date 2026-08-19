@@ -56,6 +56,9 @@ class ProjectOut(CamelModel):
     color: str | None = None  # null=앱이 id 해시로 생성
     extension_reason: str | None = None
     status: ProjectStatus  # 서버 파생
+    #: 완료한 시각 — **null 이면 아직 완료가 아니다** (2026-08-19).
+    #: 할 일을 다 체크해도 담당자가 `/complete` 를 눌러야 채워진다.
+    completed_at: datetime | None = None
     created_by_id: str
     created_at: datetime
 

@@ -53,7 +53,9 @@ router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(
 
 
 def _status(project: Project) -> ProjectStatus:
-    if project.progress >= 100:
+    # **진행률이 아니라 완료 도장을 본다** (2026-08-19). 할 일을 다 체크해도
+    # 담당자가 `/complete` 를 누르기 전까지는 진행 중이다.
+    if project.completed_at is not None:
         return ProjectStatus.DONE
     if project.due < datetime.now(timezone.utc):
         return ProjectStatus.MISSED
@@ -79,6 +81,7 @@ def _to_out(project: Project, todo_count: int = 0, done_count: int = 0) -> Proje
         color=project.color,
         extension_reason=project.extension_reason,
         status=_status(project),
+        completed_at=project.completed_at,
         created_by_id=project.created_by_id,
         created_at=project.created_at,
     )
@@ -108,7 +111,12 @@ async def _single_out(db: AsyncSession, project: Project) -> ProjectOut:
 
 
 async def _recompute_progress(db: AsyncSession, project: Project) -> None:
-    """체크리스트가 있으면 progress = 완료/전체 × 100. 없으면 수동값 유지."""
+    """체크리스트가 있으면 progress = 완료/전체 × 100. 없으면 수동값 유지.
+
+    **여기서 완료를 정산하지 않는다 (2026-08-19).** 체크를 다 해도 완료가 아니고,
+    담당자가 `/complete` 를 눌러야 완료다 — 마지막 체크 한 번에 점수까지 붙어
+    버리면 잘못 눌렀을 때 되돌릴 사람이 대표뿐이었다.
+    """
     total = await db.scalar(
         select(func.count()).select_from(ProjectTodo).where(ProjectTodo.project_id == project.id)
     )
@@ -119,7 +127,41 @@ async def _recompute_progress(db: AsyncSession, project: Project) -> None:
             .where(ProjectTodo.project_id == project.id, ProjectTodo.done.is_(True))
         )
         project.progress = round(done / total * 100)
-    await _settle_completion(db, project)
+
+
+async def _all_todos_done(db: AsyncSession, project: Project) -> bool:
+    """할 일이 하나 이상 있고 **전부 체크됐는가** — 완료 버튼이 뜨는 조건.
+
+    할 일이 없는 프로젝트는 완료할 수 없다. 무엇을 했는지가 아무 데도 없으면
+    완료로 점수를 줄 근거가 없다 (앱도 만들 때 두 개 이상을 받는다).
+    """
+    total = await db.scalar(
+        select(func.count()).select_from(ProjectTodo).where(ProjectTodo.project_id == project.id)
+    )
+    if not total:
+        return False
+    left = await db.scalar(
+        select(func.count())
+        .select_from(ProjectTodo)
+        .where(ProjectTodo.project_id == project.id, ProjectTodo.done.is_(False))
+    )
+    return not left
+
+
+async def _any_todo_done(db: AsyncSession, project: Project) -> bool:
+    """할 일이 **하나라도 체크됐는가** — 자유 수정·삭제가 닫히는 기준 (2026-08-19).
+
+    아무도 아직 손을 안 댄 프로젝트는 잘못 만든 것일 수 있어서 담당자·참여자가
+    그냥 고치고 지운다. 한 칸이라도 체크된 뒤부터는 **남이 한 일이 걸려 있어서**
+    대표 결재를 받는다.
+    """
+    return bool(
+        await db.scalar(
+            select(func.count())
+            .select_from(ProjectTodo)
+            .where(ProjectTodo.project_id == project.id, ProjectTodo.done.is_(True))
+        )
+    )
 
 
 # 완료하면 담당자마다 붙는 기본 점수. MASTER 가 여기서부터 올리거나 깎는다.
@@ -127,19 +169,23 @@ PROJECT_POINTS = 10
 
 
 async def _settle_completion(db: AsyncSession, project: Project) -> None:
-    """완료(100%)에 맞춰 담당자 점수를 정리한다. commit 은 호출자가 한다.
+    """완료에 맞춰 담당자 점수를 정리한다. commit 은 호출자가 한다.
 
-    - 100% 가 되면 담당자 **전원에게 무조건 기본 10점**을 먼저 준다 (2026-08-13 결정).
+    **기준이 `completed_at` 이다 (2026-08-19).** 예전에는 진행률 100% 였다 —
+    마지막 할 일에 체크하는 순간 점수까지 붙어서 잘못 누르면 되돌릴 사람이
+    대표뿐이었다. 이제 담당자가 `/complete` 를 눌러야 여기까지 온다.
+
+    - 완료하면 담당자 **전원에게 무조건 기본 10점**을 먼저 준다 (2026-08-13 결정).
       MASTER 가 완료 **전에** 점수를 매겨 뒀어도 10점으로 되돌린다 — 깎거나 더 주는
       것은 완료된 다음에 하는 판단이라, 완료 시점의 출발선은 항상 10점이다.
-    - 100% 아래로 내려가면 **자동으로 준 것만** 회수한다. MASTER 가 매긴 점수는
+    - 되돌리면(`/reopen`) **자동으로 준 것만** 회수한다. MASTER 가 매긴 점수는
       그대로 둔다 (평가는 진행률과 별개로 내린 판단이라 되돌리면 안 된다).
 
     자동인지는 `created_by_id` 로 가른다 — 자동은 None, 사람이 준 것은 그 사람 id.
 
-    **정산은 완료 한 번에 한 번만** 한다 (`completed_notified_at` 이 표시). 이 함수는
-    진행률을 건드릴 때마다 불려서, 표시가 없으면 100% 인 프로젝트의 할 일을 체크할
-    때마다 MASTER 가 매긴 점수가 10점으로 되돌아간다.
+    **정산은 완료 한 번에 한 번만** 한다 (`completed_notified_at` 이 표시).
+    완료된 프로젝트에 점수를 매기는(`award`) 자리가 이 함수를 다시 부르는데,
+    표시가 없으면 MASTER 가 매긴 점수가 그때마다 10점으로 되돌아간다.
     """
     existing = (
         (
@@ -155,7 +201,7 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
     )
     by_employee = {event.employee_id: event for event in existing}
 
-    if project.progress >= 100:
+    if project.completed_at is not None:
         # 이미 이번 완료로 정산했으면 아무것도 안 한다 (MASTER 평가를 덮지 않는다)
         if project.completed_notified_at is not None:
             return
@@ -184,7 +230,7 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
         await notify_bosses(db, **ntext.project_completed(project.title, project.id))
         return
 
-    # 100% 아래로 내려갔다 — 다시 완료하면 그때 또 알린다
+    # 완료가 풀렸다 — 다시 완료하면 그때 또 알린다
     project.completed_notified_at = None
     for event in existing:
         if event.created_by_id is None:  # 사람이 매긴 점수는 남긴다
@@ -376,11 +422,71 @@ def _ensure_open(project: Project, current: Employee) -> None:
     됐다 안 됐다 하는 걸 막으려고 잠그고, 실수로 완료한 것만 대표가 풀어 준다.
 
     댓글과 점수 부여(`award`)는 잠기지 않는다 — 완료 뒤에 판단해서 매기는 값이다.
+
+    **기준이 진행률에서 `completed_at` 으로 바뀌었다 (2026-08-19).** 할 일을 다
+    체크한 것만으로는 안 잠긴다 — 담당자가 완료를 누르기 전까지는 진행 중이다.
     """
-    if project.progress >= 100 and current.role != Role.MASTER:
+    if project.completed_at is not None and current.role != Role.MASTER:
         raise HTTPException(
             403,
             detail={"code": "PROJECT_DONE", "message": "완료된 프로젝트는 수정할 수 없습니다"},
+        )
+
+
+def _ensure_can_check(todo: ProjectTodo, current: Employee) -> None:
+    """할 일에 체크할 수 있는가 — **MASTER·ADMIN 은 본인 것만** (2026-08-19 대표 결정).
+
+    대표·관리자는 프로젝트를 마음대로 고치고 지울 수 있지만 **일을 대신 했다고
+    표시하지는 못한다.** 체크가 곧 진행률이고 진행률이 곧 완료·점수라, 남이
+    한 일을 위에서 찍어 주면 그 점수가 뜻을 잃는다.
+
+    **본인이 그 할 일의 담당자로 지정돼 있으면** 자기 일이므로 체크할 수 있다.
+    MANAGER·MEMBER 는 예전과 같다 — 참여자면 어느 칸이든 체크한다
+    (한 사람이 여러 칸을 나눠 맡는 일이 흔하다).
+    """
+    if current.role not in (Role.MASTER, Role.ADMIN):
+        return
+    if todo.assignee_id == current.id:
+        return
+    raise HTTPException(
+        403,
+        detail={
+            "code": "NOT_TODO_ASSIGNEE",
+            "message": "본인이 맡은 할 일만 체크할 수 있습니다",
+        },
+    )
+
+
+async def _ensure_can_edit(db: AsyncSession, project: Project, current: Employee) -> None:
+    """프로젝트를 **결재 없이 바로** 고치거나 지울 수 있는가 (2026-08-19 대표 결정).
+
+    | 누구 | 언제 |
+    |---|---|
+    | MASTER | **늘** — 남의 것도, 완료된 것도 |
+    | ADMIN | **참여 중일 때** (담당자거나 참여 멤버) |
+    | MANAGER · MEMBER | 참여 중 + **할 일이 하나도 체크 안 됐을 때** |
+    | 그 외 | 못 한다 — 조회만 |
+
+    MANAGER·MEMBER 는 한 칸이라도 체크된 뒤부터 `POST /{id}/requests` 로
+    대표 결재를 받는다. **아직 아무도 손을 안 댄 프로젝트**는 잘못 만든 것일 수
+    있어서 그냥 고치고 지운다 — 그것까지 결재를 태우면 오타 하나에 대표를 부른다.
+
+    완료 잠금(`_ensure_open`)은 여기서 같이 본다. ADMIN 은 참여 중이어도
+    완료된 프로젝트는 못 고친다 — 완료를 푸는 것은 MASTER 뿐이다.
+    """
+    if current.role == Role.MASTER:
+        return
+    _ensure_member(project, current)
+    _ensure_open(project, current)
+    if current.role == Role.ADMIN:
+        return
+    if await _any_todo_done(db, project):
+        raise HTTPException(
+            403,
+            detail={
+                "code": "NEEDS_APPROVAL",
+                "message": "할 일이 시작된 뒤에는 대표 승인이 필요합니다",
+            },
         )
 
 
@@ -471,8 +577,7 @@ async def create_project(
         db, exclude=current.id, **ntext.project_created(project.title, current.name, project.id)
     )
     # 체크리스트가 붙었으면 진행률이 그걸 따라간다 (0/N → 0%).
-    # `_recompute_progress` 안에서 `_settle_completion` 도 같이 돈다 —
-    # 드물지만 처음부터 100% 로 만드는 경우가 거기서 정산된다.
+    # 여기서 완료가 나는 일은 없다 — 완료는 담당자가 따로 눌러야 한다.
     await _recompute_progress(db, project)
     await db.commit()
     await db.refresh(project)
@@ -578,8 +683,14 @@ async def create_project_request(
     | 종류 | 누가 | 승인하면 |
     |---|---|---|
     | EXTENSION·OVERDUE | 담당자·참여 멤버 | 기한이 바뀐다 |
-    | EDIT | **담당자만** | 이름·설명·색이 바뀐다 |
-    | DELETE | **담당자만** | 프로젝트가 지워진다 |
+    | EDIT | 담당자·참여 멤버 | 이름·설명·색이 바뀐다 |
+    | DELETE | 담당자·참여 멤버 | 프로젝트가 지워진다 |
+    | MEMBERS | 담당자·참여 멤버 | 사람이 늘어난다 |
+
+    **넷 다 같은 기준이 됐다 (2026-08-19).** 예전에는 뒤 셋이 담당자 전용이었다.
+
+    아직 아무도 할 일에 체크를 안 했으면 **여기까지 올 필요가 없다** —
+    `PATCH`·`DELETE` 로 바로 고치고 지운다 (`_ensure_can_edit`).
 
     **여기만 아무 가드가 없었다 (2026-08-14 고침).** 프로젝트를 볼 수 있으면
     누구나 남의 프로젝트 기한을 늘려 달라고 대표에게 올릴 수 있었다.
@@ -587,18 +698,11 @@ async def create_project_request(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    # **담당자와 참여 멤버가 다 올린다 (2026-08-19 대표 결정).**
+    # 예전에는 수정·삭제·인원 추가를 담당자만 올릴 수 있었다 — "프로젝트 안에서
+    # 수정·삭제는 그 프로젝트의 담당자와 참여자만" 으로 정해지면서 같아졌다.
+    # 그 밖의 사람은 여기서 `NOT_PROJECT_MEMBER` 로 걸린다 (조회만 된다).
     _ensure_member(project, current)
-    # 수정·삭제·인원 추가는 담당자만 올린다 — 예전에 직접 하던 때의 기준(`is_owner`)
-    # 그대로다. 참여 멤버에게 열면 지금보다 넓어진다.
-    if (
-        payload.type
-        in (ProjectRequestType.EDIT, ProjectRequestType.DELETE, ProjectRequestType.MEMBERS)
-        and project.owner_id != current.id
-    ):
-        raise HTTPException(
-            403,
-            detail={"code": "NOT_PROJECT_OWNER", "message": "프로젝트 담당자만 올릴 수 있습니다"},
-        )
     _ensure_open(project, current)
     if payload.type is ProjectRequestType.MEMBERS:
         await _check_addable(db, project, payload.members.add_ids)
@@ -929,8 +1033,11 @@ async def update_project_todo(
     project = await _get_project_or_404(db, project_id)
     _ensure_member(project, current)
     _ensure_open(project, current)
+    fields = payload.model_dump(exclude_unset=True)
+    if "done" in fields:
+        _ensure_can_check(todo, current)
     was_done = todo.done
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in fields.items():
         setattr(todo, key, value)
     await db.flush()
     await _recompute_progress(db, project)  # 완료 토글 → 진행률 재계산
@@ -1055,26 +1162,21 @@ async def update_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    # **진행률만 직접 바꾼다 (2026-08-14).** 이름·설명·색은 MASTER 허가를 받아야
-    # 해서 `POST /{id}/requests` 의 `EDIT` 로 가고, 기한은 예전부터 `EXTENSION`
-    # 이 맡는다. 그래서 이 자리에 남는 것은 진행률뿐이다.
-    #
     # 진행률은 보통 할 일 체크가 서버에서 다시 셈하지만(`_recompute_progress`),
     # 체크리스트가 없는 프로젝트는 여기로 직접 올린다.
-    #
-    # **역할로도 만든 사람으로도 통과하지 않는다.** 예전에는 MASTER·ADMIN·
-    # MANAGER 가 남의 프로젝트도 제목·기한·담당자까지 다 갈 수 있었다.
-    _ensure_member(project, current)
-    _ensure_open(project, current)
     fields = payload.model_dump(exclude_unset=True)
     if set(fields) - {"progress"}:
-        raise HTTPException(
-            403,
-            detail={
-                "code": "NEEDS_APPROVAL",
-                "message": "프로젝트 수정은 대표 승인이 필요합니다",
-            },
-        )
+        # 이름·설명·색·기한처럼 **내용을 바꾸는 것**은 결재를 거치는 게 원칙이다.
+        # 다만 `_ensure_can_edit` 이 통과시키는 사람은 바로 고친다 (2026-08-19) —
+        # MASTER 는 늘, ADMIN 은 참여 중일 때, 나머지는 아직 아무도 체크를 안
+        # 했을 때. 못 통과하면 거기서 403 이 난다.
+        await _ensure_can_edit(db, project, current)
+    else:
+        # 진행률만 올리는 것은 **일하는 자리**라 참여자면 된다.
+        # 아직 아무도 체크를 안 했나는 여기서 안 본다 — 그러면 진행률을 처음
+        # 올리는 순간부터 자기 프로젝트를 못 고치게 된다.
+        _ensure_member(project, current)
+        _ensure_open(project, current)
     old_progress, old_due = project.progress, project.due
     old_assignees = set(project.assignee_ids or [])
     for key, value in fields.items():
@@ -1106,21 +1208,87 @@ async def delete_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
-    # **아무도 여기로 못 지운다 (2026-08-14).** 삭제는 MASTER 허가를 받아야 한다 —
-    # 담당자가 `POST /{id}/requests` 로 `DELETE` 를 올리고, 승인되면 그때 지워진다.
-    # 라우트를 없애지 않는 이유는 MASTER 가 결재를 안 거치고 치울 길은 남겨야
-    # 하기 때문이다 (잘못 올라온 프로젝트가 결재함에 걸려 못 지워지면 안 된다).
-    if current.role != Role.MASTER:
-        raise HTTPException(
-            403,
-            detail={
-                "code": "NEEDS_APPROVAL",
-                "message": "프로젝트 삭제는 대표 승인이 필요합니다",
-            },
-        )
+    # 삭제도 수정과 같은 기준이다 (2026-08-19) — MASTER 는 늘, ADMIN 은 참여
+    # 중일 때, MANAGER·MEMBER 는 **아직 아무도 체크를 안 했을 때**만 바로 지운다.
+    # 체크가 시작된 뒤에는 `POST /{id}/requests` 의 `DELETE` 로 결재를 받는다.
+    #
+    # 예전에는 MASTER 말고 아무도 여기로 못 지웠다. 그러면 방금 잘못 만든
+    # 프로젝트 하나 지우는 데도 대표 결재가 걸렸다.
+    await _ensure_can_edit(db, project, current)
     await _purge_project(db, project)
     await db.commit()
     return None
+
+
+# ---------- 완료 처리 (2026-08-19) ----------
+@router.post("/{project_id}/complete", response_model=ProjectOut)
+async def complete_project(
+    project_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectOut:
+    """프로젝트를 완료로 찍는다 — **담당자만** (2026-08-19 대표 결정).
+
+    예전에는 마지막 할 일에 체크하는 순간 저절로 완료됐다. 그 한 번에 점수까지
+    붙어서 **잘못 눌러도 되돌릴 사람이 대표뿐**이었다. 이제 체크를 다 해도
+    진행 중이고, 담당자가 여기를 눌러야 완료다 (앱이 한 번 되묻는다).
+
+    **참여 멤버는 못 누른다.** 체크는 다 같이 하지만 '이제 끝났다'고 선언하는
+    것은 맡은 사람 몫이다.
+
+    조건은 하나 — **할 일이 하나 이상 있고 전부 체크돼 있어야** 한다.
+    """
+    project = await _get_project_or_404(db, project_id)
+    await _ensure_visible(db, project, current)
+    if project.completed_at is not None:
+        raise HTTPException(400, detail={"code": "ALREADY_DONE", "message": "이미 완료된 프로젝트입니다"})
+    owner_id = project.owner_id or project.created_by_id
+    if owner_id != current.id:
+        raise HTTPException(
+            403,
+            detail={"code": "NOT_PROJECT_OWNER", "message": "프로젝트 담당자만 완료할 수 있습니다"},
+        )
+    if not await _all_todos_done(db, project):
+        raise HTTPException(
+            400,
+            detail={"code": "TODOS_LEFT", "message": "할 일을 모두 체크해야 완료할 수 있습니다"},
+        )
+    project.completed_at = datetime.now(timezone.utc)
+    await _log_activity(db, project_id, current.id, ProjectActivityKind.PROGRESS, "프로젝트를 완료했어요")
+    await _settle_completion(db, project)  # 담당자 점수 + 대표 알림
+    await db.commit()
+    await db.refresh(project)
+    return await _single_out(db, project)
+
+
+@router.post(
+    "/{project_id}/reopen",
+    response_model=ProjectOut,
+    dependencies=[Depends(require_role(Role.MASTER))],
+)
+async def reopen_project(
+    project_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectOut:
+    """완료를 되돌린다 — **MASTER 만** (2026-08-19 대표 결정).
+
+    앱은 완료할 때 '되돌릴 수 없어요' 라고 알린다. 실제로 담당자·참여자는 못
+    되돌린다 — 완료가 곧 점수라 됐다 안 됐다 하면 점수가 같이 흔들린다.
+    **실수로 누른 것을 치울 길만 대표에게 남겨 둔다.**
+
+    되돌리면 자동으로 준 10점은 회수하고, MASTER 가 손으로 매긴 점수는 남는다
+    (`_settle_completion`).
+    """
+    project = await _get_project_or_404(db, project_id)
+    if project.completed_at is None:
+        raise HTTPException(400, detail={"code": "NOT_DONE", "message": "완료된 프로젝트가 아닙니다"})
+    project.completed_at = None
+    await _log_activity(db, project_id, current.id, ProjectActivityKind.PROGRESS, "완료를 되돌렸어요")
+    await _settle_completion(db, project)
+    await db.commit()
+    await db.refresh(project)
+    return await _single_out(db, project)
 
 
 async def _purge_project(db: AsyncSession, project: Project) -> None:

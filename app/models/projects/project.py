@@ -40,6 +40,19 @@ class Project(UUIDMixin, TimestampMixin, Base):
     completed_notified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    #: 완료한 시각 — **null 이면 아직 완료가 아니다** (2026-08-19).
+    #:
+    #: 예전에는 `progress >= 100` 이 곧 완료였다. 마지막 할 일에 체크하는 순간
+    #: 완료되고 점수까지 붙어서, **잘못 누르면 되돌릴 사람이 대표뿐**이었다.
+    #: 이제 체크를 다 해도 완료가 아니고 **담당자가 따로 눌러야** 완료다
+    #: (`POST /projects/{id}/complete`). 앱이 그때 한 번 되묻는다.
+    #:
+    #: 되돌리는 것(`/reopen`)은 **MASTER 만** 한다 — 완료가 곧 점수라
+    #: 됐다 안 됐다 하면 담당자 점수가 같이 흔들린다.
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_by_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=False
     )
