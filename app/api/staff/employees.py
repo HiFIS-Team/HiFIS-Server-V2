@@ -43,6 +43,24 @@ from app.services.notifications import notify_bosses
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 
+async def _cut_off(db: AsyncSession, employee: Employee) -> None:
+    """이 사람의 앱을 **지금 끊는다** — 정지·퇴사·삭제가 같이 쓴다 (2026-08-19).
+
+    둘을 같이 해야 실제로 끊긴다.
+
+    | | 안 하면 |
+    |---|---|
+    | `token_version` +1 | 켜 둔 앱이 **계속 돈다.** 앱이 토큰을 알아서 갱신해서 만료를 기다려도 안 끝난다 |
+    | `device_tokens` 삭제 | 로그인은 막혔는데 **푸시는 계속 간다.** 발송이 이 표를 보지 `suspended_at`·`status` 를 안 본다 |
+
+    **되살리지 않는다.** 복직·정지 해제 뒤에 로그인하면 앱이 알아서 다시 등록한다
+    (`PushGuard.register`). 서버가 들고 있다가 돌려주면 **그 사이에 폰을 바꾼
+    사람에게 옛 기기로 알림이 간다.**
+    """
+    employee.token_version += 1
+    await db.execute(delete(DeviceToken).where(DeviceToken.employee_id == employee.id))
+
+
 async def _get_branch_or_400(db: AsyncSession, branch_id: str) -> Branch:
     branch = await db.get(Branch, branch_id)
     if branch is None:
@@ -245,6 +263,7 @@ async def withdraw_me(
     user.status = EmployeeStatus.RESIGNED
     user.resigned_at = now  # 퇴사 시각(§58)
     user.deleted_at = now
+    await _cut_off(db, user)  # 세션 + 푸시 토큰 (2026-08-19)
     await db.commit()
     _remove_local(old_avatar)
     return None
@@ -316,6 +335,11 @@ async def update_employee(
         # 퇴사만 알린다 (2026-08-11 대표 요청). 처리한 본인은 뺀다 — 방금 자기가
         # 누른 것이라 알 필요가 없다. 복직·비활성은 알리지 않는다
         if resigning:
+            # **나간 사람의 앱을 그 자리에서 끊는다** (2026-08-19).
+            # 예전에는 상태만 바꿔서, 퇴사 처리해도 켜 둔 앱이 **그대로 돌았다** —
+            # 앱이 토큰을 알아서 갱신하므로 만료되기를 기다려도 안 끊긴다.
+            # 급여·조직도·공지가 다 열려 있고 푸시도 계속 갔다.
+            await _cut_off(db, employee)
             await notify_bosses(db, exclude=current.id, **ntext.employee_resigned(employee.name))
     await db.commit()
     await db.refresh(employee)
@@ -401,8 +425,7 @@ async def suspend_employee(
         )
     employee.suspended_at = datetime.now(timezone.utc)
     employee.suspend_reason = (reason or "").strip() or SUSPEND_DEFAULT_REASON
-    employee.token_version += 1  # 켜 둔 앱의 세션을 그 자리에서 끊는다
-    await db.execute(delete(DeviceToken).where(DeviceToken.employee_id == employee.id))
+    await _cut_off(db, employee)  # 세션 + 푸시 토큰
     await db.commit()
     await db.refresh(employee)
     return employee
