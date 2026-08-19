@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.services.branch_group import visible_branch_ids
-from app.enums import MeetingScope, ReactionTargetType, Role
+from app.enums import CommentTargetType, MeetingScope, ReactionTargetType, Role
 from app.models.staff.employee import Employee
 from app.models.projects.meeting import Meeting
 from app.models.projects.project import Project
@@ -76,11 +76,17 @@ def _forbidden_view() -> HTTPException:
 
 
 async def _to_out(db: AsyncSession, meetings: list[Meeting]) -> list[MeetingOut]:
-    agg = await aggregate_for(db, ReactionTargetType.MEETING, [m.id for m in meetings])
+    ids = [m.id for m in meetings]
+    agg = await aggregate_for(db, ReactionTargetType.MEETING, ids)
+    # 댓글 라우터가 이 파일의 `_can_view` 를 쓴다 — 맞물려 돌지 않게 여기서 늦게 넣는다
+    from app.api.board.comments import count_comments
+
+    comments = await count_comments(db, CommentTargetType.MEETING, ids)
     out = []
     for m in meetings:
         model = MeetingOut.model_validate(m)
         model.reactions = agg[m.id]
+        model.comment_count = comments.get(m.id, 0)
         out.append(model)
     return out
 

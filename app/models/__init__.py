@@ -35,6 +35,7 @@ from app.models.payroll.rank_policy import RankPolicy
 from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.ranking_snapshot import RankingSnapshot
 from app.models.board.reaction import Reaction
+from app.models.board.comment import Comment
 from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
 from app.models.members.session_sign import SessionSign
@@ -85,6 +86,7 @@ __all__ = [
     "RankOvertake",
     "RankingSnapshot",
     "Reaction",
+    "Comment",
     "Registration",
     "ScoreEvent",
     "SessionSign",

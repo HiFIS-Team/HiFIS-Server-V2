@@ -292,6 +292,21 @@ class ReactionTargetType(StrEnum):
     NOTICE = "NOTICE"    # 공지
     MEETING = "MEETING"  # 회의록
     MESSAGE = "MESSAGE"  # 사내톡 메시지 (§6.11, 추후)
+    PROJECT = "PROJECT"  # 프로젝트 (2026-08-19) — 상세 오른쪽 하트
+
+
+class CommentTargetType(StrEnum):
+    """댓글이 달리는 글 — 공지·회의록 (2026-08-19).
+
+    반응(`ReactionTargetType`)과 따로 둔다. 저쪽에는 사내톡 메시지가 있는데
+    메시지에는 댓글이 아니라 **답글**이 달린다 (`Message.reply_to_id`).
+    """
+
+    NOTICE = "NOTICE"
+    MEETING = "MEETING"
+    #: 프로젝트 (2026-08-19) — 예전에는 `project_activities` 에 시스템 활동과
+    #: 섞여 있었다. 화면이 공지·회의록과 같아지면서 저장도 여기로 모았다.
+    PROJECT = "PROJECT"
 
 
 class MessageKind(StrEnum):

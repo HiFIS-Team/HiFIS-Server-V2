@@ -10,11 +10,13 @@ from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.services.branch_group import visible_branch_ids
 from app.enums import (
+    CommentTargetType,
     EmployeeStatus,
     ProjectActivityKind,
     ProjectRequestStatus,
     ProjectRequestType,
     ProjectStatus,
+    ReactionTargetType,
     Role,
     ScoreCategory,
 )
@@ -45,6 +47,8 @@ from app.schemas.projects.project_request import (
     ProjectRequestOut,
     ProjectRequestReject,
 )
+from app.schemas.board.reaction import ReactionAgg
+from app.services.reactions import aggregate_for
 from app.services import notification_texts as ntext
 from app.services.notifications import notify, notify_bosses
 from app.services.scoring import accrue_score, scores_apply_to
@@ -64,7 +68,13 @@ def _status(project: Project) -> ProjectStatus:
     return ProjectStatus.WAITING
 
 
-def _to_out(project: Project, todo_count: int = 0, done_count: int = 0) -> ProjectOut:
+def _to_out(
+    project: Project,
+    todo_count: int = 0,
+    done_count: int = 0,
+    reactions: list[ReactionAgg] | None = None,
+    comment_count: int = 0,
+) -> ProjectOut:
     return ProjectOut(
         id=project.id,
         title=project.title,
@@ -82,6 +92,8 @@ def _to_out(project: Project, todo_count: int = 0, done_count: int = 0) -> Proje
         extension_reason=project.extension_reason,
         status=_status(project),
         completed_at=project.completed_at,
+        reactions=reactions or [],
+        comment_count=comment_count,
         created_by_id=project.created_by_id,
         created_at=project.created_at,
     )
@@ -107,7 +119,24 @@ async def _todo_counts(db: AsyncSession, project_ids: list[str]) -> dict[str, tu
 
 async def _single_out(db: AsyncSession, project: Project) -> ProjectOut:
     total, done = (await _todo_counts(db, [project.id])).get(project.id, (0, 0))
-    return _to_out(project, total, done)
+    social = await _social(db, [project.id])
+    hearts, comments = social[project.id]
+    return _to_out(project, total, done, hearts, comments)
+
+
+async def _social(
+    db: AsyncSession, project_ids: list[str]
+) -> dict[str, tuple[list[ReactionAgg], int]]:
+    """하트 집계 + 댓글 수 — 목록에서 N+1 없이 한 번에 (2026-08-19).
+
+    공지·회의록이 하는 것과 같다. 댓글 세기는 `comments` 라우터에 있는 것을
+    그대로 부른다 — 규칙이 두 벌이 되면 개수가 갈린다.
+    """
+    from app.api.board.comments import count_comments
+
+    agg = await aggregate_for(db, ReactionTargetType.PROJECT, project_ids)
+    counts = await count_comments(db, CommentTargetType.PROJECT, project_ids)
+    return {pid: (agg[pid], counts.get(pid, 0)) for pid in project_ids}
 
 
 async def _recompute_progress(db: AsyncSession, project: Project) -> None:
@@ -526,8 +555,12 @@ async def list_projects(
     if q:
         stmt = stmt.where(Project.title.ilike(f"%{q}%"))
     projects = (await db.execute(stmt.order_by(Project.created_at.desc()))).scalars().all()
-    counts = await _todo_counts(db, [p.id for p in projects])
-    out = [_to_out(p, *counts.get(p.id, (0, 0))) for p in projects]
+    ids = [p.id for p in projects]
+    counts = await _todo_counts(db, ids)
+    social = await _social(db, ids)
+    out = [
+        _to_out(p, *counts.get(p.id, (0, 0)), *social[p.id]) for p in projects
+    ]
     if status:  # 파생 상태 필터는 계산 후
         out = [o for o in out if o.status == status]
     return out
@@ -1073,14 +1106,19 @@ async def delete_project_todo(
     return None
 
 
-# ---------- 상세 타임라인 (활동 기록 + 댓글) ----------
+# ---------- 상세 타임라인 (활동 기록) ----------
+#
+# **댓글은 2026-08-19 에 `comments` 로 옮겼다.** 예전에는 여기에 시스템 활동과
+# 한 타임라인으로 섞여 있었는데, 프로젝트 상세가 공지·회의록과 같은 모양
+# (오른쪽 하트·댓글 세로 줄 + 댓글 시트)이 되면서 저장도 한곳으로 모았다.
+# 여기 남은 것은 '무슨 일이 있었나' 뿐이다.
 @router.get("/{project_id}/activities", response_model=list[ProjectActivityOut])
 async def list_project_activities(
     project_id: str,
     db: AsyncSession = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ) -> list[ProjectActivityOut]:
-    """댓글(kind=COMMENT) + 시스템 활동을 최신순 한 타임라인으로."""
+    """시스템 활동을 최신순으로 — 댓글은 `/comments` 가 따로 준다."""
     await _ensure_visible(db, await _get_project_or_404(db, project_id), current)
     rows = (
         await db.execute(
@@ -1092,64 +1130,13 @@ async def list_project_activities(
     return [_activity_out(a) for a in rows]
 
 
-@router.post("/{project_id}/comments", response_model=ProjectActivityOut, status_code=201)
-async def create_project_comment(
-    project_id: str,
-    payload: ProjectCommentCreate,
-    current: Employee = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> ProjectActivityOut:
-    # 댓글은 프로젝트 사람이 아니어도 달 수 있다(2026-08-14 "댓글은 예외").
-    # 다만 **볼 수 없는 프로젝트에는 못 단다** — 안 그러면 다른 지점 프로젝트에
-    # 글을 남기면서 제목까지 알게 된다 (2026-08-19 지점 묶음).
-    await _ensure_visible(db, await _get_project_or_404(db, project_id), current)
-    comment = ProjectActivity(
-        project_id=project_id, actor_id=current.id, kind=ProjectActivityKind.COMMENT, body=payload.body
-    )
-    db.add(comment)
-    await db.commit()
-    await db.refresh(comment)
-    return _activity_out(comment)
-
-
-async def _get_comment_or_404(db: AsyncSession, project_id: str, comment_id: str) -> ProjectActivity:
-    c = await db.get(ProjectActivity, comment_id)
-    if c is None or c.project_id != project_id or c.kind != ProjectActivityKind.COMMENT:
-        raise HTTPException(404, detail={"code": "COMMENT_NOT_FOUND", "message": "댓글을 찾을 수 없습니다"})
-    return c
-
-
-@router.patch("/{project_id}/comments/{comment_id}", response_model=ProjectActivityOut)
-async def update_project_comment(
-    project_id: str,
-    comment_id: str,
-    payload: ProjectCommentUpdate,
-    current: Employee = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> ProjectActivityOut:
-    comment = await _get_comment_or_404(db, project_id, comment_id)
-    if comment.actor_id != current.id:  # 본인 댓글만 수정
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 댓글만 수정할 수 있습니다"})
-    comment.body = payload.body
-    await db.commit()
-    await db.refresh(comment)
-    return _activity_out(comment)
-
-
-@router.delete("/{project_id}/comments/{comment_id}", status_code=204)
-async def delete_project_comment(
-    project_id: str,
-    comment_id: str,
-    current: Employee = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    comment = await _get_comment_or_404(db, project_id, comment_id)
-    # 본인 댓글 또는 관리자(모더레이션)
-    if comment.actor_id != current.id and current.role not in (Role.MASTER, Role.ADMIN, Role.MANAGER):
-        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 댓글 또는 관리자만 삭제할 수 있습니다"})
-    await db.delete(comment)
-    await db.commit()
-    return None
+# 프로젝트 댓글 엔드포인트 세 개는 걷어냈다 (2026-08-19).
+#
+# 저장이 `comments` 로 옮겨 가면서 `/comments` 가 공지·회의록과 **같은 길**로
+# 받는다. 여기 남겨 두면 같은 것을 두 주소로 다루게 되고, 옛 경로로 단 댓글이
+# 새 화면에 안 보이는 식으로 갈린다.
+#
+# **옛 앱(빌드 8)은 프로젝트 댓글이 404 가 난다** — 새 빌드를 올려야 한다.
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)

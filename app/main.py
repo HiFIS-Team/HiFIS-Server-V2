@@ -11,7 +11,7 @@ from sqlalchemy import text
 from app.core.ratelimit import limiter
 
 from app.api.auth import auth, invite_keys, scan_terminals
-from app.api.board import approvals, events, notices, reactions
+from app.api.board import approvals, comments, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.legal import consents
 from app.api.members import members, registrations, session_signs
@@ -135,6 +135,7 @@ app.include_router(meetings.router)
 app.include_router(events.router)
 app.include_router(approvals.router)
 app.include_router(reactions.router)
+app.include_router(comments.router)
 app.include_router(notifications.router)
 app.include_router(chat.router)
 app.include_router(ws_chat_router)  # WS /ws/chat

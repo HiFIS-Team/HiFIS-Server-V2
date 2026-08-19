@@ -6,6 +6,7 @@ from pydantic import Field
 
 from app.enums import ProjectActivityKind, ProjectStatus
 from app.schemas.base import CamelModel
+from app.schemas.board.reaction import ReactionAgg
 
 
 class ProjectCreate(CamelModel):
@@ -59,6 +60,10 @@ class ProjectOut(CamelModel):
     #: 완료한 시각 — **null 이면 아직 완료가 아니다** (2026-08-19).
     #: 할 일을 다 체크해도 담당자가 `/complete` 를 눌러야 채워진다.
     completed_at: datetime | None = None
+    #: 하트 집계 · 댓글 수 (2026-08-19) — 상세 오른쪽 세로 줄이 쓴다.
+    #: 공지·회의록과 같은 모양이라 같은 이름으로 싣는다
+    reactions: list[ReactionAgg] = Field(default_factory=list)
+    comment_count: int = 0
     created_by_id: str
     created_at: datetime
 
