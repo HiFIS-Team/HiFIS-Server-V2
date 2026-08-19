@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.staff.attendance import (  # 오늘 근태 판정 재사용(§59, home.py와 동일)
@@ -23,6 +23,7 @@ from app.core.security import hash_password, verify_password
 from app.core.storage import save_avatar
 from app.db.session import get_db
 from app.enums import AttendanceStatus, EmployeeStatus, LeaveStatus, Role, role_at_least
+from app.models.chat.device_token import DeviceToken
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
@@ -40,6 +41,24 @@ from app.services.employee_codes import unique_emp_no
 from app.services.notifications import notify_bosses
 
 router = APIRouter(prefix="/employees", tags=["employees"])
+
+
+async def _cut_off(db: AsyncSession, employee: Employee) -> None:
+    """이 사람의 앱을 **지금 끊는다** — 정지·퇴사·삭제가 같이 쓴다 (2026-08-19).
+
+    둘을 같이 해야 실제로 끊긴다.
+
+    | | 안 하면 |
+    |---|---|
+    | `token_version` +1 | 켜 둔 앱이 **계속 돈다.** 앱이 토큰을 알아서 갱신해서 만료를 기다려도 안 끝난다 |
+    | `device_tokens` 삭제 | 로그인은 막혔는데 **푸시는 계속 간다.** 발송이 이 표를 보지 `suspended_at`·`status` 를 안 본다 |
+
+    **되살리지 않는다.** 복직·정지 해제 뒤에 로그인하면 앱이 알아서 다시 등록한다
+    (`PushGuard.register`). 서버가 들고 있다가 돌려주면 **그 사이에 폰을 바꾼
+    사람에게 옛 기기로 알림이 간다.**
+    """
+    employee.token_version += 1
+    await db.execute(delete(DeviceToken).where(DeviceToken.employee_id == employee.id))
 
 
 async def _get_branch_or_400(db: AsyncSession, branch_id: str) -> Branch:
@@ -144,7 +163,32 @@ async def update_me(
     user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Employee:
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    """본인 정보 수정 — 이름·이메일·전화·아바타·상태.
+
+    **이메일은 로그인 아이디다.** 남이 쓰고 있으면 그 사람이 못 들어오게 되므로
+    먼저 막는다. 대소문자·앞뒤 공백은 정리해서 저장한다 — `Hi@x.com` 으로
+    바꿔 놓고 `hi@x.com` 으로 로그인하면 안 되는 일이 생긴다.
+
+    바꿔도 **다시 로그인할 필요는 없다** — 토큰은 이메일이 아니라 id 를 담는다.
+    """
+    fields = payload.model_dump(exclude_unset=True)
+
+    if (email := fields.get("email")) is not None:
+        email = email.strip().lower()
+        if not email:
+            raise HTTPException(400, detail={"code": "EMAIL_REQUIRED", "message": "이메일을 입력해주세요"})
+        taken = await db.scalar(
+            select(Employee).where(
+                Employee.email == email,
+                Employee.id != user.id,
+                Employee.deleted_at.is_(None),
+            )
+        )
+        if taken is not None:
+            raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
+        fields["email"] = email
+
+    for key, value in fields.items():
         setattr(user, key, value)
     await db.commit()
     await db.refresh(user)
@@ -244,6 +288,7 @@ async def withdraw_me(
     user.status = EmployeeStatus.RESIGNED
     user.resigned_at = now  # 퇴사 시각(§58)
     user.deleted_at = now
+    await _cut_off(db, user)  # 세션 + 푸시 토큰 (2026-08-19)
     await db.commit()
     _remove_local(old_avatar)
     return None
@@ -315,6 +360,11 @@ async def update_employee(
         # 퇴사만 알린다 (2026-08-11 대표 요청). 처리한 본인은 뺀다 — 방금 자기가
         # 누른 것이라 알 필요가 없다. 복직·비활성은 알리지 않는다
         if resigning:
+            # **나간 사람의 앱을 그 자리에서 끊는다** (2026-08-19).
+            # 예전에는 상태만 바꿔서, 퇴사 처리해도 켜 둔 앱이 **그대로 돌았다** —
+            # 앱이 토큰을 알아서 갱신하므로 만료되기를 기다려도 안 끊긴다.
+            # 급여·조직도·공지가 다 열려 있고 푸시도 계속 갔다.
+            await _cut_off(db, employee)
             await notify_bosses(db, exclude=current.id, **ntext.employee_resigned(employee.name))
     await db.commit()
     await db.refresh(employee)
@@ -382,6 +432,13 @@ async def suspend_employee(
     **켜 둔 앱의 세션도 끊는다** (`token_version` +1). 안 끊으면 이미 로그인해
     둔 사람은 토큰이 만료될 때까지 그대로 쓴다.
 
+    **기기 토큰도 지운다** (2026-08-19). 세션만 끊으면 **로그인은 막혔는데
+    푸시는 계속 간다** — 공지 제목이 정지된 사람 잠금화면에 그대로 떴다.
+    발송은 `device_tokens` 를 보고 나가지 `suspended_at` 을 안 본다.
+
+    다시 풀면 **로그인할 때 앱이 알아서 다시 등록한다** (`PushGuard.register`).
+    그래서 `unsuspend` 에서 되살릴 것이 없다.
+
     **MASTER 는 정지할 수 없다.** 서로 정지시키면 아무도 못 푸는 상태가 된다.
     """
     employee = await db.get(Employee, employee_id)
@@ -393,7 +450,7 @@ async def suspend_employee(
         )
     employee.suspended_at = datetime.now(timezone.utc)
     employee.suspend_reason = (reason or "").strip() or SUSPEND_DEFAULT_REASON
-    employee.token_version += 1  # 켜 둔 앱의 세션을 그 자리에서 끊는다
+    await _cut_off(db, employee)  # 세션 + 푸시 토큰
     await db.commit()
     await db.refresh(employee)
     return employee

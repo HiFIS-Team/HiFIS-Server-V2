@@ -1,12 +1,13 @@
 """Meeting 라우터 — CLAUDE.md §6.3. 작성=인증, 수정/삭제=작성자/관리자."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.enums import MeetingScope, ReactionTargetType, Role
+from app.services.branch_group import visible_branch_ids
+from app.enums import CommentTargetType, MeetingScope, ReactionTargetType, Role
 from app.models.staff.employee import Employee
 from app.models.projects.meeting import Meeting
 from app.models.projects.project import Project
@@ -23,7 +24,7 @@ def _not_found() -> HTTPException:
     return HTTPException(404, detail={"code": "MEETING_NOT_FOUND", "message": "회의록을 찾을 수 없습니다"})
 
 
-def _visible_filter(current: Employee):
+def _visible_filter(current: Employee, branch_ids: list[str] | None = None):
     """목록 가시성 — **`PEOPLE` 만 가린다** (2026-08-14 대표 결정).
 
     예전에는 `PROJECT` 회의록을 **그 프로젝트 담당자에게만** 보여줬다.
@@ -33,14 +34,27 @@ def _visible_filter(current: Employee):
 
     `PEOPLE` 만 남긴 이유: 그건 담당이 아니라 **쓰는 사람이 고른 비공개**다.
     면담·인사 이야기가 들어가는 자리라 작성자·참석자만 본다.
+
+    **지점 묶음이 하나 더 걸린다** (2026-08-19 대표 결정) — `첨단`·`화순` 은
+    서로 보고 `동광주` 는 단독이다. 그건 `branch_ids` 로 따로 받는다.
+
+    둘은 **`and` 로 겹친다** — `PEOPLE` 이 아니면서 같은 묶음이어야 보인다.
+    작성자·참석자는 양쪽 다 그냥 통과한다.
     """
     if current.role in (Role.MASTER, Role.ADMIN):
         return None  # 필터 없음 = 전부
-    return or_(
-        Meeting.scope != MeetingScope.PEOPLE,
+    mine = or_(
         Meeting.author_id == current.id,
         Meeting.attendee_ids.contains([current.id]),
     )
+    scope_ok = or_(Meeting.scope != MeetingScope.PEOPLE, mine)
+    if branch_ids is None:
+        return scope_ok
+    # `branch_id` 가 비어 있으면 전 지점 (본사가 쓴 것·옛 행)
+    branch_ok = or_(
+        Meeting.branch_id.is_(None), Meeting.branch_id.in_(branch_ids), mine
+    )
+    return and_(scope_ok, branch_ok)
 
 
 async def _can_view(db: AsyncSession, meeting: Meeting, current: Employee) -> bool:
@@ -49,7 +63,12 @@ async def _can_view(db: AsyncSession, meeting: Meeting, current: Employee) -> bo
     if meeting.author_id == current.id or current.id in (meeting.attendee_ids or []):
         return True
     # 목록과 같은 규칙 — 갈리면 목록에 뜬 줄을 눌렀는데 403 이 난다
-    return meeting.scope != MeetingScope.PEOPLE
+    if meeting.scope == MeetingScope.PEOPLE:
+        return False
+    branch_ids = await visible_branch_ids(db, current)
+    if branch_ids is None or meeting.branch_id is None:
+        return True
+    return meeting.branch_id in branch_ids
 
 
 def _forbidden_view() -> HTTPException:
@@ -57,11 +76,17 @@ def _forbidden_view() -> HTTPException:
 
 
 async def _to_out(db: AsyncSession, meetings: list[Meeting]) -> list[MeetingOut]:
-    agg = await aggregate_for(db, ReactionTargetType.MEETING, [m.id for m in meetings])
+    ids = [m.id for m in meetings]
+    agg = await aggregate_for(db, ReactionTargetType.MEETING, ids)
+    # 댓글 라우터가 이 파일의 `_can_view` 를 쓴다 — 맞물려 돌지 않게 여기서 늦게 넣는다
+    from app.api.board.comments import count_comments
+
+    comments = await count_comments(db, CommentTargetType.MEETING, ids)
     out = []
     for m in meetings:
         model = MeetingOut.model_validate(m)
         model.reactions = agg[m.id]
+        model.comment_count = comments.get(m.id, 0)
         out.append(model)
     return out
 
@@ -86,7 +111,7 @@ async def list_meetings(
     sort: str | None = Query(None),
 ) -> list[MeetingOut]:
     stmt = select(Meeting)
-    visible = _visible_filter(current)
+    visible = _visible_filter(current, await visible_branch_ids(db, current))
     if visible is not None:
         stmt = stmt.where(visible)
     if scope:
@@ -114,6 +139,8 @@ async def create_meeting(
         project_id=payload.project_id,
         author_id=current.id,
         meeting_at=payload.meeting_at,
+        # 프로젝트와 같은 규칙 — 쓴 사람의 지점을 찍는다. 본사면 전 지점 공개다
+        branch_id=current.branch_id,
     )
     db.add(meeting)
     await db.flush()  # id 가 있어야 알림 링크를 만든다

@@ -30,6 +30,7 @@ class NoticeOut(CamelModel):
     reactions: list[ReactionAgg] = Field(default_factory=list)  # §6.12 이모지 반응 집계
     read_by_me: bool = False  # 내가 읽었는지
     read_count: int = 0       # 읽은 인원 수
+    comment_count: int = 0    # 댓글 수 (2026-08-19) — 목록·상세의 말풍선 옆 숫자
 
 
 class NoticeReaderItem(CamelModel):

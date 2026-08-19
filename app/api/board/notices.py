@@ -20,6 +20,8 @@ from app.schemas.board.notice import (
 )
 from app.services import notification_texts as ntext
 from app.services.notifications import notify
+from app.api.board.comments import count_comments
+from app.enums import CommentTargetType
 from app.services.reactions import aggregate_for
 
 router = APIRouter(prefix="/notices", tags=["notices"], dependencies=[Depends(get_current_user)])
@@ -37,6 +39,7 @@ def _can_edit(notice: Notice, current: Employee) -> bool:
 async def _to_out(db: AsyncSession, notices: list[Notice], current: Employee) -> list[NoticeOut]:
     ids = [n.id for n in notices]
     agg = await aggregate_for(db, ReactionTargetType.NOTICE, ids)
+    comments = await count_comments(db, CommentTargetType.NOTICE, ids)
     counts: dict[str, int] = {}
     mine: set[str] = set()
     if ids:  # 읽음 집계 — 목록 N+1 없이 한 번에
@@ -63,6 +66,7 @@ async def _to_out(db: AsyncSession, notices: list[Notice], current: Employee) ->
         model.reactions = agg[n.id]
         model.read_count = counts.get(n.id, 0)
         model.read_by_me = n.id in mine
+        model.comment_count = comments.get(n.id, 0)
         out.append(model)
     return out
 

@@ -63,7 +63,7 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     # 홍보 — 온라인부터 오프라인
     ("게시물", 3, False),
     ("스토리", 3, False),
-    ("전단지", 10, False),
+    ("전단지", 1, False),  # 10 → 1 (2026-08-19 대표 결정)
     ("현수막", 10, False),
     ("족자", 5, False),
     ("블로그", 10, False),

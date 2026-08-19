@@ -17,7 +17,7 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_db
-from app.enums import AccessEvent, InviteStatus
+from app.enums import AccessEvent, EmployeeStatus, InviteStatus
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.auth.invite import InviteKey
@@ -134,6 +134,32 @@ async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depe
             detail={
                 "code": "ACCOUNT_SUSPENDED",
                 "message": employee.suspend_reason or SUSPEND_DEFAULT_REASON,
+            },
+        )
+
+    # 퇴사 — **비밀번호는 맞았지만** 막는다 (2026-08-19).
+    #
+    # 예전에는 `deleted_at` 만 봐서, 조직도의 `퇴사 처리`(= `status` 만 바꾼다)로
+    # 내보낸 사람이 **다시 로그인하면 그냥 들어왔다.** 나간 사람이 급여·조직도·
+    # 공지·사내톡을 그대로 봤다. 퇴사 시각에 세션을 끊어도 다시 받아 가면 그만이라
+    # 여기를 막아야 실제로 끊긴다.
+    #
+    # **복직은 영향이 없다** — `ACTIVE` 로 되돌리면 바로 다시 된다.
+    # 탈퇴(`DELETE`)는 `deleted_at` 이 서서 위에서 이미 걸린다.
+    if employee.status == EmployeeStatus.RESIGNED:
+        db.add(AccessLog(
+            employee_id=employee.id,
+            email=payload.email,
+            event=AccessEvent.LOGIN_FAIL,
+            ip=ip,
+            user_agent=user_agent,
+        ))
+        await db.commit()
+        raise HTTPException(
+            403,
+            detail={
+                "code": "ACCOUNT_RESIGNED",
+                "message": "퇴사 처리된 계정입니다.\n문의는 대표에게 해 주세요.",
             },
         )
 

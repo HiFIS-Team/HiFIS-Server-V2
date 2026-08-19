@@ -7,6 +7,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.enums import ReactionTargetType
 from app.models.chat.chat import Message
+from app.models.projects.meeting import Meeting
 from app.models.staff.employee import Employee
 from app.schemas.board.reaction import ReactionAgg, ReactionToggle, ToggleResult
 from app.services.chat import is_member
@@ -18,7 +19,22 @@ router = APIRouter(prefix="/reactions", tags=["reactions"], dependencies=[Depend
 async def _check_target_access(
     db: AsyncSession, target_type: ReactionTargetType, target_id: str, current: Employee
 ) -> None:
-    """MESSAGE 반응은 그 방 멤버만(공지·회의록은 공용이라 제한 없음)."""
+    """대상마다 볼 수 있는 사람만 — 공지는 공용이라 검사가 없다."""
+    if target_type is ReactionTargetType.PROJECT:
+        from app.api.projects.projects import _ensure_visible, _get_project_or_404
+
+        project = await _get_project_or_404(db, target_id)
+        await _ensure_visible(db, project, current)
+        return
+    if target_type is ReactionTargetType.MEETING:
+        from app.api.projects.meetings import _can_view
+
+        meeting = await db.get(Meeting, target_id)
+        if meeting is None:
+            raise HTTPException(404, detail={"code": "MEETING_NOT_FOUND", "message": "회의록을 찾을 수 없습니다"})
+        if not await _can_view(db, meeting, current):
+            raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "이 회의록을 볼 권한이 없습니다"})
+        return
     if target_type != ReactionTargetType.MESSAGE:
         return
     message = await db.get(Message, target_id)

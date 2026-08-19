@@ -155,6 +155,28 @@ def project_request_decided(
     return {"type": "PROJECT", "title": f"{label}이 반려됐어요", "body": f"{short(project_title, 30)} · {short(reject_reason)}", "link": link}
 
 
+# ── 프로젝트 인원 추가 (2026-08-19) ──
+#
+# **`project_request_decided` 를 안 쓴다.** 그쪽 승인 본문이
+# `새 마감이 반영됐어요` 로 굳어 있어서 인원 추가에는 안 맞는다.
+# 거기를 고치면 기한 연장·수정·삭제 문구까지 같이 바뀐다.
+def project_members_decided(
+    approved: bool,
+    project_title: str,
+    who: str,
+    reject_reason: str | None = None,
+    project_id: str | None = None,
+) -> dict:
+    link = _project_link(project_id)
+    if approved:
+        return {"type": "PROJECT", "title": "인원 추가가 승인됐어요", "body": f"{short(project_title, 30)} · {who}", "link": link}
+    return {"type": "PROJECT", "title": "인원 추가가 반려됐어요", "body": f"{short(project_title, 30)} · {short(reject_reason)}", "link": link}
+
+
+def project_member_added(project_title: str, project_id: str | None = None) -> dict:
+    return {"type": "PROJECT", "title": "프로젝트에 참여하게 됐어요", "body": short(project_title), "link": _project_link(project_id)}
+
+
 # ── 프로젝트 마감 리마인더(스케줄러) ──
 def project_due_soon(days: int, project_title: str, project_id: str | None = None) -> dict:
     return {"type": "PROJECT", "title": f"마감이 {days}일 남았어요", "body": short(project_title), "link": _project_link(project_id)}

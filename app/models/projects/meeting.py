@@ -24,3 +24,10 @@ class Meeting(UUIDMixin, TimestampMixin, Base):
     )
     author_id: Mapped[str] = mapped_column(String(36), ForeignKey("employees.id"), nullable=False)
     meeting_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    #: 어느 지점의 회의록인가 — 프로젝트와 **같은 규칙**이다 (2026-08-19).
+    #: 만들 때 작성자의 지점을 찍고, 같은 `Branch.share_group` 끼리만 본다.
+    #: `NULL` 은 전 지점 (본사가 쓴 것과 이 컬럼이 생기기 전 것).
+    branch_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("branches.id"), nullable=True, index=True
+    )

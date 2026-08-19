@@ -24,12 +24,25 @@ class ProjectEditPayload(CamelModel):
         return any(v is not None for v in (self.title, self.purpose, self.color))
 
 
+class ProjectMembersPayload(CamelModel):
+    """인원 추가 신청이 담는 것 — **넣을 사람만** (2026-08-19).
+
+    **빼는 길은 일부러 안 만들었다.** 할 일(`ProjectTodo.assignee_id`)이 사람을
+    가리키고 있어서, 참여 인원에서 빼면 그 사람에게 걸린 할 일이 붕 뜬다.
+    무엇으로 대신할지 정해야 하는 문제라 추가만 먼저 연다.
+    """
+
+    add_ids: list[str] = Field(min_length=1, max_length=30)
+
+
 class ProjectRequestCreate(CamelModel):
     type: ProjectRequestType
     # EXTENSION·OVERDUE 만 쓴다
     new_due: datetime | None = None
     # EDIT 만 쓴다
     payload: ProjectEditPayload | None = None
+    # MEMBERS 만 쓴다
+    members: ProjectMembersPayload | None = None
     reason: str = Field(min_length=1)  # 종류 불문 사유 필수
 
     @model_validator(mode="after")
@@ -41,6 +54,9 @@ class ProjectRequestCreate(CamelModel):
         elif self.type is ProjectRequestType.EDIT:
             if self.payload is None or not self.payload.any_set():
                 raise ValueError("수정 신청에는 바꿀 값이 하나 이상 필요합니다")
+        elif self.type is ProjectRequestType.MEMBERS:
+            if self.members is None:
+                raise ValueError("인원 추가 신청에는 넣을 사람이 필요합니다")
         return self
 
 
@@ -54,6 +70,7 @@ class ProjectRequestOut(CamelModel):
     type: ProjectRequestType
     new_due: datetime | None = None
     payload: ProjectEditPayload | None = None
+    members: ProjectMembersPayload | None = None
     reason: str
     status: ProjectRequestStatus
     requested_by_id: str
