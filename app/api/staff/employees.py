@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.staff.attendance import (  # 오늘 근태 판정 재사용(§59, home.py와 동일)
@@ -23,6 +23,7 @@ from app.core.security import hash_password, verify_password
 from app.core.storage import save_avatar
 from app.db.session import get_db
 from app.enums import AttendanceStatus, EmployeeStatus, LeaveStatus, Role, role_at_least
+from app.models.chat.device_token import DeviceToken
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
@@ -382,6 +383,13 @@ async def suspend_employee(
     **켜 둔 앱의 세션도 끊는다** (`token_version` +1). 안 끊으면 이미 로그인해
     둔 사람은 토큰이 만료될 때까지 그대로 쓴다.
 
+    **기기 토큰도 지운다** (2026-08-19). 세션만 끊으면 **로그인은 막혔는데
+    푸시는 계속 간다** — 공지 제목이 정지된 사람 잠금화면에 그대로 떴다.
+    발송은 `device_tokens` 를 보고 나가지 `suspended_at` 을 안 본다.
+
+    다시 풀면 **로그인할 때 앱이 알아서 다시 등록한다** (`PushGuard.register`).
+    그래서 `unsuspend` 에서 되살릴 것이 없다.
+
     **MASTER 는 정지할 수 없다.** 서로 정지시키면 아무도 못 푸는 상태가 된다.
     """
     employee = await db.get(Employee, employee_id)
@@ -394,6 +402,7 @@ async def suspend_employee(
     employee.suspended_at = datetime.now(timezone.utc)
     employee.suspend_reason = (reason or "").strip() or SUSPEND_DEFAULT_REASON
     employee.token_version += 1  # 켜 둔 앱의 세션을 그 자리에서 끊는다
+    await db.execute(delete(DeviceToken).where(DeviceToken.employee_id == employee.id))
     await db.commit()
     await db.refresh(employee)
     return employee
