@@ -12,6 +12,19 @@ class Branch(UUIDMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False, default="BRANCH")  # HQ | BRANCH
 
+    #: 프로젝트·회의록을 **서로 보여 줄 지점 묶음** (2026-08-19 대표 결정).
+    #:
+    #: 같은 값끼리만 서로 본다 — 지금은 `첨단`·`화순` 이 `A`, `동광주` 가 `B` 다.
+    #: 동광주에서 앱 화면이 밖으로 나간 일이 있어 갈라 두기로 했다.
+    #:
+    #: **`NULL` 은 전 지점**이다 — 본사(HQ)가 그렇고, 거기 사람은 전부 보며
+    #: 거기서 만든 것도 모두에게 보인다. 대표가 만든 전사 프로젝트가
+    #: 한 지점에만 안 보이면 안 되기 때문이다.
+    #:
+    #: **코드에 지점 이름을 박지 않으려고 컬럼으로 뒀다.** 지점이 늘거나 묶음이
+    #: 바뀌어도 이 값만 고치면 되고 배포가 필요 없다.
+    share_group: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     #: 회원 설문 QR 이 담는 값 — `/survey/{survey_token}`.
     #:
     #: **지점 id 를 그대로 쓰지 않는다.** 매장 벽에 붙는 것이라 언젠가 새어 나가는데,

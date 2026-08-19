@@ -43,3 +43,14 @@ class Project(UUIDMixin, TimestampMixin, Base):
     created_by_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=False
     )
+
+    #: 어느 지점의 프로젝트인가 — **만들 때 만든 사람의 지점을 찍는다** (2026-08-19).
+    #:
+    #: 같은 `Branch.share_group` 끼리만 서로 본다. 만든 사람이 나중에 지점을
+    #: 옮겨도 이 값은 안 따라간다 — 옮길 때마다 옛 프로젝트가 통째로 다른 지점으로
+    #: 넘어가면 안 된다(그래서 조회할 때 사람 지점을 조인하지 않고 컬럼으로 뒀다).
+    #:
+    #: **`NULL` 은 전 지점**이다 — 본사(HQ)가 만든 것과 이 컬럼이 생기기 전 것.
+    branch_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("branches.id"), nullable=True, index=True
+    )

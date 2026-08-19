@@ -3,11 +3,12 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
+from app.services.branch_group import visible_branch_ids
 from app.enums import (
     ProjectActivityKind,
     ProjectRequestStatus,
@@ -308,6 +309,53 @@ def _is_member(project: Project, current: Employee) -> bool:
     )
 
 
+def _visible_filter(current: Employee, branch_ids: list[str] | None):
+    """지점 묶음 가시성 (2026-08-19 대표 결정) — `None` 이면 필터 없음.
+
+    `첨단`·`화순` 은 서로 보고 `동광주` 는 단독이다. 묶음 값은
+    `Branch.share_group` 에 있다 ([branch_group.py](../../services/branch_group.py)).
+
+    **지점 말고도 통과시키는 것이 셋 있다.** 담당자·참여 멤버·만든 사람은
+    지점과 무관하게 본다 — 다른 지점 프로젝트에 담당으로 지정된 사람이
+    **자기 일을 목록에서 못 보면** 안 되기 때문이다.
+
+    `branch_id` 가 비어 있는 것은 **전 지점**이다 (본사가 만든 것과 이 컬럼이
+    생기기 전의 행). 대표가 만든 전사 프로젝트가 한 지점에만 안 보이면 안 된다.
+    """
+    if branch_ids is None:
+        return None
+    return or_(
+        Project.branch_id.is_(None),
+        Project.branch_id.in_(branch_ids),
+        Project.created_by_id == current.id,
+        Project.owner_id == current.id,
+        Project.assignee_ids.contains([current.id]),
+    )
+
+
+async def _ensure_visible(db: AsyncSession, project: Project, current: Employee) -> None:
+    """단건 조회 가드 — 목록과 **같은 규칙**이어야 한다.
+
+    갈리면 목록에 뜬 줄을 눌렀는데 403 이 나거나, 반대로 목록에 없는 것을
+    주소로 열 수 있다.
+    """
+    branch_ids = await visible_branch_ids(db, current)
+    if branch_ids is None:
+        return
+    if project.branch_id is None or project.branch_id in branch_ids:
+        return
+    if (
+        project.created_by_id == current.id
+        or project.owner_id == current.id
+        or current.id in (project.assignee_ids or [])
+    ):
+        return
+    raise HTTPException(
+        403,
+        detail={"code": "OTHER_BRANCH", "message": "다른 지점의 프로젝트입니다"},
+    )
+
+
 def _ensure_member(project: Project, current: Employee) -> None:
     if not _is_member(project, current):
         raise HTTPException(
@@ -356,11 +404,15 @@ def _activity_out(a: ProjectActivity) -> ProjectActivityOut:
 @router.get("", response_model=list[ProjectOut])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
     status: ProjectStatus | None = Query(None),
     assignee_id: str | None = Query(None, alias="assigneeId"),
     q: str | None = Query(None),
 ) -> list[ProjectOut]:
     stmt = select(Project)
+    visible = _visible_filter(current, await visible_branch_ids(db, current))
+    if visible is not None:
+        stmt = stmt.where(visible)
     if assignee_id:
         stmt = stmt.where(Project.assignee_ids.contains([assignee_id]))
     if q:
@@ -391,6 +443,10 @@ async def create_project(
         owner_id=payload.owner_id or current.id,
         color=payload.color,
         created_by_id=current.id,
+        # 만든 사람의 지점을 찍는다 — 이 값으로 지점 묶음 가시성이 갈린다.
+        # 본사(HQ) 사람이 만들면 그 지점이 찍히는데, HQ 는 `share_group` 이
+        # 비어 있어서 결과적으로 **전 지점 공개**가 된다.
+        branch_id=current.branch_id,
     )
     db.add(project)
     await db.flush()
@@ -606,10 +662,15 @@ async def reject_project_request(
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
-async def get_project(project_id: str, db: AsyncSession = Depends(get_db)) -> ProjectOut:
+async def get_project(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+) -> ProjectOut:
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, detail={"code": "PROJECT_NOT_FOUND", "message": "프로젝트를 찾을 수 없습니다"})
+    await _ensure_visible(db, project, current)
     return await _single_out(db, project)
 
 
@@ -701,8 +762,11 @@ async def award_project(
 
 @router.get("/{project_id}/awards", response_model=list[ProjectAwardOut])
 async def list_project_awards(
-    project_id: str, db: AsyncSession = Depends(get_db)
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
 ) -> list[ProjectAwardOut]:
+    await _ensure_visible(db, await _get_project_or_404(db, project_id), current)
     rows = await db.scalars(
         select(ScoreEvent)
         .where(
@@ -743,8 +807,12 @@ async def _get_todo_or_404(db: AsyncSession, project_id: str, todo_id: str) -> P
 
 
 @router.get("/{project_id}/todos", response_model=list[ProjectTodoOut])
-async def list_project_todos(project_id: str, db: AsyncSession = Depends(get_db)) -> list[ProjectTodoOut]:
-    await _get_project_or_404(db, project_id)
+async def list_project_todos(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+) -> list[ProjectTodoOut]:
+    await _ensure_visible(db, await _get_project_or_404(db, project_id), current)
     rows = (
         await db.execute(
             select(ProjectTodo)
@@ -832,10 +900,12 @@ async def delete_project_todo(
 # ---------- 상세 타임라인 (활동 기록 + 댓글) ----------
 @router.get("/{project_id}/activities", response_model=list[ProjectActivityOut])
 async def list_project_activities(
-    project_id: str, db: AsyncSession = Depends(get_db)
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
 ) -> list[ProjectActivityOut]:
     """댓글(kind=COMMENT) + 시스템 활동을 최신순 한 타임라인으로."""
-    await _get_project_or_404(db, project_id)
+    await _ensure_visible(db, await _get_project_or_404(db, project_id), current)
     rows = (
         await db.execute(
             select(ProjectActivity)
@@ -853,7 +923,10 @@ async def create_project_comment(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectActivityOut:
-    await _get_project_or_404(db, project_id)
+    # 댓글은 프로젝트 사람이 아니어도 달 수 있다(2026-08-14 "댓글은 예외").
+    # 다만 **볼 수 없는 프로젝트에는 못 단다** — 안 그러면 다른 지점 프로젝트에
+    # 글을 남기면서 제목까지 알게 된다 (2026-08-19 지점 묶음).
+    await _ensure_visible(db, await _get_project_or_404(db, project_id), current)
     comment = ProjectActivity(
         project_id=project_id, actor_id=current.id, kind=ProjectActivityKind.COMMENT, body=payload.body
     )
