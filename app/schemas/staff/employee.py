@@ -34,6 +34,15 @@ class EmployeeUpdate(CamelModel):
 
 class EmployeeMeUpdate(CamelModel):
     name: str | None = None
+    #: **본인 이메일** — 본인이 직접 바꾼다 (2026-08-19 대표 요청).
+    #:
+    #: 예전에는 관리자용 `EmployeeUpdate` 에만 있어서, 대표조차 자기 이메일을
+    #: 프로필에서 못 고쳤다 (`관리자만 변경할 수 있습니다` 가 떴다).
+    #: **이메일은 로그인 아이디**라 겹치면 409 로 막는다.
+    #:
+    #: 형식 검사는 회원가입(`SignupRequest.email`)과 같게 `str` 로 둔다 —
+    #: `EmailStr` 은 의존성(`email-validator`)이 하나 더 붙는다.
+    email: str | None = None
     phone: str | None = None  # 본인 휴대폰 번호 (§2.2) — 직원이 직접 입력
     avatar_color: str | None = None
     avatar_url: str | None = None

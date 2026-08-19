@@ -163,7 +163,32 @@ async def update_me(
     user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Employee:
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    """본인 정보 수정 — 이름·이메일·전화·아바타·상태.
+
+    **이메일은 로그인 아이디다.** 남이 쓰고 있으면 그 사람이 못 들어오게 되므로
+    먼저 막는다. 대소문자·앞뒤 공백은 정리해서 저장한다 — `Hi@x.com` 으로
+    바꿔 놓고 `hi@x.com` 으로 로그인하면 안 되는 일이 생긴다.
+
+    바꿔도 **다시 로그인할 필요는 없다** — 토큰은 이메일이 아니라 id 를 담는다.
+    """
+    fields = payload.model_dump(exclude_unset=True)
+
+    if (email := fields.get("email")) is not None:
+        email = email.strip().lower()
+        if not email:
+            raise HTTPException(400, detail={"code": "EMAIL_REQUIRED", "message": "이메일을 입력해주세요"})
+        taken = await db.scalar(
+            select(Employee).where(
+                Employee.email == email,
+                Employee.id != user.id,
+                Employee.deleted_at.is_(None),
+            )
+        )
+        if taken is not None:
+            raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
+        fields["email"] = email
+
+    for key, value in fields.items():
         setattr(user, key, value)
     await db.commit()
     await db.refresh(user)
