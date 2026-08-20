@@ -381,16 +381,21 @@ def employee_resigned(name: str) -> dict:
     return {"type": "STAFF", "title": f"{name}님이 퇴사했어요", "body": None, "link": "/staff"}
 
 
-#: 업무 상태 → 사람이 읽는 말 (앱 `WorkStatus.label` 과 같은 말을 쓴다)
+#: 업무 상태 → 알림에 그대로 들어가는 **한 마디**
 #:
-#: `AUTO` 는 "따로 정하지 않음"이라 되돌린 것으로 읽히게 적는다 —
+#: 이름 뒤에 붙여 `윤서연님이 외출중이에요` 가 되게 문장으로 적어 둔다.
+#: 라벨만 두고 `{라벨} 상태로 바꿨어요` 로 짜면 `외출 상태로 바꿨어요` 처럼
+#: 어색해진다 (2026-08-20 대표 요청으로 문장으로 바꿨다).
+#:
+#: `AUTO` 는 "따로 정하지 않음"이라 **되돌린 것**으로 읽히게 적는다 —
 #: 앱 고르개의 `자동 (출근 기준)` 을 그대로 쓰면 알림에서는 무슨 말인지 모른다.
-_WORK_STATUS_LABELS = {
-    "AUTO": "근무 중",
-    "MEETING": "회의중",
-    "MEAL": "식사",
-    "OUT": "외출",
-    "AWAY": "자리비움",
+#: `AWAY` 만 `~중이에요` 가 안 붙어서 따로 적는다.
+_WORK_STATUS_LINES = {
+    "AUTO": "근무 중이에요",
+    "MEETING": "회의중이에요",
+    "MEAL": "식사중이에요",
+    "OUT": "외출중이에요",
+    "AWAY": "자리를 비웠어요",
 }
 
 
@@ -402,11 +407,13 @@ def work_status_changed(name: str, status, message: str | None) -> dict:
 
     본인은 뺀다(`notify_bosses(exclude=...)`) — 자기가 방금 누른 것이다.
     """
-    label = _WORK_STATUS_LABELS.get(str(status), str(status))
+    # 모르는 값이면 상태를 짚지 않고 바뀌었다고만 한다 (enum 이 늘어도 안 깨진다)
+    line = _WORK_STATUS_LINES.get(str(status), "상태를 바꿨어요")
     note = (message or "").strip()
     return {
         "type": "STAFF",
-        "title": f"{name}님이 {label} 상태로 바꿨어요",
+        "title": f"{name}님이 {line}",
+        # 상태 메시지는 **선택**이다 — 안 적었으면 제목 한 줄로 끝난다
         "body": short(note) if note else None,
         "link": "/staff",
     }
