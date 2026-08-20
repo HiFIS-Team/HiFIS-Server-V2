@@ -29,7 +29,6 @@ from app.enums import (
     Role,
     ScoreCategory,
 )
-from app.models.scoring.my_task import MyTask, MyTaskCheck
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
@@ -47,6 +46,7 @@ from app.schemas.staff.attendance import (
 )
 from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
+from app.services.my_tasks import due_tasks
 from app.services.notifications import master_ids, notify, notify_bosses
 from app.services.scoring import accrue_score
 
@@ -317,30 +317,13 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
 
     **업무를 하나도 안 정한 사람은 조용하다** — 할 일을 안 만든 것이지
     안 한 것이 아니다. 대표·관리자는 애초에 이 화면이 없어서 늘 0개다.
+
+    **셈은 서비스가 한다** (`app/services/my_tasks.py`). 요일·이월·월차를
+    여기서 따로 판단하면 화면은 다 했다는데 퇴근할 때 누락 알림이 온다.
+    **밀려 온 것도 같이 센다** — 오늘 목록에 서 있으면 오늘 할 일이다.
     """
-    tasks = [
-        t
-        for t in await db.scalars(
-            select(MyTask)
-            .where(MyTask.employee_id == target.id, MyTask.deleted_at.is_(None))
-            .order_by(MyTask.sort, MyTask.created_at)
-        )
-        # **그날 요일에 걸린 것만** (2026-08-20). 목록·대표 판(`/my-tasks`·
-        # `/my-tasks/roster`)과 같은 규칙이어야 한다 — 여기만 다르면
-        # 화면은 다 했다는데 퇴근할 때 누락 알림이 온다
-        if day.isoweekday() in (t.weekdays or [])
-    ]
-    if not tasks:
-        return
-    done = set(
-        await db.scalars(
-            select(MyTaskCheck.my_task_id).where(
-                MyTaskCheck.my_task_id.in_([t.id for t in tasks]),
-                MyTaskCheck.date == day,
-            )
-        )
-    )
-    left = [t.content for t in tasks if t.id not in done]
+    due = (await due_tasks(db, [target], day, today=day))[target.id]
+    left = [t.content for t in due.left]
     if not left:
         return
     await notify(db, employee_id=target.id, **ntext.my_task_missing(left))

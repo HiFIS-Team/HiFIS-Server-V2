@@ -96,6 +96,11 @@ class MyTaskOut(CamelModel):
     #: 앱이 수정·삭제를 어느 길로 보낼지 이 값으로 가른다 — 아직 한 번도
     #: 안 했으면 바로 고치고, 한 번이라도 했으면 결재를 받는다.
     ever_checked: bool = False
+    #: **밀려 온 것이면 원래 차례였던 날** (2026-08-20 요청). null 이면 제 차례다.
+    #:
+    #: 그날 못 한 업무는 다음 근무일 목록 **뒤에** 붙어서 온다 —
+    #: 앱이 이 값으로 구분선 아래에 그린다.
+    carried_from: date | None = None
     #: 대기 중인 수정·삭제 결재 (없으면 null) — 앱이 '대기' 표시를 그린다
     pending_request: "MyTaskRequestOut | None" = None
     created_at: datetime

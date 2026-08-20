@@ -45,6 +45,7 @@ from app.schemas.scoring.my_task import (
     MyTaskUpdate,
     clean_weekdays,
 )
+from app.services.my_tasks import due_tasks
 from app.services.notifications import master_ids, notify
 
 router = APIRouter(tags=["my-tasks"], dependencies=[Depends(get_current_user)])
@@ -109,31 +110,6 @@ async def _reject_duplicate(
             400,
             detail={"code": "DUPLICATE_CONTENT", "message": f"이미 있는 업무예요 — {dup}"},
         )
-
-
-def _is_workday(employee: Employee | None, day: "datetime.date") -> bool:
-    """그 사람의 근무일인가 — `Employee.work_days` (ISO 1~7).
-
-    **설정을 안 했으면 근무일로 본다.** 안 정한 사람을 쉬는 사람으로 치면
-    누락이 통째로 사라진다 (근무 요일을 아직 안 넣은 사람이 많다 — 69번).
-    """
-    days = (employee.work_days if employee else None) or []
-    return not days or day.isoweekday() in days
-
-
-def _is_complete(total: int, done: int, employee: Employee | None, day: "datetime.date") -> bool:
-    """그날 다 했나 — **쉬는 날은 비어 있어도 다 한 것이다** (2026-08-20 요청).
-
-    | | 업무 0개 | 1개 이상 |
-    |---|---|---|
-    | 근무일 | **누락** (업무를 정하는 게 필수다) | 다 체크해야 완료 |
-    | 쉬는 날 | 완료 (넣는 것이 선택이다) | 넣었으면 체크해야 완료 |
-
-    예전에는 0개면 무조건 누락이라, **쉬는 날마다 누락으로 잡혔다.**
-    """
-    if total == 0:
-        return not _is_workday(employee, day)
-    return done == total
 
 
 async def _checked_ever(db: AsyncSession, task_ids: list[str]) -> set[str]:
@@ -214,50 +190,35 @@ async def list_my_tasks(
     if employee_id and current.role in (Role.MASTER, Role.ADMIN):
         target_id = employee_id
     day = _parse_date(date)
+    owner = await db.get(Employee, target_id)
+    if owner is None:
+        raise _not_found()
 
-    tasks = [
-        t
-        for t in await db.scalars(
-            select(MyTask)
-            .where(MyTask.employee_id == target_id, MyTask.deleted_at.is_(None))
-            .order_by(MyTask.sort, MyTask.created_at)
-        )
-        # **그 요일에 걸린 것만** (2026-08-20). 금요일 대청소가 월~목에도
-        # 서서 안 누른 나흘이 통째로 누락으로 잡히던 자리다
-        if day.isoweekday() in (t.weekdays or [])
-    ]
-    ids = [t.id for t in tasks]
-    checked: set[str] = set()
-    if ids:
-        checked = set(
-            await db.scalars(
-                select(MyTaskCheck.my_task_id).where(
-                    MyTaskCheck.my_task_id.in_(ids), MyTaskCheck.date == day
-                )
-            )
-        )
+    # **요일 필터·이월 판정은 서비스가 한다** — 대표 판·퇴근 알림과 같은
+    # 규칙이어야 한다 (`app/services/my_tasks.py`)
+    due = (await due_tasks(db, [owner], day, today=_today()))[owner.id]
+    ids = [d.task.id for d in due.tasks]
     pending = await _pending_of(db, ids)
     # **오늘 체크와 따로 센다** — 앱이 수정·삭제를 바로 보낼지 결재로 보낼지
     # 이 값으로 가른다 (2026-08-20)
     ever = await _checked_ever(db, ids)
 
     out = []
-    for t in tasks:
-        item = MyTaskOut.model_validate(t)
-        item.checked = t.id in checked
-        item.ever_checked = t.id in ever
-        req = pending.get(t.id)
+    for d in due.tasks:
+        item = MyTaskOut.model_validate(d.task)
+        item.checked = d.task.id in due.checked
+        item.ever_checked = d.task.id in ever
+        item.carried_from = d.carried_from
+        req = pending.get(d.task.id)
         item.pending_request = MyTaskRequestOut.model_validate(req) if req else None
         out.append(item)
 
-    done = len(checked)
-    owner = await db.get(Employee, target_id)
     return MyTaskDayOut(
         date=day,
         tasks=out,
-        total=len(tasks),
-        done=done,
-        complete=_is_complete(len(tasks), done, owner, day),
+        total=due.total,
+        done=due.done,
+        complete=due.complete,
     )
 
 
@@ -291,42 +252,16 @@ async def my_task_roster(
     if not people:
         return []
 
-    ids = [p.id for p in people]
-    # 하루 목록과 **같은 요일 규칙**으로 센다 — 여기만 다르면 대표 화면의
-    # `3/5` 와 본인 화면의 `3/3` 이 갈린다
-    tasks = [
-        t
-        for t in await db.scalars(
-            select(MyTask).where(
-                MyTask.employee_id.in_(ids), MyTask.deleted_at.is_(None)
-            )
-        )
-        if day.isoweekday() in (t.weekdays or [])
-    ]
-    total: dict[str, int] = {}
-    task_owner: dict[str, str] = {}
-    for t in tasks:
-        total[t.employee_id] = total.get(t.employee_id, 0) + 1
-        task_owner[t.id] = t.employee_id
-
-    done: dict[str, int] = {}
-    if tasks:
-        for tid in await db.scalars(
-            select(MyTaskCheck.my_task_id).where(
-                MyTaskCheck.my_task_id.in_(list(task_owner)), MyTaskCheck.date == day
-            )
-        ):
-            owner = task_owner[tid]
-            done[owner] = done.get(owner, 0) + 1
-
+    # 하루 목록과 **같은 셈**이다 — 요일·이월·월차까지 서비스 한 곳에서 판단한다.
+    # 여기만 다르면 대표 화면의 `3/5` 와 본인 화면의 `3/3` 이 갈린다
+    due = await due_tasks(db, people, day, today=_today())
     return [
         MyTaskRosterRow(
             employee_id=p.id,
             name=p.name,
-            total=total.get(p.id, 0),
-            done=done.get(p.id, 0),
-            # 하루 목록과 **같은 규칙** — 쉬는 날은 0개여도 완료다
-            complete=_is_complete(total.get(p.id, 0), done.get(p.id, 0), p, day),
+            total=due[p.id].total,
+            done=due[p.id].done,
+            complete=due[p.id].complete,
         )
         for p in people
     ]
