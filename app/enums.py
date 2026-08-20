@@ -377,3 +377,15 @@ class AnomalyKind(StrEnum):
     BULK_DELETE = "BULK_DELETE"          # 짧은 시간에 대량 삭제
     READ_BURST = "READ_BURST"            # 남의 대화·기록 열람 급증
     SCREEN_CAPTURE = "SCREEN_CAPTURE"    # 짧은 시간에 화면 캡처 반복 (iOS — 막을 수 없어 세기만 한다)
+
+
+class RenewIntent(StrEnum):
+    """PT 연장 여부 — 7회차 만족도 폼에서 회원이 고른다 (2026-08-20).
+
+    **'고민중'을 뺄 수 없다.** 예/아니오만 두면 아직 못 정한 사람이 아무거나
+    누르고, 그 값을 보고 트레이너가 판단하면 오히려 틀린다.
+    """
+
+    YES = "YES"      # 연장할게요
+    MAYBE = "MAYBE"  # 조금 더 생각해볼게요
+    NO = "NO"        # 이번엔 어려울 것 같아요

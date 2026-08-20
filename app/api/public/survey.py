@@ -11,15 +11,17 @@ QR 이 담는 값은 `branches.survey_token` 이다 (지점 id 가 아니다 —
 
 기존 `POST /webhooks/kindness-survey`(시크릿 헤더)는 그대로 둔다 — 외부 폼용이고,
 이 길은 브라우저에서 직접 부르는 자리라 헤더에 시크릿을 둘 수 없다.
+
+**화면은 여기서 안 그린다 (2026-08-20).** `HiFIS-Client-V2` 가 `hifis.app` 에서
+그리고, 이 라우터는 값만 준다. 예전 주소로 들어오면 그쪽으로 넘긴다.
 """
 
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.ratelimit import limiter
 from app.db.session import get_db
 from app.enums import EmployeeStatus, Role, ScoreCategory
@@ -39,8 +41,6 @@ KINDNESS_POINTS = 10
 #: 칭찬 대상이 될 수 있는 사람 — **현장에서 회원을 만나는 쪽**이다.
 #: 세션 싸인·환경정비를 여는 기준과 같다 (대표·관리자는 운영 전담이라 뺀다).
 _FIELD_ROLES = (Role.MEMBER, Role.MANAGER)
-
-_PAGE = Path(__file__).resolve().parent.parent.parent / "web" / "survey.html"
 
 
 class SurveyStaffOut(CamelModel):
@@ -76,16 +76,19 @@ async def _branch_of(token: str, db: AsyncSession) -> Branch:
     return branch
 
 
-@router.get("/survey/{token}", response_class=HTMLResponse, include_in_schema=False)
-async def survey_page(token: str, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
-    """설문 화면 — 지점이 맞는지만 보고 HTML 을 그대로 내려준다.
+@router.get("/survey/{token}", include_in_schema=False)
+async def survey_page(token: str) -> RedirectResponse:
+    """옛 주소 — **화면이 있는 곳으로 넘긴다** (2026-08-20).
 
-    명단은 페이지가 뜬 뒤 따로 받아 간다 (아래 `/staff`). 한 파일이라
-    지점 이름을 끼워 넣지 않고, 화면이 스스로 채운다.
+    화면을 `hifis.app` 으로 옮기면서 여기서 HTML 을 내려주는 일을 그만뒀다.
+    **라우트를 안 지운다** — 이미 뽑아 붙인 QR 이 `api.hifis.app` 을 가리킬 수
+    있어서다. 벽에 붙은 종이는 우리가 회수하기 전까지 그대로 살아 있다.
+
+    **토큰이 맞는지 여기서 안 본다.** 넘어간 화면이 명단을 받아 보고 틀리면
+    '설문을 열 수 없어요' 를 그린다 — 여기서 한 번 더 물어봐야 왕복만 는다.
     """
-    await _branch_of(token, db)
-    # 잘못된 주소면 위에서 404 다 — 여기 오면 QR 이 맞는 것이다
-    return HTMLResponse(_PAGE.read_text(encoding="utf-8"))
+    base = settings.public_base_url.rstrip("/")
+    return RedirectResponse(f"{base}/survey/{token}", status_code=308)
 
 
 @router.get("/survey/{token}/staff", response_model=SurveyBranchOut)

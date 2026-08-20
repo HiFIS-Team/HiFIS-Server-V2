@@ -38,11 +38,13 @@ from app.models.board.reaction import Reaction
 from app.models.board.comment import Comment
 from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
+from app.models.members.pt_survey import PtSurvey
 from app.models.members.session_sign import SessionSign
 from app.models.projects.todo import Todo
 
 __all__ = [
     "Account",
+    "PtSurvey",
     "AccountAccessLog",
     "Anomaly",
     "ApiMetric",
