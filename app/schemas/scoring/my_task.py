@@ -24,24 +24,61 @@ def clean_weekdays(value: list[int] | None) -> list[int]:
     return days or list(EVERY_DAY)
 
 
-class MyTaskCreate(CamelModel):
-    """한 번에 여러 개를 받는다 — **한 트랜잭션**이다.
+class MyTaskItem(CamelModel):
+    """만들 업무 한 줄 — 내용과 그 줄에 걸리는 요일."""
 
-    앱이 추가 화면에서 여러 줄을 쌓아 두고 한 번에 보낸다. 줄마다 따로
-    부르면 중간에 끊겼을 때 **반만 들어간 채로 화면이 닫힌다.**
-
-    **요일은 이 묶음 전체에 걸린다.** 한 번에 올리는 줄들은 같은 자리에서
-    같이 적은 것이라 요일도 같다 — 줄마다 다르게 하려면 나눠서 올린다.
-    """
-
-    contents: list[str] = Field(min_length=1)
-    #: 돌아오는 요일 (ISO 1~7). 안 주면 매일 — 예전과 같게 보인다
+    content: str
+    #: 안 주면 매일
     weekdays: list[int] | None = None
 
     @field_validator("weekdays")
     @classmethod
     def _days(cls, v: list[int] | None) -> list[int]:
         return clean_weekdays(v)
+
+
+class MyTaskCreate(CamelModel):
+    """한 번에 여러 개를 받는다 — **한 트랜잭션**이다.
+
+    앱이 추가 화면에서 여러 줄을 쌓아 두고 한 번에 보낸다. 줄마다 따로
+    부르면 중간에 끊겼을 때 **반만 들어간 채로 화면이 닫힌다.**
+
+    보내는 길이 둘이다.
+
+    | 칸 | 언제 |
+    |---|---|
+    | `items` | **줄마다 요일이 다를 때** — 요일을 하나씩 훑으며 담는 화면 |
+    | `contents` + `weekdays` | 한 묶음이 같은 요일일 때 (옛 모양, 그대로 받는다) |
+
+    둘 다 비면 400 이다 (`CONTENT_REQUIRED`).
+    """
+
+    contents: list[str] | None = None
+    #: `contents` 와 짝 — 그 묶음 전체에 걸린다. 안 주면 매일
+    weekdays: list[int] | None = None
+    items: list[MyTaskItem] | None = None
+
+    @field_validator("weekdays")
+    @classmethod
+    def _days(cls, v: list[int] | None) -> list[int]:
+        return clean_weekdays(v)
+
+    def rows(self) -> list[tuple[str, list[int]]]:
+        """어느 길로 왔든 `(내용, 요일)` 목록 하나로 만들어 준다."""
+        if self.items:
+            return [(i.content, i.weekdays or list(EVERY_DAY)) for i in self.items]
+        days = self.weekdays or list(EVERY_DAY)
+        return [(c, days) for c in (self.contents or [])]
+
+
+class MyTaskUpdate(CamelModel):
+    """**한 번도 체크한 적 없는** 업무를 결재 없이 바로 고칠 때 (2026-08-20).
+
+    안 보낸 칸은 지금 값을 그대로 둔다 — 요일만 고치거나 내용만 고칠 수 있다.
+    """
+
+    content: str | None = None
+    weekdays: list[int] | None = None
 
 
 class MyTaskOut(CamelModel):
@@ -54,6 +91,11 @@ class MyTaskOut(CamelModel):
     #: **오늘 체크했나.** 목록을 받을 때 서버가 같이 채운다 —
     #: 앱이 체크 기록을 따로 받아 id 로 맞추면 요청이 두 배가 된다.
     checked: bool = False
+    #: **한 번이라도 체크한 적이 있나** (오늘이 아니라 통틀어서, 2026-08-20).
+    #:
+    #: 앱이 수정·삭제를 어느 길로 보낼지 이 값으로 가른다 — 아직 한 번도
+    #: 안 했으면 바로 고치고, 한 번이라도 했으면 결재를 받는다.
+    ever_checked: bool = False
     #: 대기 중인 수정·삭제 결재 (없으면 null) — 앱이 '대기' 표시를 그린다
     pending_request: "MyTaskRequestOut | None" = None
     created_at: datetime

@@ -6,12 +6,20 @@
 
 | 누가 | 무엇 |
 |---|---|
-| 본인 | 목록 보기 · **추가** · 체크/해제 · 수정·삭제 **신청** |
+| 본인 | 목록 보기 · **추가** · 체크 · 수정·삭제 (아직 안 한 것) · 수정·삭제 **신청** |
 | MASTER | 신청 **승인·반려** |
 
-**추가만 결재가 없다.** 할 일을 늘리는 것은 스스로 하는 일이고, 고치고
-지우는 것은 '안 한 일을 없던 일로 만드는' 길이라 결재를 받는다
-(프로젝트 수정·삭제와 같은 이유 — backend-gap 68).
+**체크가 경계다 (2026-08-20 요청).** 한 번이라도 체크한 업무는 그 뒤로
+계속 결재를 받아야 하고, 아직 한 번도 안 한 업무는 결재 없이 바로 고치고
+지운다 — 프로젝트 할 일과 같은 규칙이다.
+
+```
+만든 직후            수정·삭제 바로  (아무 기록이 없다)
+  └ 한 번 체크 →    수정·삭제 결재  (되돌릴 수 없다)
+```
+
+**체크는 되돌릴 수 없다.** 해제를 열어 두면 '고치기 전에 풀면 그만'이라
+결재가 뜻을 잃는다. 그래서 앱이 누르기 전에 한 번 묻는다.
 """
 
 from datetime import datetime, timezone
@@ -34,6 +42,7 @@ from app.schemas.scoring.my_task import (
     MyTaskRequestCreate,
     MyTaskRequestOut,
     MyTaskRosterRow,
+    MyTaskUpdate,
     clean_weekdays,
 )
 from app.services.notifications import master_ids, notify
@@ -102,6 +111,74 @@ async def _reject_duplicate(
         )
 
 
+def _is_workday(employee: Employee | None, day: "datetime.date") -> bool:
+    """그 사람의 근무일인가 — `Employee.work_days` (ISO 1~7).
+
+    **설정을 안 했으면 근무일로 본다.** 안 정한 사람을 쉬는 사람으로 치면
+    누락이 통째로 사라진다 (근무 요일을 아직 안 넣은 사람이 많다 — 69번).
+    """
+    days = (employee.work_days if employee else None) or []
+    return not days or day.isoweekday() in days
+
+
+def _is_complete(total: int, done: int, employee: Employee | None, day: "datetime.date") -> bool:
+    """그날 다 했나 — **쉬는 날은 비어 있어도 다 한 것이다** (2026-08-20 요청).
+
+    | | 업무 0개 | 1개 이상 |
+    |---|---|---|
+    | 근무일 | **누락** (업무를 정하는 게 필수다) | 다 체크해야 완료 |
+    | 쉬는 날 | 완료 (넣는 것이 선택이다) | 넣었으면 체크해야 완료 |
+
+    예전에는 0개면 무조건 누락이라, **쉬는 날마다 누락으로 잡혔다.**
+    """
+    if total == 0:
+        return not _is_workday(employee, day)
+    return done == total
+
+
+async def _checked_ever(db: AsyncSession, task_ids: list[str]) -> set[str]:
+    """**날짜를 안 가리고** 체크 기록이 한 줄이라도 있는 업무들 (2026-08-20).
+
+    오늘 체크했나(`MyTaskCheck.date == day`)와 다른 값이다 — 이건 통틀어서다.
+    한 번이라도 한 업무는 그 뒤로 수정·삭제가 결재를 탄다.
+    """
+    if not task_ids:
+        return set()
+    return set(
+        await db.scalars(
+            select(MyTaskCheck.my_task_id).where(MyTaskCheck.my_task_id.in_(task_ids)).distinct()
+        )
+    )
+
+
+async def _require_open(db: AsyncSession, task: MyTask) -> None:
+    """결재 없이 바로 고칠 수 있는 상태인가 — 아니면 400.
+
+    막는 자리가 둘이다.
+
+    | | 왜 |
+    |---|---|
+    | 한 번이라도 체크함 | 한 일을 없던 일로 만드는 길이 된다 — 결재를 받는다 |
+    | 결재를 기다리는 중 | 대기 중인 신청과 바로 고친 것이 어긋난다 |
+    """
+    if await _checked_ever(db, [task.id]):
+        raise HTTPException(
+            400,
+            detail={
+                "code": "TASK_LOCKED",
+                "message": "이미 체크한 업무예요 — 수정·삭제는 결재를 받아야 해요",
+            },
+        )
+    dup = await db.scalar(
+        select(MyTaskRequest.id).where(
+            MyTaskRequest.my_task_id == task.id,
+            MyTaskRequest.status == ProjectRequestStatus.PENDING,
+        )
+    )
+    if dup is not None:
+        raise HTTPException(400, detail={"code": "ALREADY_PENDING", "message": "이미 결재를 기다리는 업무입니다"})
+
+
 async def _pending_of(db: AsyncSession, task_ids: list[str]) -> dict[str, MyTaskRequest]:
     """업무별 대기 중인 결재 — 하나뿐이다."""
     if not task_ids:
@@ -160,23 +237,27 @@ async def list_my_tasks(
             )
         )
     pending = await _pending_of(db, ids)
+    # **오늘 체크와 따로 센다** — 앱이 수정·삭제를 바로 보낼지 결재로 보낼지
+    # 이 값으로 가른다 (2026-08-20)
+    ever = await _checked_ever(db, ids)
 
     out = []
     for t in tasks:
         item = MyTaskOut.model_validate(t)
         item.checked = t.id in checked
+        item.ever_checked = t.id in ever
         req = pending.get(t.id)
         item.pending_request = MyTaskRequestOut.model_validate(req) if req else None
         out.append(item)
 
     done = len(checked)
+    owner = await db.get(Employee, target_id)
     return MyTaskDayOut(
         date=day,
         tasks=out,
         total=len(tasks),
         done=done,
-        # 항목이 하나도 없으면 완료가 아니다 — 할 일을 안 정한 것이지 다 한 게 아니다
-        complete=bool(tasks) and done == len(tasks),
+        complete=_is_complete(len(tasks), done, owner, day),
     )
 
 
@@ -244,8 +325,8 @@ async def my_task_roster(
             name=p.name,
             total=total.get(p.id, 0),
             done=done.get(p.id, 0),
-            # 항목이 없으면 완료가 아니다 — 목록과 같은 규칙
-            complete=total.get(p.id, 0) > 0 and done.get(p.id, 0) == total[p.id],
+            # 하루 목록과 **같은 규칙** — 쉬는 날은 0개여도 완료다
+            complete=_is_complete(total.get(p.id, 0), done.get(p.id, 0), p, day),
         )
         for p in people
     ]
@@ -264,16 +345,21 @@ async def create_my_tasks(
 
     **같은 내용을 두 줄로 만들지 않는다** (아래 [_reject_duplicate] 참고).
     """
-    contents = [c.strip() for c in payload.contents if c.strip()]
-    if not contents:
+    # 한 번에 올린 것들끼리 겹치면 **요일을 합친다** — 요일을 하나씩 훑으며
+    # 담는 화면에서 같은 업무가 여러 요일에 걸리면 같은 이름이 여러 번 온다.
+    # 두 줄로 만들면 어느 쪽을 체크했는지 알 수 없다 (`_reject_duplicate` 참고)
+    merged: dict[str, set[int]] = {}
+    for content, days in payload.rows():
+        content = content.strip()
+        if not content:
+            continue
+        if len(content) > 200:
+            raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
+        merged.setdefault(content, set()).update(days)
+    if not merged:
         raise HTTPException(400, detail={"code": "CONTENT_REQUIRED", "message": "업무를 적어 주세요"})
-    if any(len(c) > 200 for c in contents):
-        raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
 
-    # 한 번에 올린 것들끼리 겹치면 **조용히 하나로 합친다** — 같은 줄을 두 번
-    # 담은 것이라 하나만 만드는 게 적은 대로다. `dict` 라 차례는 그대로 간다
-    contents = list(dict.fromkeys(contents))
-    await _reject_duplicate(db, current.id, contents)
+    await _reject_duplicate(db, current.id, list(merged))
 
     last = await db.scalar(
         select(MyTask.sort)
@@ -282,17 +368,71 @@ async def create_my_tasks(
         .limit(1)
     )
     base = (last or 0) + 1
-    # 스키마 검증기가 이미 추리고 정렬했다 (안 주면 매일)
-    days = payload.weekdays or list(EVERY_DAY)
+    # `dict` 라 적은 차례가 그대로 간다
     tasks = [
-        MyTask(employee_id=current.id, content=c, weekdays=days, sort=base + i)
-        for i, c in enumerate(contents)
+        MyTask(
+            employee_id=current.id,
+            content=content,
+            weekdays=sorted(days),
+            sort=base + i,
+        )
+        for i, (content, days) in enumerate(merged.items())
     ]
     db.add_all(tasks)
     await db.commit()
     for t in tasks:
         await db.refresh(t)
     return [MyTaskOut.model_validate(t) for t in tasks]
+
+
+# ---------- 아직 한 번도 안 한 업무 — 결재 없이 바로 ----------
+@router.patch("/my-tasks/{task_id}", response_model=MyTaskOut)
+async def update_my_task(
+    task_id: str,
+    payload: MyTaskUpdate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MyTaskOut:
+    """수정 — **한 번도 체크한 적 없을 때만** (2026-08-20 요청).
+
+    잘못 적은 것을 고치는 자리다. 아무 기록이 없으므로 없앨 것도 없다.
+    한 번이라도 체크했으면 `400 TASK_LOCKED` — 그때는 결재를 올린다.
+    """
+    task = await _own_task(task_id, current, db)
+    await _require_open(db, task)
+
+    content = (payload.content or "").strip() or task.content
+    if len(content) > 200:
+        raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
+    days = clean_weekdays(payload.weekdays) if payload.weekdays is not None else list(task.weekdays or EVERY_DAY)
+    if content == task.content and days == sorted(task.weekdays or []):
+        raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "바뀐 것이 없어요"})
+    if content != task.content:
+        # 결재로 겪었던 그 자리다 — 같은 이름 두 줄은 손쓸 방법이 없다
+        await _reject_duplicate(db, current.id, [content], skip_id=task.id)
+
+    task.content = content
+    task.weekdays = days
+    await db.commit()
+    await db.refresh(task)
+    return MyTaskOut.model_validate(task)
+
+
+@router.delete("/my-tasks/{task_id}", status_code=204)
+async def delete_my_task(
+    task_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """삭제 — **한 번도 체크한 적 없을 때만** (2026-08-20 요청).
+
+    결재로 지울 때와 같이 **행은 남긴다** (`deleted_at`). 체크 기록이 없어서
+    지워도 잃을 것은 없지만, 지우는 길이 둘로 갈리면 나중에 되짚기 어렵다.
+    """
+    task = await _own_task(task_id, current, db)
+    await _require_open(db, task)
+    task.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
 
 
 # ---------- 체크 ----------
@@ -319,14 +459,19 @@ async def uncheck_my_task(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """체크 해제 — **오늘 것만.** 지난 날짜는 되돌릴 수 없다."""
-    task = await _own_task(task_id, current, db)
-    row = await db.scalar(
-        select(MyTaskCheck).where(MyTaskCheck.my_task_id == task.id, MyTaskCheck.date == _today())
+    """**체크는 되돌릴 수 없다 (2026-08-20 요청).** 늘 400 이다.
+
+    해제를 열어 두면 결재가 뜻을 잃는다 — 고치고 싶을 때 체크를 풀고
+    '아직 안 한 업무'로 되돌린 뒤 바로 고치면 그만이기 때문이다.
+
+    **라우트를 안 지운다.** 지우면 옛 앱(해제 버튼이 있던 빌드)이 404 를
+    받아 '업무를 찾을 수 없습니다'로 뜬다 — 왜 안 되는지가 안 보인다.
+    """
+    await _own_task(task_id, current, db)  # 남의 업무는 없는 것처럼
+    raise HTTPException(
+        400,
+        detail={"code": "CHECK_FINAL", "message": "체크는 되돌릴 수 없어요"},
     )
-    if row is not None:
-        await db.delete(row)
-        await db.commit()
 
 
 # ---------- 수정·삭제 결재 ----------
@@ -341,6 +486,10 @@ async def create_my_task_request(
 
     **신청할 때 항목을 안 건드린다.** 미리 고쳐 두고 되돌리는 식이면
     승인 전인데 이미 바뀐 내용이 화면에 뜬다.
+
+    아직 한 번도 체크 안 한 업무는 앱이 여기로 안 오고 `PATCH`·`DELETE` 로
+    바로 간다. 그래도 **여기를 막지 않는다** — 옛 앱은 이 길밖에 몰라서,
+    막으면 그 빌드에서 수정 자체가 안 된다. 결과는 어느 쪽이든 같다.
     """
     task = await _own_task(task_id, current, db)
     if payload.type == MyTaskRequestType.EDIT:
