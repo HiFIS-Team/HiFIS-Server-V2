@@ -3,8 +3,22 @@
 회원이 답하는 길은 `app/api/public/pt_survey.py` 다 (로그인 없음).
 여기는 그 결과를 읽는 자리라 로그인이 필요하다.
 
-**아직 문자를 못 보내는 동안 `url` 이 유일한 출구다** — 발신번호가 정해지기
-전까지는 트레이너가 이 주소를 복사해 직접 보낸다.
+## 담당 트레이너 본인은 못 본다 (2026-08-20 결정)
+
+**회원에게 "트레이너에게는 전달되지 않아요" 라고 적어 두었다.** 화면에만
+적고 서버가 안 막으면 그건 거짓말이다.
+
+| 누가 | 무엇을 |
+|---|---|
+| MASTER · ADMIN | 전사 |
+| MANAGER (점장) | 자기 지점 — **단 본인이 수업한 것은 빠진다** |
+| MEMBER (트레이너) | **못 본다** |
+
+점장도 트레이너로 수업한다(backend-gap 24). 그래서 권한이 아니라
+**`trainer_id` 로 가른다** — 누구든 자기가 받은 평가는 안 보인다.
+
+회원이 솔직하게 못 적으면 이 폼은 있으나 마나다. 동료 평가를 점장에게
+안 여는 것과 같은 이유다 (backend-gap 33).
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -12,11 +26,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import branch_filter, get_current_user
+from app.core.deps import branch_filter, require_role
 from app.db.session import get_db
-from app.enums import Role
 from app.models.members.member import Member
 from app.models.members.pt_survey import PtSurvey
+from app.enums import Role
 from app.models.staff.employee import Employee
 from app.schemas.members.pt_survey import PtSurveyOut
 
@@ -25,27 +39,23 @@ router = APIRouter(prefix="/pt-surveys", tags=["pt-surveys"])
 
 @router.get("", response_model=list[PtSurveyOut])
 async def list_pt_surveys(
-    current: Employee = Depends(get_current_user),
+    # MANAGER 부터 — 트레이너(MEMBER)는 아예 못 본다
+    current: Employee = Depends(require_role(Role.ADMIN, Role.MANAGER)),
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(branch_filter),
     trainer_id: str | None = Query(None, alias="trainerId"),
     #: 안 낸 것만 — 누구에게 다시 물어봐야 하는지 보는 자리
     unanswered: bool = Query(False),
 ) -> list[PtSurveyOut]:
-    """내 것부터 — **MEMBER 는 자기가 수업한 것만** 본다.
-
-    남의 회원이 트레이너에게 뭘 바라는지는 그 트레이너와 관리자가 볼 일이다
-    (동료 평가·근태와 같은 기준 — backend-gap 33·60).
-    """
+    """결과 목록 — **본인이 수업한 것은 누구에게도 안 보인다.**"""
     stmt = (
         select(PtSurvey, Member.name, Employee.name)
         .join(Member, Member.id == PtSurvey.member_id)
         .join(Employee, Employee.id == PtSurvey.trainer_id)
+        .where(PtSurvey.trainer_id != current.id)  # 자기가 받은 평가는 못 본다
         .order_by(PtSurvey.created_at.desc())
     )
-    if current.role == Role.MEMBER:
-        stmt = stmt.where(PtSurvey.trainer_id == current.id)
-    elif trainer_id:
+    if trainer_id:
         stmt = stmt.where(PtSurvey.trainer_id == trainer_id)
     if scope:
         stmt = stmt.where(Employee.branch_id == scope)
