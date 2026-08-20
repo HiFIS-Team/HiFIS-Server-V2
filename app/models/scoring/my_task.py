@@ -26,7 +26,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Enum as SAEnum,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -34,7 +34,7 @@ from app.enums import MyTaskRequestType, ProjectRequestStatus
 
 
 class MyTask(UUIDMixin, TimestampMixin, Base):
-    """개인 업무 항목 — 매일 반복되는 내 할 일 하나."""
+    """개인 업무 항목 — 정한 요일마다 돌아오는 내 할 일 하나."""
 
     __tablename__ = "my_tasks"
 
@@ -42,6 +42,18 @@ class MyTask(UUIDMixin, TimestampMixin, Base):
         String(36), ForeignKey("employees.id"), nullable=False, index=True
     )
     content: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: 돌아오는 요일 — **ISO 1(월)~7(일)** (`Employee.work_days` 와 같은 규칙)
+    #:
+    #: **요일이 없으면 매일이 아니라 누락이 된다 (2026-08-20 요청).** 예전에는
+    #: 목록이 매일 통째로 떠서, 금요일에만 하는 대청소를 넣으면 월~목에도 서고
+    #: 안 누른 그 나흘이 전부 누락이었다.
+    #:
+    #: 같은 업무가 여러 요일에 걸릴 수 있다 (세탁 = 매일, 대청소 = 금).
+    #: 기존 항목은 마이그레이션에서 **전부 매일**로 채웠다 — 그때는 매일이
+    #: 전제였으므로 그게 그 사람들이 정한 값이다.
+    weekdays: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), nullable=False, server_default="{1,2,3,4,5,6,7}"
+    )
     #: 표시 순서 — 작을수록 위. 환경정비 칩과 같은 규칙이다
     sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     #: 지운 항목 — **행을 지우지 않는다.**

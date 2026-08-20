@@ -27,12 +27,14 @@ from app.enums import EmployeeStatus, MyTaskRequestType, ProjectRequestStatus, R
 from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskRequest
 from app.models.staff.employee import Employee
 from app.schemas.scoring.my_task import (
+    EVERY_DAY,
     MyTaskCreate,
     MyTaskDayOut,
     MyTaskOut,
     MyTaskRequestCreate,
     MyTaskRequestOut,
     MyTaskRosterRow,
+    clean_weekdays,
 )
 from app.services.notifications import master_ids, notify
 
@@ -136,13 +138,17 @@ async def list_my_tasks(
         target_id = employee_id
     day = _parse_date(date)
 
-    tasks = list(
-        await db.scalars(
+    tasks = [
+        t
+        for t in await db.scalars(
             select(MyTask)
             .where(MyTask.employee_id == target_id, MyTask.deleted_at.is_(None))
             .order_by(MyTask.sort, MyTask.created_at)
         )
-    )
+        # **그 요일에 걸린 것만** (2026-08-20). 금요일 대청소가 월~목에도
+        # 서서 안 누른 나흘이 통째로 누락으로 잡히던 자리다
+        if day.isoweekday() in (t.weekdays or [])
+    ]
     ids = [t.id for t in tasks]
     checked: set[str] = set()
     if ids:
@@ -205,13 +211,17 @@ async def my_task_roster(
         return []
 
     ids = [p.id for p in people]
-    tasks = list(
-        await db.scalars(
+    # 하루 목록과 **같은 요일 규칙**으로 센다 — 여기만 다르면 대표 화면의
+    # `3/5` 와 본인 화면의 `3/3` 이 갈린다
+    tasks = [
+        t
+        for t in await db.scalars(
             select(MyTask).where(
                 MyTask.employee_id.in_(ids), MyTask.deleted_at.is_(None)
             )
         )
-    )
+        if day.isoweekday() in (t.weekdays or [])
+    ]
     total: dict[str, int] = {}
     task_owner: dict[str, str] = {}
     for t in tasks:
@@ -272,8 +282,10 @@ async def create_my_tasks(
         .limit(1)
     )
     base = (last or 0) + 1
+    # 스키마 검증기가 이미 추리고 정렬했다 (안 주면 매일)
+    days = payload.weekdays or list(EVERY_DAY)
     tasks = [
-        MyTask(employee_id=current.id, content=c, sort=base + i)
+        MyTask(employee_id=current.id, content=c, weekdays=days, sort=base + i)
         for i, c in enumerate(contents)
     ]
     db.add_all(tasks)
@@ -332,13 +344,23 @@ async def create_my_task_request(
     """
     task = await _own_task(task_id, current, db)
     if payload.type == MyTaskRequestType.EDIT:
-        content = (payload.payload or {}).get("content", "").strip()
+        raw = payload.payload or {}
+        # **내용·요일 중 하나만 고쳐도 된다 (2026-08-20).** 안 보낸 칸은 지금
+        # 값을 그대로 실어서, 승인하는 쪽이 최종 모습을 그대로 본다
+        content = str(raw.get("content") or "").strip() or task.content
+        days = (
+            clean_weekdays(raw.get("weekdays"))
+            if "weekdays" in raw
+            else list(task.weekdays or EVERY_DAY)
+        )
         if not content:
             raise HTTPException(400, detail={"code": "CONTENT_REQUIRED", "message": "고칠 내용을 적어 주세요"})
-        if content == task.content:
-            raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "내용이 그대로예요"})
-        # 승인되고 나서야 겹치는 걸 알면 이미 두 줄이다 — 올릴 때 막는다
-        await _reject_duplicate(db, current.id, [content], skip_id=task.id)
+        if content == task.content and days == sorted(task.weekdays or []):
+            raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "바뀐 것이 없어요"})
+        if content != task.content:
+            # 승인되고 나서야 겹치는 걸 알면 이미 두 줄이다 — 올릴 때 막는다
+            await _reject_duplicate(db, current.id, [content], skip_id=task.id)
+        payload.payload = {"content": content, "weekdays": days}
 
     # 업무 하나에 대기 요청은 하나뿐 — 수정 대기 중에 삭제까지 오면
     # 처리 순서에 따라 결과가 갈린다
@@ -426,7 +448,12 @@ async def _decide(
     task = await db.get(MyTask, req.my_task_id)
     if approve and task is not None:
         if req.type == MyTaskRequestType.EDIT:
-            task.content = (req.payload or {}).get("content", task.content)
+            body = req.payload or {}
+            task.content = body.get("content", task.content)
+            # 요일도 같이 실려 온다 (2026-08-20). 옛 결재는 이 칸이 없어서
+            # 그대로 둔다 — 그때는 매일이 전제였다
+            if body.get("weekdays"):
+                task.weekdays = clean_weekdays(body["weekdays"])
         else:
             # **행을 안 지운다.** 지우면 CASCADE 로 체크 기록까지 사라져서
             # 지난 날짜가 '하지도 않은 일을 한 것'으로 보인다

@@ -318,13 +318,18 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
     **업무를 하나도 안 정한 사람은 조용하다** — 할 일을 안 만든 것이지
     안 한 것이 아니다. 대표·관리자는 애초에 이 화면이 없어서 늘 0개다.
     """
-    tasks = list(
-        await db.scalars(
+    tasks = [
+        t
+        for t in await db.scalars(
             select(MyTask)
             .where(MyTask.employee_id == target.id, MyTask.deleted_at.is_(None))
             .order_by(MyTask.sort, MyTask.created_at)
         )
-    )
+        # **그날 요일에 걸린 것만** (2026-08-20). 목록·대표 판(`/my-tasks`·
+        # `/my-tasks/roster`)과 같은 규칙이어야 한다 — 여기만 다르면
+        # 화면은 다 했다는데 퇴근할 때 누락 알림이 온다
+        if day.isoweekday() in (t.weekdays or [])
+    ]
     if not tasks:
         return
     done = set(
