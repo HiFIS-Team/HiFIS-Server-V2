@@ -188,8 +188,29 @@ async def update_me(
             raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
         fields["email"] = email
 
+    # 업무 상태·상태 메시지가 **실제로 바뀌었을 때만** 대표·관리자에게 알린다
+    # (2026-08-20 요청). 값이 그대로인데 알리면 이름만 고쳐도 알림이 간다.
+    # **덮어쓰기 전에** 비교해야 한다 — 아래 setattr 가 지나가면 옛 값이 없다.
+    told = (
+        "work_status" in fields and fields["work_status"] != user.work_status
+    ) or (
+        "status_message" in fields
+        and (fields["status_message"] or "") != (user.status_message or "")
+    )
+
     for key, value in fields.items():
         setattr(user, key, value)
+
+    if told:
+        # 본인은 뺀다 — 방금 자기가 누른 것이다 (대표가 바꿔도 자기에겐 안 온다)
+        await notify_bosses(
+            db,
+            exclude=user.id,
+            **ntext.work_status_changed(
+                user.name, user.work_status, user.status_message
+            ),
+        )
+
     await db.commit()
     await db.refresh(user)
     return user

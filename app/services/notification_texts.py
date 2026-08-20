@@ -379,3 +379,34 @@ def employee_joined(name: str, branch_name: str | None, rank_label: str | None) 
 
 def employee_resigned(name: str) -> dict:
     return {"type": "STAFF", "title": f"{name}님이 퇴사했어요", "body": None, "link": "/staff"}
+
+
+#: 업무 상태 → 사람이 읽는 말 (앱 `WorkStatus.label` 과 같은 말을 쓴다)
+#:
+#: `AUTO` 는 "따로 정하지 않음"이라 되돌린 것으로 읽히게 적는다 —
+#: 앱 고르개의 `자동 (출근 기준)` 을 그대로 쓰면 알림에서는 무슨 말인지 모른다.
+_WORK_STATUS_LABELS = {
+    "AUTO": "근무 중",
+    "MEETING": "회의중",
+    "MEAL": "식사",
+    "OUT": "외출",
+    "AWAY": "자리비움",
+}
+
+
+def work_status_changed(name: str, status, message: str | None) -> dict:
+    """직원이 업무 상태·상태 메시지를 바꿨다 — **대표·관리자에게만** (2026-08-20 요청).
+
+    조직도 상태 점이 바뀌는 것을 아무도 모르고 지나가서, 자리를 비운 사람이
+    생겨도 대표가 조직도를 열어 봐야만 알았다.
+
+    본인은 뺀다(`notify_bosses(exclude=...)`) — 자기가 방금 누른 것이다.
+    """
+    label = _WORK_STATUS_LABELS.get(str(status), str(status))
+    note = (message or "").strip()
+    return {
+        "type": "STAFF",
+        "title": f"{name}님이 {label} 상태로 바꿨어요",
+        "body": short(note) if note else None,
+        "link": "/staff",
+    }
