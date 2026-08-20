@@ -4,14 +4,13 @@ POST [MEMBER]: 서명 저장 → usedSessions +1 → 만료 판정 → CLASS 점
 반환 { sign, registration }.
 """
 
-import secrets
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
+from app.core.tokens import public_token
 from app.core.storage import save_signature
 from app.enums import RegistrationStatus, RegistrationType, Role, ScoreCategory
 from app.db.session import get_db
@@ -63,7 +62,7 @@ async def _open_pt_survey(
             registration_id=registration.id,
             member_id=registration.member_id,
             trainer_id=trainer_id,
-            token=secrets.token_urlsafe(12),
+            token=public_token(),
             session_no=sign.session_no,
         )
     )
