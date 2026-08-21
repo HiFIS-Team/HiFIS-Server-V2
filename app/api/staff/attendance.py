@@ -549,7 +549,8 @@ async def attendance_calendar(
     start_d, end_d = start.date(), end.date()
     now_kst = datetime.now(timezone.utc).astimezone(KST)
     today = now_kst.date()
-    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(오늘까지)
+    # **판정은 오늘까지** — 그 뒤는 승인된 월차만 담는다 (루프 첫 가지)
+    limit_d = min(end_d, today + timedelta(days=1))
 
     recs = {
         r.date: r
@@ -586,9 +587,26 @@ async def attendance_calendar(
     joined_d = _joined(target)  # 입사 전은 판정 대상이 아니다
     out: list[AttendanceDayOut] = []
     day = start_d
-    while day < limit_d:
+    while day < end_d:
         rec = recs.get(day)
         lv = leave_on(day)
+        if day >= limit_d:
+            # 미래 — **판정은 안 한다.** 안 온 날을 결근이라 부를 수 없다.
+            #
+            # 다만 **승인된 월차는 이미 정해진 사실**이라 담는다 (2026-08-21 요청).
+            # 예전에는 여기서 통째로 잘라서, 다음 주 월차를 결재받고 달력을 열면
+            # **그날이 빈칸이었다** — 승인은 끝났는데 어디에도 안 보였다.
+            if lv is not None:
+                out.append(
+                    AttendanceDayOut(
+                        date=day,
+                        status=AttendanceStatus.ON_LEAVE,
+                        leave_type=lv.type,
+                        half_period=lv.half_period,
+                    )
+                )
+            day += timedelta(days=1)
+            continue
         if rec is not None:  # 기록 있음 → 근무시간 대비 판정
             out.append(
                 AttendanceDayOut(
@@ -666,7 +684,8 @@ async def attendance_calendar_all(
     start_d, end_d = start.date(), end.date()
     now_kst = datetime.now(timezone.utc).astimezone(KST)
     today = now_kst.date()
-    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(사람별 캘린더와 같다)
+    # 판정은 오늘까지, 그 뒤는 승인된 월차만 — 사람별 캘린더와 같은 규칙이다
+    limit_d = min(end_d, today + timedelta(days=1))
 
     emp_stmt = select(Employee).where(
         Employee.deleted_at.is_(None),
@@ -716,9 +735,18 @@ async def attendance_calendar_all(
         work_days = set(emp.work_days or [])
         joined_d = _joined(emp)  # 입사 전은 판정 대상이 아니다
         day = start_d
-        while day < limit_d:
+        while day < end_d:
             rec = mine.get(day)
             on_leave = next((lv for lv in my_leaves if lv.start_date <= day <= lv.end_date), None)
+            if day >= limit_d:
+                # 미래 — 판정은 안 하고 **승인된 월차만** 담는다 (사람별 캘린더와 같다).
+                # 누가 언제 쉬는지가 미리 보여야 사람을 배치할 수 있다.
+                if on_leave is not None:
+                    board.setdefault(day, {}).setdefault(
+                        AttendanceStatus.ON_LEAVE, []
+                    ).append(emp.name)
+                day += timedelta(days=1)
+                continue
             status: AttendanceStatus | None = None
             if rec is not None:
                 status = _attendance_status(
