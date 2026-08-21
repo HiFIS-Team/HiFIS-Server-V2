@@ -902,12 +902,15 @@ async def create_leave(
 ) -> LeaveRequest:
     if payload.end_date < payload.start_date:
         raise HTTPException(400, detail={"code": "INVALID_RANGE", "message": "종료일이 시작일보다 빠릅니다"})
-    # 반차면 오전/오후 필수, 그 외 타입은 시간대 무시(null)
-    half_period = None
-    if payload.type == LeaveType.HALF:
-        if payload.half_period is None:
-            raise HTTPException(400, detail={"code": "HALF_PERIOD_REQUIRED", "message": "반차는 오전/오후를 선택해야 합니다"})
-        half_period = payload.half_period
+    # 반차의 오전/오후는 **선택이다** (2026-08-21 결정).
+    #
+    # 예전에는 필수였는데, 앱에서 `오전 반차`·`오후 반차` 를 그냥 `반차` 하나로
+    # 합치면서 보낼 값이 없어졌다. 반차는 반나절이라 일수(0.5)가 같고, 화면 어디도
+    # 오전인지 오후인지로 갈리지 않는다 — 받아 두기만 하고 안 쓰던 값이다.
+    #
+    # **칸은 남긴다.** 이미 쌓인 신청에 값이 들어 있고, 나중에 다시 나누기로 하면
+    # 그때 앱만 고치면 된다. 그 외 타입은 예전처럼 무시한다(null).
+    half_period = payload.half_period if payload.type == LeaveType.HALF else None
     leave = LeaveRequest(
         employee_id=current.id,
         type=payload.type,
