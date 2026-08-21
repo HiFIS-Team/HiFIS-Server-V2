@@ -974,18 +974,29 @@ async def award_project(
             existing.created_by_id = current.id
             events.append(existing)
         else:
-            events.append(
-                await accrue_score(
-                    db,
-                    employee_id=employee_id,
-                    branch_id=employee.branch_id,
-                    category=ScoreCategory.PROJECT,
-                    points=payload.points,
-                    created_by_id=current.id,
-                    source_ref_id=project_id,
-                    reason=payload.comment,
-                )
+            # **`None` 이 올 수 있다 — 대표·관리자에게는 점수를 안 쌓는다.**
+            # `accrue_score` 가 그렇게 하기로 정해져 있고("돌려받은 값을 쓰는 곳은
+            # 그때 비켜 가면 된다"), 여기만 안 비켜 가서 `db.refresh(None)` 로
+            # 500 이 났다 (2026-08-21 운영에서 3건).
+            #
+            # **담당자에 대표·관리자가 들어가면서 터지기 시작했다** — 그 전에는
+            # 그들이 담당자가 아니라 `targets` 에 안 들어왔다.
+            #
+            # 커밋이 이 아래라 **점수는 멀쩡히 저장되고 응답만 실패했다.**
+            # 대표에게는 '네트워크 오류' 토스트만 보여서 안 된 줄 알고
+            # 세 번을 다시 눌렀다.
+            event = await accrue_score(
+                db,
+                employee_id=employee_id,
+                branch_id=employee.branch_id,
+                category=ScoreCategory.PROJECT,
+                points=payload.points,
+                created_by_id=current.id,
+                source_ref_id=project_id,
+                reason=payload.comment,
             )
+            if event is not None:
+                events.append(event)
     await db.commit()
     for event in events:
         await db.refresh(event)
