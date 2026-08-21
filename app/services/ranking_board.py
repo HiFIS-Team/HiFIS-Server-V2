@@ -17,7 +17,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import KST, period_range
@@ -253,9 +253,26 @@ async def build_board(
 
     # 프로젝트 근거 — 그 달 안에 기한이 있는 것 중 내가 담당인 것.
     # `assignee_ids` 가 JSONB 배열이라 파이썬에서 접는다 (프로젝트 수가 적다).
+    #
+    # **마감이 이 달이거나, 이 달에 완료한 것** — 둘 다 담는다 (2026-08-21).
+    #
+    # 예전에는 마감일만 봤다. 그런데 미리 끝낸 프로젝트는 마감이 다음 달이라
+    # **끝냈는데도 `0 / 0건`** 이 떴다 (실제로 그랬다 — 8월에 끝낸 셋 중 둘이
+    # 마감이 9월이라 안 세어졌다). 옆에 뜨는 프로젝트 **점수는 완료할 때
+    # 쌓이므로**, 세는 창이 다르면 `10점 · 0 / 0건` 처럼 서로 어긋난다.
+    #
+    # 합집합이라 분모가 분자보다 작아질 일이 없다.
     projects = (
         await db.scalars(
-            select(Project).where(Project.due >= start, Project.due < end)
+            select(Project).where(
+                or_(
+                    and_(Project.due >= start, Project.due < end),
+                    and_(
+                        Project.completed_at >= start,
+                        Project.completed_at < end,
+                    ),
+                )
+            )
         )
     ).all()
     # 매출 점수 — **말일부터** 종합에 얹는다 (2026-08-13 대표 결정).
@@ -277,7 +294,11 @@ async def build_board(
             if row is None:
                 continue
             row["projectTotal"] += 1
-            if (project.progress or 0) >= 100:
+            # **완료 도장으로 센다** — 진행률 100% 가 아니다 (2026-08-19 결정).
+            # 그때부터 마지막 할 일에 체크해도 완료가 아니고, 담당자가 완료
+            # 버튼을 눌러야 `completed_at` 이 찍히면서 점수가 붙는다.
+            # 진행률로 세면 **점수는 안 받았는데 완료로 세어진다.**
+            if project.completed_at is not None:
                 row["projectDone"] += 1
 
     return list(board.values())
