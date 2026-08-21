@@ -132,6 +132,36 @@ class MyTaskRosterRow(CamelModel):
     complete: bool
 
 
+class MyTaskExcuseCreate(CamelModel):
+    """누락 사유서 — 왜 못 했는지 (2026-08-21).
+
+    **사유가 필수다.** 빈 사유서를 받아 두면 결재하는 쪽이 판단할 근거가 없다.
+    """
+
+    reason: str = Field(min_length=1)
+
+
+class MyTaskMissOut(CamelModel):
+    """확정 누락 한 줄 — 본인 화면과 대표 결재함이 같이 쓴다."""
+
+    id: str
+    employee_id: str
+    date: date
+    task_count: int
+    #: 그날 못 한 업무 이름들 — 나중에 업무를 고쳐도 그때 것이 남아 있다
+    contents: list[str] | None = None
+    #: `None` 이면 사유서를 아직 안 냈다
+    excuse_reason: str | None = None
+    #: `None` 안 냄 · PENDING 대기 · APPROVED **회복** · REJECTED 확정
+    excuse_status: ProjectRequestStatus | None = None
+    decided_by_id: str | None = None
+    decided_at: datetime | None = None
+    reject_reason: str | None = None
+    created_at: datetime
+    #: 결재 화면이 '누가' 를 보여줄 수 있게 서버가 채워 준다
+    employee_name: str | None = None
+
+
 class MyTaskRequestCreate(CamelModel):
     type: MyTaskRequestType
     #: EDIT 만 채운다 — `{"content": "..."}`

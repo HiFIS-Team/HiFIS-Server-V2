@@ -32,12 +32,15 @@ from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import KST
 from app.db.session import get_db
 from app.enums import EmployeeStatus, MyTaskRequestType, ProjectRequestStatus, Role
-from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskRequest
+from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskMiss, MyTaskRequest
+from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.employee import Employee
 from app.schemas.scoring.my_task import (
     EVERY_DAY,
     MyTaskCreate,
     MyTaskDayOut,
+    MyTaskExcuseCreate,
+    MyTaskMissOut,
     MyTaskOut,
     MyTaskRequestCreate,
     MyTaskRequestOut,
@@ -45,6 +48,7 @@ from app.schemas.scoring.my_task import (
     MyTaskUpdate,
     clean_weekdays,
 )
+from app.services import notification_texts as ntext
 from app.services.my_tasks import due_tasks
 from app.services.notifications import master_ids, notify
 
@@ -589,3 +593,157 @@ async def reject_my_task_request(
 ) -> MyTaskRequestOut:
     req = await _decide(request_id, False, reason, current, db)
     return (await _decorate(db, [req]))[0]
+
+
+# ---------- 확정 누락 · 사유서 (2026-08-21) ----------
+#
+# 수정·삭제 결재와 **같은 자리**에 둔다 (대표 결정). 문서가 다른 화면으로
+# 흩어지면 결재하는 사람이 두 군데를 봐야 한다.
+#
+# ```
+# 누락 확정  →  점수 -20 먼저 깎임  →  사유서  →  승인이면 **회복**
+#                                              반려면 그대로
+# ```
+
+
+async def _decorate_misses(db: AsyncSession, rows: list[MyTaskMiss]) -> list[MyTaskMissOut]:
+    """이름을 붙인다 — 결재 화면이 '누가' 를 그려야 한다."""
+    names: dict[str, str] = {}
+    out = []
+    for r in rows:
+        if r.employee_id not in names:
+            emp = await db.get(Employee, r.employee_id)
+            names[r.employee_id] = emp.name if emp else ""
+        item = MyTaskMissOut.model_validate(r)
+        item.employee_name = names[r.employee_id]
+        out.append(item)
+    return out
+
+
+@router.get("/my-task-misses", response_model=list[MyTaskMissOut])
+async def list_my_task_misses(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    # camelCase 로 받는다 — 앱이 보내는 이름이다 (`/my-tasks` 와 같은 규칙)
+    employee_id: str | None = Query(None, alias="employeeId"),
+    since: str | None = Query(None, description="이 날짜부터 (YYYY-MM-DD)"),
+) -> list[MyTaskMissOut]:
+    """확정 누락 목록 — **MEMBER 는 본인 것만.**
+
+    남의 누락은 근태 시각과 같은 종류의 값이라 아무나 보면 안 된다
+    (backend-gap 60). 점장은 자기 지점 것을 본다 — 그 지점 누락으로
+    본인 기본급이 깎이므로 무엇 때문인지 볼 수 있어야 한다.
+    """
+    stmt = select(MyTaskMiss).order_by(MyTaskMiss.date.desc())
+    if current.role == Role.MEMBER:
+        stmt = stmt.where(MyTaskMiss.employee_id == current.id)
+    else:
+        if current.role == Role.MANAGER:
+            stmt = stmt.where(MyTaskMiss.branch_id == current.branch_id)
+        if employee_id:
+            stmt = stmt.where(MyTaskMiss.employee_id == employee_id)
+    if since:
+        stmt = stmt.where(MyTaskMiss.date >= _parse_date(since))
+    return await _decorate_misses(db, list(await db.scalars(stmt)))
+
+
+@router.post("/my-task-misses/{miss_id}/excuse", response_model=MyTaskMissOut)
+async def submit_my_task_excuse(
+    miss_id: str,
+    payload: MyTaskExcuseCreate,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MyTaskMissOut:
+    """누락 사유서를 낸다 — **본인만.**
+
+    **반려된 것은 다시 낼 수 있다.** 한 번 반려로 영영 닫으면 잘못 적은
+    사유를 바로잡을 길이 없다. 대기 중인 것만 막는다.
+    """
+    miss = await db.get(MyTaskMiss, miss_id)
+    if miss is None or miss.employee_id != current.id:
+        raise HTTPException(404, detail={"code": "MISS_NOT_FOUND", "message": "누락 기록을 찾을 수 없습니다"})
+    if miss.excuse_status == ProjectRequestStatus.PENDING:
+        raise HTTPException(400, detail={"code": "ALREADY_PENDING", "message": "이미 결재를 기다리는 사유서입니다"})
+    if miss.excused:
+        raise HTTPException(400, detail={"code": "ALREADY_EXCUSED", "message": "이미 회복된 누락입니다"})
+
+    miss.excuse_reason = payload.reason
+    miss.excuse_status = ProjectRequestStatus.PENDING
+    # 다시 낸 것이면 지난 결재 흔적을 지운다 — 안 지우면 '반려됐는데 대기'가 된다
+    miss.decided_by_id = None
+    miss.decided_at = None
+    miss.reject_reason = None
+    for eid in await master_ids(db, exclude=current.id):
+        await notify(db, employee_id=eid, **ntext.task_miss_excuse(current.name, miss.date))
+    await db.commit()
+    await db.refresh(miss)
+    return (await _decorate_misses(db, [miss]))[0]
+
+
+async def _decide_miss(
+    miss_id: str,
+    approve: bool,
+    reason: str | None,
+    current: Employee,
+    db: AsyncSession,
+) -> MyTaskMiss:
+    """승인이면 **회복** — 깎았던 점수 줄을 지운다.
+
+    상쇄로 +20 을 한 줄 더 넣지 않는다. 원장 합은 같지만 랭킹 내역에
+    `업무 누락 -20` 과 `업무 누락 +20` 이 나란히 서서 무슨 일인지 알 수 없다.
+    무슨 일이 있었는지는 이 표(`my_task_misses`)가 들고 있다.
+    """
+    miss = await db.get(MyTaskMiss, miss_id)
+    if miss is None:
+        raise HTTPException(404, detail={"code": "MISS_NOT_FOUND", "message": "누락 기록을 찾을 수 없습니다"})
+    if miss.excuse_status != ProjectRequestStatus.PENDING:
+        raise HTTPException(400, detail={"code": "ALREADY_DONE", "message": "이미 처리된 사유서입니다"})
+
+    miss.excuse_status = ProjectRequestStatus.APPROVED if approve else ProjectRequestStatus.REJECTED
+    miss.decided_by_id = current.id
+    miss.decided_at = datetime.now(timezone.utc)
+    if approve:
+        if miss.score_event_id:
+            event = await db.get(ScoreEvent, miss.score_event_id)
+            if event is not None:
+                await db.delete(event)
+            miss.score_event_id = None
+    else:
+        miss.reject_reason = reason
+    await notify(
+        db,
+        employee_id=miss.employee_id,
+        **ntext.task_miss_decided(miss.date, approve, reason),
+    )
+    await db.commit()
+    await db.refresh(miss)
+    return miss
+
+
+@router.post(
+    "/my-task-misses/{miss_id}/approve",
+    response_model=MyTaskMissOut,
+    dependencies=[Depends(require_role(Role.MASTER))],  # 수정·삭제 결재와 같은 자리다
+)
+async def approve_my_task_excuse(
+    miss_id: str,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MyTaskMissOut:
+    miss = await _decide_miss(miss_id, True, None, current, db)
+    return (await _decorate_misses(db, [miss]))[0]
+
+
+@router.post(
+    "/my-task-misses/{miss_id}/reject",
+    response_model=MyTaskMissOut,
+    dependencies=[Depends(require_role(Role.MASTER))],
+)
+async def reject_my_task_excuse(
+    miss_id: str,
+    reason: str = Query(..., min_length=1),
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MyTaskMissOut:
+    miss = await _decide_miss(miss_id, False, reason, current, db)
+    return (await _decorate_misses(db, [miss]))[0]

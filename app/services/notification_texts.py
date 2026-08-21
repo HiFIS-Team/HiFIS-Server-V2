@@ -265,11 +265,18 @@ def staff_attendance(name: str, action: str, when: datetime, note: str | None = 
 
 
 def my_task_missing(left: list[str]) -> dict:
-    """본인에게 — 내 업무를 남기고 퇴근했다."""
+    """본인에게 — 내 업무를 남기고 퇴근했다.
+
+    **`MY_TASK` 가 아니라 `MY_TASK_MISSING` 이다** (2026-08-21). 앱이 이것만
+    빨간 경고로 그린다. 같은 `MY_TASK` 에 수정·삭제 결재와 **승인** 알림이
+    섞여 있어서, 종류째 빨갛게 하면 승인받은 것도 경고로 보인다.
+
+    옛 앱은 모르는 종류를 회색으로 떨구므로 지금과 똑같이 보인다 — 안 깨진다.
+    """
     head = left[0] if left else ""
     body = head if len(left) == 1 else f"{head} 외 {len(left) - 1}개"
     return {
-        "type": "MY_TASK",
+        "type": "MY_TASK_MISSING",
         "title": "안 한 업무가 있어요",
         "body": f"{body}를 아직 못 했어요",
         "link": "/work",
@@ -277,11 +284,62 @@ def my_task_missing(left: list[str]) -> dict:
 
 
 def staff_task_missing(name: str, left: int) -> dict:
-    """대표에게 — 누가 업무를 남기고 퇴근했다."""
+    """대표에게 — 누가 업무를 남기고 퇴근했다.
+
+    본인 것과 **같이 빨갛게** 뜬다 (2026-08-21 대표 요청).
+    """
     return {
-        "type": "MY_TASK",
+        "type": "MY_TASK_MISSING",
         "title": f"{name}님이 업무를 남기고 퇴근했어요",
         "body": f"내 업무 {left}개가 안 됐어요",
+        "link": "/work",
+    }
+
+
+def task_miss_confirmed(day, contents: list[str]) -> dict:
+    """본인에게 — 다음 근무일까지도 안 해서 **확정 누락**이 됐다 (2026-08-21).
+
+    퇴근할 때 온 알림과 글이 갈려야 한다. 저쪽은 '아직 기회가 있다' 는 뜻이고
+    이쪽은 이미 깎였다는 뜻이라, 같은 문장이면 회복할 수 있는 날을 놓친다.
+    """
+    head = contents[0] if contents else ""
+    body = head if len(contents) == 1 else f"{head} 외 {len(contents) - 1}개"
+    return {
+        "type": "MY_TASK_MISSING",
+        "title": f"{day.month}월 {day.day}일 업무가 누락됐어요",
+        "body": f"{body} · 사유가 있으면 사유서를 내 주세요",
+        "link": "/work",
+    }
+
+
+def task_miss_excuse(name: str, day) -> dict:
+    """대표에게 — 누락 사유서가 올라왔다 (2026-08-21).
+
+    **`MY_TASK` 다.** 결재 요청이지 경고가 아니라, 빨간 종류로 보내면
+    대표 알림함이 빨간 줄로 도배된다.
+    """
+    return {
+        "type": "MY_TASK",
+        "title": "업무 누락 사유서",
+        "body": f"{name} · {day.month}월 {day.day}일",
+        "link": "/work",
+    }
+
+
+def task_miss_decided(day, approve: bool, reason: str | None) -> dict:
+    """본인에게 — 사유서가 처리됐다. 승인이면 깎였던 점수가 되돌아온다."""
+    head = f"{day.month}월 {day.day}일 누락"
+    if approve:
+        return {
+            "type": "MY_TASK",
+            "title": f"{head} 사유가 승인됐어요",
+            "body": "깎인 점수가 되돌아왔어요",
+            "link": "/work",
+        }
+    return {
+        "type": "MY_TASK_MISSING",
+        "title": f"{head} 사유가 반려됐어요",
+        "body": reason or "",
         "link": "/work",
     }
 

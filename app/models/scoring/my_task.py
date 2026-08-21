@@ -85,6 +85,73 @@ class MyTaskCheck(UUIDMixin, TimestampMixin, Base):
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
 
+class MyTaskMiss(UUIDMixin, TimestampMixin, Base):
+    """**확정 누락** — 다음 근무일까지도 안 한 하루 (2026-08-21 대표 결정).
+
+    퇴근할 때 오는 빨간 알림은 아직 누락이 아니다. 그날 못 한 일은 다음
+    근무일로 밀려 와서(`services/my_tasks.py`) 한 번 더 기회가 있고,
+    **그 날까지도 안 하면** 그때 이 행이 생긴다.
+
+    ```
+    금  대청소 ○ 안 함        빨간 알림 (아직 확정 아님)
+    토·일 (쉬는 날)           안 센다 — 손쓸 방법이 없는 날이다
+    월  밀린 일: 대청소 ○     여기서 체크하면 회복
+        안 하면                → 화요일 잡이 **금요일**을 확정 누락으로 남긴다
+    ```
+
+    ## 하루에 한 줄이다
+
+    같은 날 업무를 세 개 빠뜨려도 한 줄이다 (`uq_my_task_miss_day`).
+    당사자 감점이 **-20점 고정**이고 점장 기본급 차감도 **하루 단위**라
+    그렇게 정했다 (2026-08-21). 몇 개였는지는 [task_count] 에 남는다.
+
+    ## 사유서로 되돌린다
+
+    확정되면 점수가 먼저 깎이고, 사유서를 내서 **승인받으면 회복**된다
+    (`excuse_status == APPROVED`). 회복하면 깎았던 점수 줄을 지운다 —
+    되돌린다는 말이 그 뜻이다.
+    """
+
+    __tablename__ = "my_task_misses"
+    __table_args__ = (
+        # 하루에 한 줄 — 잡이 여러 번 돌아도, 업무를 몇 개 빠뜨렸어도 하나다
+        UniqueConstraint("employee_id", "date", name="uq_my_task_miss_day"),
+    )
+
+    employee_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=False, index=True
+    )
+    #: 점장 차감이 지점으로 센다 — 셀 때마다 직원 행을 다시 읽지 않으려고 같이 둔다
+    branch_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("branches.id"), nullable=True, index=True
+    )
+    #: **누락한 날** — 밀려 온 날이 아니라 원래 차례였던 날 (KST 근무일)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    #: 그날 몇 개를 빠뜨렸나 — 표시용. 판정에는 안 쓴다
+    task_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 무엇을 빠뜨렸나 — `["대청소", "세탁"]`. 업무를 나중에 고쳐도 그때 것이 남는다
+    contents: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    #: 깎은 점수 줄 — 회복할 때 이 줄을 지운다. 이미 지웠으면 `None`
+    score_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    #: 사유서 — `None` 이면 아직 안 냈다
+    excuse_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `None` 안 냄 · PENDING 대기 · APPROVED **회복** · REJECTED 확정
+    excuse_status: Mapped[ProjectRequestStatus | None] = mapped_column(
+        SAEnum(ProjectRequestStatus, native_enum=False, length=20), nullable=True
+    )
+    decided_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def excused(self) -> bool:
+        """사유가 승인돼 없던 일이 됐나 — 점수·점장 차감에서 다 빠진다."""
+        return self.excuse_status == ProjectRequestStatus.APPROVED
+
+
 class MyTaskRequest(UUIDMixin, TimestampMixin, Base):
     """내 업무 수정·삭제 결재 — 본인이 올리고 **MASTER 가 승인·반려**한다.
 

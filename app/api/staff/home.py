@@ -41,7 +41,7 @@ from app.models.board.notice_read import NoticeRead
 from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
-from app.models.scoring.my_task import MyTask, MyTaskRequest
+from app.models.scoring.my_task import MyTask, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
@@ -357,6 +357,28 @@ async def my_inbox(
                     title=f"내 업무 {'수정' if req.type == MyTaskRequestType.EDIT else '삭제'}",
                     detail=detail,
                     created_at=req.created_at,
+                ),
+            )
+        )
+
+    # 누락 사유서 — 수정·삭제 결재와 같은 함에 선다 (2026-08-21).
+    # **사유서를 낸 것만** 온다. 안 낸 누락은 결재할 것이 없어서 여기 안 선다
+    for miss in (
+        await db.scalars(
+            select(MyTaskMiss).where(MyTaskMiss.excuse_status.in_(_MY_TASK_IN[status]))
+        )
+    ).all():
+        day = miss.date
+        rows.append(
+            (
+                miss.created_at if pending else (miss.decided_at or miss.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.TASK_MISS,
+                    id=miss.id,
+                    employee_id=miss.employee_id,
+                    title="업무 누락 사유",
+                    detail=f"{day.month}월 {day.day}일 · {miss.task_count}개",
+                    created_at=miss.created_at,
                 ),
             )
         )

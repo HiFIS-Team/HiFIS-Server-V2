@@ -28,6 +28,7 @@ from app.workers.ranking_jobs import (
 from app.workers.anomaly_scan import anomaly_scan
 from app.workers.error_rate_scan import error_rate_scan
 from app.workers.metrics_flush import flush_metrics
+from app.workers.my_task_miss_scan import my_task_miss_scan
 from app.workers.retention import purge_old_access_logs
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,11 @@ def _register_jobs() -> None:
     # (저쪽은 점수 원장, 이쪽은 앱 랭킹 화면이 그리는 판). 알림은 저쪽만 보낸다.
     scheduler.add_job(board_overtake_scan, CronTrigger(minute="*/5"),
                       id="board_overtake", replace_existing=True)
+    # 매일 15:30 UTC(=00:30 KST) — 개인 업무 확정 누락 판정.
+    # **어제가 다 끝난 뒤여야** 한다 — 어제 밀려 온 것을 어제 안에 체크했는지를
+    # 보기 때문이다. 자정 직후가 그 첫 자리다.
+    scheduler.add_job(my_task_miss_scan, CronTrigger(hour=15, minute=30),
+                      id="my_task_miss_scan", replace_existing=True)
     # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
     scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
                       id="access_log_purge", replace_existing=True)
