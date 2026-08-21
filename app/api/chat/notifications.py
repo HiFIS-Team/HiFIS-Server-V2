@@ -3,7 +3,7 @@
 알림은 본인 것만 조회/처리. 구독은 endpoint 기준 upsert(재구독 시 소유자 갱신).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, update
@@ -26,13 +26,34 @@ router = APIRouter(tags=["notifications"], dependencies=[Depends(get_current_use
 
 
 # ---------- 알림함 ----------
+#: 알림함이 거슬러 올라가는 날 수 — **기본 7일** (2026-08-21 대표 결정)
+#:
+#: 안 자르면 그 사람 알림이 **한 번에 전부** 온다. 개발 DB 가 한 달 만에
+#: 1,242건이었다 — 하루 40건꼴이라 반년이면 7천 건을 매번 받아서 화면에
+#: 안 보일 줄까지 그린다.
+#:
+#: **행을 지우지는 않는다.** 조회에서만 뺀다 — 지우면 되짚을 길이 없다.
+NOTIFICATION_DAYS = 7
+
+
 @router.get("/notifications", response_model=list[NotificationOut])
 async def list_notifications(
     read: bool | None = Query(None),
+    days: int = Query(NOTIFICATION_DAYS, ge=1, le=90, description="며칠치를 볼지"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Notification]:
-    stmt = select(Notification).where(Notification.employee_id == current.id)
+    """내 알림함 — **최근 [days] 일치만** 준다 (기본 7일).
+
+    앱의 안 읽음 배지도 이 목록을 세므로, 여기서 자르면 **7일보다 오래된
+    안 읽은 알림은 배지에서도 빠진다.** 그게 의도다 — 화면에 안 보이는
+    것이 배지에만 잡히면 눌러도 찾을 수가 없다.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = select(Notification).where(
+        Notification.employee_id == current.id,
+        Notification.created_at >= since,
+    )
     if read is not None:
         stmt = stmt.where(Notification.read == read)
     result = await db.execute(stmt.order_by(Notification.created_at.desc()))

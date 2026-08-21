@@ -29,7 +29,6 @@ from app.enums import (
     Role,
     ScoreCategory,
 )
-from app.models.scoring.my_task import MyTask, MyTaskCheck
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
@@ -47,6 +46,7 @@ from app.schemas.staff.attendance import (
 )
 from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
+from app.services.my_tasks import due_tasks
 from app.services.notifications import master_ids, notify, notify_bosses
 from app.services.scoring import accrue_score
 
@@ -317,25 +317,13 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
 
     **업무를 하나도 안 정한 사람은 조용하다** — 할 일을 안 만든 것이지
     안 한 것이 아니다. 대표·관리자는 애초에 이 화면이 없어서 늘 0개다.
+
+    **셈은 서비스가 한다** (`app/services/my_tasks.py`). 요일·이월·월차를
+    여기서 따로 판단하면 화면은 다 했다는데 퇴근할 때 누락 알림이 온다.
+    **밀려 온 것도 같이 센다** — 오늘 목록에 서 있으면 오늘 할 일이다.
     """
-    tasks = list(
-        await db.scalars(
-            select(MyTask)
-            .where(MyTask.employee_id == target.id, MyTask.deleted_at.is_(None))
-            .order_by(MyTask.sort, MyTask.created_at)
-        )
-    )
-    if not tasks:
-        return
-    done = set(
-        await db.scalars(
-            select(MyTaskCheck.my_task_id).where(
-                MyTaskCheck.my_task_id.in_([t.id for t in tasks]),
-                MyTaskCheck.date == day,
-            )
-        )
-    )
-    left = [t.content for t in tasks if t.id not in done]
+    due = (await due_tasks(db, [target], day, today=day))[target.id]
+    left = [t.content for t in due.left]
     if not left:
         return
     await notify(db, employee_id=target.id, **ntext.my_task_missing(left))
@@ -561,7 +549,8 @@ async def attendance_calendar(
     start_d, end_d = start.date(), end.date()
     now_kst = datetime.now(timezone.utc).astimezone(KST)
     today = now_kst.date()
-    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(오늘까지)
+    # **판정은 오늘까지** — 그 뒤는 승인된 월차만 담는다 (루프 첫 가지)
+    limit_d = min(end_d, today + timedelta(days=1))
 
     recs = {
         r.date: r
@@ -598,9 +587,26 @@ async def attendance_calendar(
     joined_d = _joined(target)  # 입사 전은 판정 대상이 아니다
     out: list[AttendanceDayOut] = []
     day = start_d
-    while day < limit_d:
+    while day < end_d:
         rec = recs.get(day)
         lv = leave_on(day)
+        if day >= limit_d:
+            # 미래 — **판정은 안 한다.** 안 온 날을 결근이라 부를 수 없다.
+            #
+            # 다만 **승인된 월차는 이미 정해진 사실**이라 담는다 (2026-08-21 요청).
+            # 예전에는 여기서 통째로 잘라서, 다음 주 월차를 결재받고 달력을 열면
+            # **그날이 빈칸이었다** — 승인은 끝났는데 어디에도 안 보였다.
+            if lv is not None:
+                out.append(
+                    AttendanceDayOut(
+                        date=day,
+                        status=AttendanceStatus.ON_LEAVE,
+                        leave_type=lv.type,
+                        half_period=lv.half_period,
+                    )
+                )
+            day += timedelta(days=1)
+            continue
         if rec is not None:  # 기록 있음 → 근무시간 대비 판정
             out.append(
                 AttendanceDayOut(
@@ -678,7 +684,8 @@ async def attendance_calendar_all(
     start_d, end_d = start.date(), end.date()
     now_kst = datetime.now(timezone.utc).astimezone(KST)
     today = now_kst.date()
-    limit_d = min(end_d, today + timedelta(days=1))  # 미래는 판정 안 함(사람별 캘린더와 같다)
+    # 판정은 오늘까지, 그 뒤는 승인된 월차만 — 사람별 캘린더와 같은 규칙이다
+    limit_d = min(end_d, today + timedelta(days=1))
 
     emp_stmt = select(Employee).where(
         Employee.deleted_at.is_(None),
@@ -728,9 +735,18 @@ async def attendance_calendar_all(
         work_days = set(emp.work_days or [])
         joined_d = _joined(emp)  # 입사 전은 판정 대상이 아니다
         day = start_d
-        while day < limit_d:
+        while day < end_d:
             rec = mine.get(day)
             on_leave = next((lv for lv in my_leaves if lv.start_date <= day <= lv.end_date), None)
+            if day >= limit_d:
+                # 미래 — 판정은 안 하고 **승인된 월차만** 담는다 (사람별 캘린더와 같다).
+                # 누가 언제 쉬는지가 미리 보여야 사람을 배치할 수 있다.
+                if on_leave is not None:
+                    board.setdefault(day, {}).setdefault(
+                        AttendanceStatus.ON_LEAVE, []
+                    ).append(emp.name)
+                day += timedelta(days=1)
+                continue
             status: AttendanceStatus | None = None
             if rec is not None:
                 status = _attendance_status(
@@ -886,12 +902,15 @@ async def create_leave(
 ) -> LeaveRequest:
     if payload.end_date < payload.start_date:
         raise HTTPException(400, detail={"code": "INVALID_RANGE", "message": "종료일이 시작일보다 빠릅니다"})
-    # 반차면 오전/오후 필수, 그 외 타입은 시간대 무시(null)
-    half_period = None
-    if payload.type == LeaveType.HALF:
-        if payload.half_period is None:
-            raise HTTPException(400, detail={"code": "HALF_PERIOD_REQUIRED", "message": "반차는 오전/오후를 선택해야 합니다"})
-        half_period = payload.half_period
+    # 반차의 오전/오후는 **선택이다** (2026-08-21 결정).
+    #
+    # 예전에는 필수였는데, 앱에서 `오전 반차`·`오후 반차` 를 그냥 `반차` 하나로
+    # 합치면서 보낼 값이 없어졌다. 반차는 반나절이라 일수(0.5)가 같고, 화면 어디도
+    # 오전인지 오후인지로 갈리지 않는다 — 받아 두기만 하고 안 쓰던 값이다.
+    #
+    # **칸은 남긴다.** 이미 쌓인 신청에 값이 들어 있고, 나중에 다시 나누기로 하면
+    # 그때 앱만 고치면 된다. 그 외 타입은 예전처럼 무시한다(null).
+    half_period = payload.half_period if payload.type == LeaveType.HALF else None
     leave = LeaveRequest(
         employee_id=current.id,
         type=payload.type,

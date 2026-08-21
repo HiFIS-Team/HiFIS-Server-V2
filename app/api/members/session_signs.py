@@ -10,11 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
+from app.core.tokens import public_token
 from app.core.storage import save_signature
-from app.enums import RegistrationStatus, Role, ScoreCategory
+from app.enums import RegistrationStatus, RegistrationType, Role, ScoreCategory
 from app.db.session import get_db
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
+from app.models.members.pt_survey import PtSurvey
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
 from app.schemas.members.registration import RegistrationOut
@@ -23,7 +25,47 @@ from app.services.scoring import accrue_score
 
 CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
 
+#: 몇 회차에 만족도 폼을 여나 (2026-08-20 요청)
+#:
+#: 10회 등록이 흔해서 **한참 남았을 때** 물어야 연장 이야기를 꺼낼 여지가 있다.
+#: 마지막 회차에 물으면 이미 마음을 정한 뒤다.
+PT_SURVEY_AT = 7
+
 router = APIRouter(prefix="/session-signs", tags=["session-signs"])
+
+
+async def _open_pt_survey(
+    db: AsyncSession, registration: Registration, sign: SessionSign, trainer_id: str
+) -> None:
+    """신규 등록권의 7회차면 **만족도 폼을 하나 연다** (2026-08-20 요청).
+
+    **신규만이다.** 재등록한 사람은 이미 겪어 보고 다시 온 것이라
+    7회차에 "연장하실래요" 를 다시 묻는 것이 어색하다.
+
+    **줄만 만들고 문자는 아직 안 보낸다.** 발신번호가 안 정해져서다
+    (고민해볼꺼 21번) — 그때까지는 `GET /pt-surveys` 의 `url` 을 트레이너가
+    복사해 직접 보낸다.
+
+    받는 트레이너는 **그날 실제로 수업한 사람**이다. 등록권의 담당으로 하면
+    대타로 들어간 날 물어본 것이 엉뚱한 사람에게 붙는다.
+    """
+    if registration.type != RegistrationType.NEW or sign.session_no != PT_SURVEY_AT:
+        return
+    # 되돌렸다 다시 찍는 일이 있어도 두 줄이 안 생긴다 (등록권당 하나다)
+    exists = await db.scalar(
+        select(PtSurvey.id).where(PtSurvey.registration_id == registration.id)
+    )
+    if exists is not None:
+        return
+    db.add(
+        PtSurvey(
+            registration_id=registration.id,
+            member_id=registration.member_id,
+            trainer_id=trainer_id,
+            token=public_token(),
+            session_no=sign.session_no,
+        )
+    )
 
 
 def _sign_out(
@@ -80,6 +122,7 @@ async def create_session_sign(
         source_ref_id=sign.id,
         reason="세션 수행",
     )
+    await _open_pt_survey(db, registration, sign, performer_id)
 
     await db.commit()
     await db.refresh(sign)

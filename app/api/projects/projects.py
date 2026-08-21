@@ -191,8 +191,16 @@ async def _any_todo_done(db: AsyncSession, project: Project) -> bool:
     )
 
 
-# 완료하면 담당자마다 붙는 기본 점수. MASTER 가 여기서부터 올리거나 깎는다.
+# 완료하면 붙는 기본 점수. MASTER 가 여기서부터 올리거나 깎는다.
+#
+# **담당자(PM)와 참여 멤버를 가른다 (2026-08-20 대표 결정).** 프로젝트를 끌고 간
+# 사람과 거든 사람이 같은 점수를 받으면 담당을 맡을 이유가 없다.
+#
+# PM 은 폼 위쪽 `담당` 에 든 **한 사람**(`Project.owner_id`)뿐이다.
+# **할 일마다 붙는 담당자(`ProjectTodo.assignee_id`)는 PM 이 아니라 참여 멤버다** —
+# 헷갈리기 쉬운 자리라 적어 둔다.
 PROJECT_POINTS = 10
+PROJECT_MEMBER_POINTS = 5
 
 
 async def _settle_completion(db: AsyncSession, project: Project) -> None:
@@ -202,9 +210,12 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
     마지막 할 일에 체크하는 순간 점수까지 붙어서 잘못 누르면 되돌릴 사람이
     대표뿐이었다. 이제 담당자가 `/complete` 를 눌러야 여기까지 온다.
 
-    - 완료하면 담당자 **전원에게 무조건 기본 10점**을 먼저 준다 (2026-08-13 결정).
-      MASTER 가 완료 **전에** 점수를 매겨 뒀어도 10점으로 되돌린다 — 깎거나 더 주는
-      것은 완료된 다음에 하는 판단이라, 완료 시점의 출발선은 항상 10점이다.
+    - 완료하면 **담당자(PM)에게 [PROJECT_POINTS], 참여 멤버에게
+      [PROJECT_MEMBER_POINTS]** 를 무조건 먼저 준다 (2026-08-20 결정).
+      MASTER 가 완료 **전에** 점수를 매겨 뒀어도 이 값으로 되돌린다 — 깎거나 더 주는
+      것은 완료된 다음에 하는 판단이라, 완료 시점의 출발선은 항상 이 둘이다.
+    - **담당자는 참여 멤버에 없어도 받는다.** 앱 폼은 담당을 고르면 참여 멤버에
+      같이 넣지만, API 로 직접 만들면 갈릴 수 있다.
     - 되돌리면(`/reopen`) **자동으로 준 것만** 회수한다. MASTER 가 매긴 점수는
       그대로 둔다 (평가는 진행률과 별개로 내린 판단이라 되돌리면 안 된다).
 
@@ -212,7 +223,7 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
 
     **정산은 완료 한 번에 한 번만** 한다 (`completed_notified_at` 이 표시).
     완료된 프로젝트에 점수를 매기는(`award`) 자리가 이 함수를 다시 부르는데,
-    표시가 없으면 MASTER 가 매긴 점수가 그때마다 10점으로 되돌아간다.
+    표시가 없으면 MASTER 가 매긴 점수가 그때마다 기본값으로 되돌아간다.
     """
     existing = (
         (
@@ -232,14 +243,23 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
         # 이미 이번 완료로 정산했으면 아무것도 안 한다 (MASTER 평가를 덮지 않는다)
         if project.completed_notified_at is not None:
             return
-        for employee_id in project.assignee_ids or []:
+        # 담당자를 빠뜨리지 않는다 — 참여 멤버에 없어도 PM 은 받는다
+        targets = list(project.assignee_ids or [])
+        if project.owner_id and project.owner_id not in targets:
+            targets.append(project.owner_id)
+        for employee_id in targets:
             employee = await db.get(Employee, employee_id)
             if employee is None:
                 continue
+            points = (
+                PROJECT_POINTS
+                if employee_id == project.owner_id
+                else PROJECT_MEMBER_POINTS
+            )
             event = by_employee.get(employee_id)
             if event is not None:
-                # 완료 전에 매겨 둔 점수가 있어도 출발선은 10점이다
-                event.points = PROJECT_POINTS
+                # 완료 전에 매겨 둔 점수가 있어도 출발선은 이 값이다
+                event.points = points
                 event.reason = "프로젝트 완료"
                 event.created_by_id = None  # 다시 자동으로 — 되돌리면 회수 대상이 된다
                 continue
@@ -248,7 +268,7 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
                 employee_id=employee_id,
                 branch_id=employee.branch_id,
                 category=ScoreCategory.PROJECT,
-                points=PROJECT_POINTS,
+                points=points,
                 source_ref_id=project.id,
                 reason="프로젝트 완료",
             )
@@ -460,20 +480,28 @@ def _ensure_open(project: Project, current: Employee) -> None:
         )
 
 
-def _ensure_can_check(todo: ProjectTodo, current: Employee) -> None:
-    """할 일에 체크할 수 있는가 — **MASTER·ADMIN 은 본인 것만** (2026-08-19 대표 결정).
+def _ensure_can_check(project: Project, todo: ProjectTodo, current: Employee) -> None:
+    """할 일에 체크할 수 있는가 — **그 할 일의 담당자와 PM 뿐이다** (2026-08-20 대표 결정).
 
-    대표·관리자는 프로젝트를 마음대로 고치고 지울 수 있지만 **일을 대신 했다고
-    표시하지는 못한다.** 체크가 곧 진행률이고 진행률이 곧 완료·점수라, 남이
-    한 일을 위에서 찍어 주면 그 점수가 뜻을 잃는다.
+    체크가 곧 진행률이고 진행률이 곧 완료·점수라, **남이 한 일을 대신 찍어 주면
+    그 점수가 뜻을 잃는다.** 그래서 자기 칸만 체크한다.
 
-    **본인이 그 할 일의 담당자로 지정돼 있으면** 자기 일이므로 체크할 수 있다.
-    MANAGER·MEMBER 는 예전과 같다 — 참여자면 어느 칸이든 체크한다
-    (한 사람이 여러 칸을 나눠 맡는 일이 흔하다).
+    **권한을 안 가린다 — MASTER·ADMIN 도 같다.** 예전에는 그 둘만 본인 것으로
+    묶고 MANAGER·MEMBER 는 참여자면 어느 칸이든 눌렀는데, 같은 프로젝트에
+    있다는 이유로 남의 칸을 찍는 것은 대표가 찍는 것과 다를 게 없다.
+
+    통과하는 사람은 둘이다.
+
+    - **그 할 일의 담당자**(`ProjectTodo.assignee_id`) — 자기 일이다
+    - **PM**(`Project.owner_id`) — 프로젝트를 끌고 가는 한 사람이라 전체를
+      마감할 수 있어야 한다. 담당자가 나가거나 못 하게 됐을 때 이 길이 없으면
+      프로젝트가 영영 안 끝난다
+
+    담당자가 아직 없는 칸(`assignee_id is None`)은 **PM 만** 체크한다.
     """
-    if current.role not in (Role.MASTER, Role.ADMIN):
+    if todo.assignee_id is not None and todo.assignee_id == current.id:
         return
-    if todo.assignee_id == current.id:
+    if project.owner_id == current.id:
         return
     raise HTTPException(
         403,
@@ -946,18 +974,29 @@ async def award_project(
             existing.created_by_id = current.id
             events.append(existing)
         else:
-            events.append(
-                await accrue_score(
-                    db,
-                    employee_id=employee_id,
-                    branch_id=employee.branch_id,
-                    category=ScoreCategory.PROJECT,
-                    points=payload.points,
-                    created_by_id=current.id,
-                    source_ref_id=project_id,
-                    reason=payload.comment,
-                )
+            # **`None` 이 올 수 있다 — 대표·관리자에게는 점수를 안 쌓는다.**
+            # `accrue_score` 가 그렇게 하기로 정해져 있고("돌려받은 값을 쓰는 곳은
+            # 그때 비켜 가면 된다"), 여기만 안 비켜 가서 `db.refresh(None)` 로
+            # 500 이 났다 (2026-08-21 운영에서 3건).
+            #
+            # **담당자에 대표·관리자가 들어가면서 터지기 시작했다** — 그 전에는
+            # 그들이 담당자가 아니라 `targets` 에 안 들어왔다.
+            #
+            # 커밋이 이 아래라 **점수는 멀쩡히 저장되고 응답만 실패했다.**
+            # 대표에게는 '네트워크 오류' 토스트만 보여서 안 된 줄 알고
+            # 세 번을 다시 눌렀다.
+            event = await accrue_score(
+                db,
+                employee_id=employee_id,
+                branch_id=employee.branch_id,
+                category=ScoreCategory.PROJECT,
+                points=payload.points,
+                created_by_id=current.id,
+                source_ref_id=project_id,
+                reason=payload.comment,
             )
+            if event is not None:
+                events.append(event)
     await db.commit()
     for event in events:
         await db.refresh(event)
@@ -1066,7 +1105,7 @@ async def update_project_todo(
     _ensure_open(project, current)
     fields = payload.model_dump(exclude_unset=True)
     if "done" in fields:
-        _ensure_can_check(todo, current)
+        _ensure_can_check(project, todo, current)
     was_done = todo.done
     for key, value in fields.items():
         setattr(todo, key, value)

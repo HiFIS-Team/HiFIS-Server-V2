@@ -18,10 +18,13 @@ from app.enums import (
     DeductionMethod,
     EmployeeStatus,
     EmploymentType,
+    ProjectRequestStatus,
     Rank,
     RegistrationType,
+    Role,
     ScoreCategory,
 )
+from app.models.scoring.my_task import MyTaskMiss
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.payroll.payslip import Payslip
@@ -331,6 +334,54 @@ class NoScheduleError(Exception):
     """
 
 
+#: 지점 누락 **날 수** → 점장 기본급에서 뺄 돈 (2026-08-21 대표 결정).
+#:
+#: 3회부터다 — 두 번까지는 안 깎는다. **5회에서 멈춘다**: 그 뒤로는 아무리
+#: 쌓여도 -50만 그대로다.
+MANAGER_MISS_CUT = {3: 300_000, 4: 400_000}
+MANAGER_MISS_CUT_MAX = 500_000
+
+#: 이 날부터 센다 — 규칙이 없던 때의 누락으로 급여를 깎지 않는다.
+#: 확정 누락 판정(`workers/my_task_miss_scan.STARTS_ON`)과 **같은 날**이어야 한다.
+MANAGER_MISS_FROM = date(2026, 9, 1)
+
+
+async def manager_miss_cut(db: AsyncSession, employee: Employee) -> tuple[int, int]:
+    """점장 기본급 차감 — `(누락 날 수, 깎을 돈)`.
+
+    **점장(MANAGER)만이다.** 트레이너·FC 는 자기 누락으로 점수(-20)를 잃지
+    돈을 잃지 않는다. 관리 책임을 묻는 자리라 관리하는 사람에게만 붙는다.
+
+    ## 무엇을 세나 — **그 지점에서 누락이 있었던 날의 수**
+
+    같은 날 세 사람이 빠뜨려도 1회다 (2026-08-21 결정 — "하루 단위").
+    사유가 승인돼 회복된 날(`APPROVED`)은 안 센다.
+
+    ## 달이 바뀌어도 안 되돌린다
+
+    지각 차감(`LATE_PENALTY`)과 같다. 매달 0으로 리셋하면 달마다 첫 세 번이
+    공짜라, 늘 놓치는 지점과 처음 놓친 지점이 같은 값을 문다.
+
+    **그래서 한 번 5회를 넘기면 그 뒤로는 매달 -50만이다.** 되돌리는 길은
+    사유서 승인뿐이다 (`POST /my-task-misses/{id}/approve`).
+    """
+    if employee.role != Role.MANAGER or employee.branch_id is None:
+        return 0, 0
+    days = (
+        await db.scalar(
+            select(func.count(func.distinct(MyTaskMiss.date))).where(
+                MyTaskMiss.branch_id == employee.branch_id,
+                MyTaskMiss.date >= MANAGER_MISS_FROM,
+                # 회복된 날은 없던 일이다
+                MyTaskMiss.excuse_status.is_distinct_from(ProjectRequestStatus.APPROVED),
+            )
+        )
+    ) or 0
+    if days < min(MANAGER_MISS_CUT):
+        return days, 0
+    return days, MANAGER_MISS_CUT.get(days, MANAGER_MISS_CUT_MAX)
+
+
 async def build_hourly_payslip_data(
     db: AsyncSession,
     employee: Employee,
@@ -446,14 +497,16 @@ async def build_payslip_data(
     incentive_new = round(new_base * policy.new_rate)
     incentive_renewal = round(renewal_base * policy.renewal_rate)
     other_allowances = 0
-    gross = policy.base_salary + incentive_new + incentive_renewal + other_allowances
+    miss_count, miss_cut = await manager_miss_cut(db, employee)
+    base_salary = policy.base_salary - miss_cut
+    gross = base_salary + incentive_new + incentive_renewal + other_allowances
     deductions = _deductions(gross, employee.deduction_method)
     total_deduction = sum(line["amount"] for line in deductions)
 
     return {
         "rank": employee.rank,
         "pay_date": compute_payday(year_month, payday),
-        "base_salary": policy.base_salary,
+        "base_salary": base_salary,
         "incentive_new": incentive_new,
         "incentive_renewal": incentive_renewal,
         # 신청할 때 본인이 고칠 수 있어서 원래 계산값을 따로 남긴다 (§76)
@@ -469,6 +522,13 @@ async def build_payslip_data(
             "new_sales": new_items,
             "renewal_sales": renewal_items,
             "session_signs": len(signs),
+            # 왜 기본급이 줄었나 — **화면에 새로 그리지 않는다.** 근거를 남겨
+            # 두는 것이 목적이다 (알바 `hourly` 와 같은 취급)
+            "task_miss": {
+                "days": miss_count,
+                "cut": miss_cut,
+                "base_before": policy.base_salary,
+            },
         },
     }
 

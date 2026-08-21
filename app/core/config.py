@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     # 외부 웹훅 (네이버폼 등 회원 친절도 설문 수신) 시크릿 (§4.5)
     kindness_webhook_secret: str = "change-me-webhook-secret"
 
-    # 밖에서 이 서버를 부르는 주소 — **회원 설문 QR 에 찍히는 값**이다.
-    # 매장 벽에 붙는 것이라 `localhost` 가 들어가면 아무도 못 연다.
-    public_base_url: str = "https://api.hifis.app"
+    # **회원이 보는 화면의 주소** — 설문 QR·매장 TV·PT 폼 링크에 찍히는 값이다.
+    #
+    # 2026-08-20 부터 `HiFIS-Client-V2`(Next.js) 가 그리는 곳이다. 그 전에는
+    # 이 서버가 HTML 을 직접 내려줘서 `api.hifis.app` 이었다.
+    # 매장 벽에 붙고 회원에게 문자로 가는 주소라 `localhost` 가 들어가면 아무도 못 연다.
+    public_base_url: str = "https://hifis.app"
 
     # 계정관리 비번 암호화 마스터 키 (§9.6) — AES-256, 64 hex(32 byte). openssl rand -hex 32
     account_master_key: str = "00" * 32

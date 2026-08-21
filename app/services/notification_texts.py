@@ -265,11 +265,18 @@ def staff_attendance(name: str, action: str, when: datetime, note: str | None = 
 
 
 def my_task_missing(left: list[str]) -> dict:
-    """본인에게 — 내 업무를 남기고 퇴근했다."""
+    """본인에게 — 내 업무를 남기고 퇴근했다.
+
+    **`MY_TASK` 가 아니라 `MY_TASK_MISSING` 이다** (2026-08-21). 앱이 이것만
+    빨간 경고로 그린다. 같은 `MY_TASK` 에 수정·삭제 결재와 **승인** 알림이
+    섞여 있어서, 종류째 빨갛게 하면 승인받은 것도 경고로 보인다.
+
+    옛 앱은 모르는 종류를 회색으로 떨구므로 지금과 똑같이 보인다 — 안 깨진다.
+    """
     head = left[0] if left else ""
     body = head if len(left) == 1 else f"{head} 외 {len(left) - 1}개"
     return {
-        "type": "MY_TASK",
+        "type": "MY_TASK_MISSING",
         "title": "안 한 업무가 있어요",
         "body": f"{body}를 아직 못 했어요",
         "link": "/work",
@@ -277,11 +284,62 @@ def my_task_missing(left: list[str]) -> dict:
 
 
 def staff_task_missing(name: str, left: int) -> dict:
-    """대표에게 — 누가 업무를 남기고 퇴근했다."""
+    """대표에게 — 누가 업무를 남기고 퇴근했다.
+
+    본인 것과 **같이 빨갛게** 뜬다 (2026-08-21 대표 요청).
+    """
     return {
-        "type": "MY_TASK",
+        "type": "MY_TASK_MISSING",
         "title": f"{name}님이 업무를 남기고 퇴근했어요",
         "body": f"내 업무 {left}개가 안 됐어요",
+        "link": "/work",
+    }
+
+
+def task_miss_confirmed(day, contents: list[str]) -> dict:
+    """본인에게 — 다음 근무일까지도 안 해서 **확정 누락**이 됐다 (2026-08-21).
+
+    퇴근할 때 온 알림과 글이 갈려야 한다. 저쪽은 '아직 기회가 있다' 는 뜻이고
+    이쪽은 이미 깎였다는 뜻이라, 같은 문장이면 회복할 수 있는 날을 놓친다.
+    """
+    head = contents[0] if contents else ""
+    body = head if len(contents) == 1 else f"{head} 외 {len(contents) - 1}개"
+    return {
+        "type": "MY_TASK_MISSING",
+        "title": f"{day.month}월 {day.day}일 업무가 누락됐어요",
+        "body": f"{body} · 사유가 있으면 사유서를 내 주세요",
+        "link": "/work",
+    }
+
+
+def task_miss_excuse(name: str, day) -> dict:
+    """대표에게 — 누락 사유서가 올라왔다 (2026-08-21).
+
+    **`MY_TASK` 다.** 결재 요청이지 경고가 아니라, 빨간 종류로 보내면
+    대표 알림함이 빨간 줄로 도배된다.
+    """
+    return {
+        "type": "MY_TASK",
+        "title": "업무 누락 사유서",
+        "body": f"{name} · {day.month}월 {day.day}일",
+        "link": "/work",
+    }
+
+
+def task_miss_decided(day, approve: bool, reason: str | None) -> dict:
+    """본인에게 — 사유서가 처리됐다. 승인이면 깎였던 점수가 되돌아온다."""
+    head = f"{day.month}월 {day.day}일 누락"
+    if approve:
+        return {
+            "type": "MY_TASK",
+            "title": f"{head} 사유가 승인됐어요",
+            "body": "깎인 점수가 되돌아왔어요",
+            "link": "/work",
+        }
+    return {
+        "type": "MY_TASK_MISSING",
+        "title": f"{head} 사유가 반려됐어요",
+        "body": reason or "",
         "link": "/work",
     }
 
@@ -379,3 +437,41 @@ def employee_joined(name: str, branch_name: str | None, rank_label: str | None) 
 
 def employee_resigned(name: str) -> dict:
     return {"type": "STAFF", "title": f"{name}님이 퇴사했어요", "body": None, "link": "/staff"}
+
+
+#: 업무 상태 → 알림에 그대로 들어가는 **한 마디**
+#:
+#: 이름 뒤에 붙여 `윤서연님이 외출중이에요` 가 되게 문장으로 적어 둔다.
+#: 라벨만 두고 `{라벨} 상태로 바꿨어요` 로 짜면 `외출 상태로 바꿨어요` 처럼
+#: 어색해진다 (2026-08-20 대표 요청으로 문장으로 바꿨다).
+#:
+#: `AUTO` 는 "따로 정하지 않음"이라 **되돌린 것**으로 읽히게 적는다 —
+#: 앱 고르개의 `자동 (출근 기준)` 을 그대로 쓰면 알림에서는 무슨 말인지 모른다.
+#: `AWAY` 만 `~중이에요` 가 안 붙어서 따로 적는다.
+_WORK_STATUS_LINES = {
+    "AUTO": "근무 중이에요",
+    "MEETING": "회의중이에요",
+    "MEAL": "식사중이에요",
+    "OUT": "외출중이에요",
+    "AWAY": "자리를 비웠어요",
+}
+
+
+def work_status_changed(name: str, status, message: str | None) -> dict:
+    """직원이 업무 상태·상태 메시지를 바꿨다 — **대표·관리자에게만** (2026-08-20 요청).
+
+    조직도 상태 점이 바뀌는 것을 아무도 모르고 지나가서, 자리를 비운 사람이
+    생겨도 대표가 조직도를 열어 봐야만 알았다.
+
+    본인은 뺀다(`notify_bosses(exclude=...)`) — 자기가 방금 누른 것이다.
+    """
+    # 모르는 값이면 상태를 짚지 않고 바뀌었다고만 한다 (enum 이 늘어도 안 깨진다)
+    line = _WORK_STATUS_LINES.get(str(status), "상태를 바꿨어요")
+    note = (message or "").strip()
+    return {
+        "type": "STAFF",
+        "title": f"{name}님이 {line}",
+        # 상태 메시지는 **선택**이다 — 안 적었으면 제목 한 줄로 끝난다
+        "body": short(note) if note else None,
+        "link": "/staff",
+    }

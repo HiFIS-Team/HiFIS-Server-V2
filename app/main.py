@@ -14,7 +14,7 @@ from app.api.auth import auth, invite_keys, scan_terminals
 from app.api.board import approvals, comments, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.legal import consents
-from app.api.members import members, registrations, session_signs
+from app.api.members import members, pt_surveys, registrations, session_signs
 from app.api.payroll import payslips, rank_policies
 from app.api.platform import (
     access_logs,
@@ -31,6 +31,7 @@ from app.api.platform import (
 from app.api.projects import meetings, projects, todos
 from app.api.public import (
     legal as public_legal,
+    pt_survey as public_pt_survey,
     survey as public_survey,
     tv as public_tv,
 )
@@ -63,7 +64,7 @@ _DOCS_OPEN = settings.environment != "production"
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.17.0",
+    version="0.18.0",
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_OPEN else None,
     redoc_url="/redoc" if _DOCS_OPEN else None,
@@ -116,6 +117,7 @@ app.include_router(attendance.router)
 app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
+app.include_router(pt_surveys.router)
 app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회원 개인정보(§13)
 # scoring — 점수
 app.include_router(scores.router)
@@ -149,6 +151,7 @@ app.include_router(chat_audit.router)  # 사내톡 열람(관리자 이상)
 app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
+app.include_router(public_pt_survey.router)  # PT 만족도 폼 — **로그인 없음**(문자 링크)
 app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
 app.include_router(public_legal.router)   # 약관·개인정보처리방침 — **로그인 없음**(스토어 심사용 공개 URL)
 app.include_router(dashboard.router)

@@ -2,10 +2,39 @@
 
 from datetime import date, datetime
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.enums import MyTaskRequestType, ProjectRequestStatus
 from app.schemas.base import CamelModel
+
+#: 안 고르면 매일 — 예전 동작이 그랬으므로 기본값을 바꾸지 않는다
+EVERY_DAY = [1, 2, 3, 4, 5, 6, 7]
+
+
+def clean_weekdays(value: list[int] | None) -> list[int]:
+    """ISO 1(월)~7(일) 로 추리고 **차례대로 하나씩** 남긴다.
+
+    `[7, 1, 1]` 처럼 겹치거나 뒤섞여 와도 `[1, 7]` 이 된다 — 화면이 요일을
+    늘 같은 차례로 그려야 해서 여기서 한 번에 정리한다.
+    비어 있으면 매일로 본다 (하나도 안 고른 업무는 영영 안 뜬다).
+    """
+    if not value:
+        return list(EVERY_DAY)
+    days = sorted({d for d in value if 1 <= d <= 7})
+    return days or list(EVERY_DAY)
+
+
+class MyTaskItem(CamelModel):
+    """만들 업무 한 줄 — 내용과 그 줄에 걸리는 요일."""
+
+    content: str
+    #: 안 주면 매일
+    weekdays: list[int] | None = None
+
+    @field_validator("weekdays")
+    @classmethod
+    def _days(cls, v: list[int] | None) -> list[int]:
+        return clean_weekdays(v)
 
 
 class MyTaskCreate(CamelModel):
@@ -13,19 +42,65 @@ class MyTaskCreate(CamelModel):
 
     앱이 추가 화면에서 여러 줄을 쌓아 두고 한 번에 보낸다. 줄마다 따로
     부르면 중간에 끊겼을 때 **반만 들어간 채로 화면이 닫힌다.**
+
+    보내는 길이 둘이다.
+
+    | 칸 | 언제 |
+    |---|---|
+    | `items` | **줄마다 요일이 다를 때** — 요일을 하나씩 훑으며 담는 화면 |
+    | `contents` + `weekdays` | 한 묶음이 같은 요일일 때 (옛 모양, 그대로 받는다) |
+
+    둘 다 비면 400 이다 (`CONTENT_REQUIRED`).
     """
 
-    contents: list[str] = Field(min_length=1)
+    contents: list[str] | None = None
+    #: `contents` 와 짝 — 그 묶음 전체에 걸린다. 안 주면 매일
+    weekdays: list[int] | None = None
+    items: list[MyTaskItem] | None = None
+
+    @field_validator("weekdays")
+    @classmethod
+    def _days(cls, v: list[int] | None) -> list[int]:
+        return clean_weekdays(v)
+
+    def rows(self) -> list[tuple[str, list[int]]]:
+        """어느 길로 왔든 `(내용, 요일)` 목록 하나로 만들어 준다."""
+        if self.items:
+            return [(i.content, i.weekdays or list(EVERY_DAY)) for i in self.items]
+        days = self.weekdays or list(EVERY_DAY)
+        return [(c, days) for c in (self.contents or [])]
+
+
+class MyTaskUpdate(CamelModel):
+    """**한 번도 체크한 적 없는** 업무를 결재 없이 바로 고칠 때 (2026-08-20).
+
+    안 보낸 칸은 지금 값을 그대로 둔다 — 요일만 고치거나 내용만 고칠 수 있다.
+    """
+
+    content: str | None = None
+    weekdays: list[int] | None = None
 
 
 class MyTaskOut(CamelModel):
     id: str
     employee_id: str
     content: str
+    #: 돌아오는 요일 (ISO 1~7) — 앱이 목록 줄과 고르개에 그린다
+    weekdays: list[int] = Field(default_factory=lambda: list(EVERY_DAY))
     sort: int
     #: **오늘 체크했나.** 목록을 받을 때 서버가 같이 채운다 —
     #: 앱이 체크 기록을 따로 받아 id 로 맞추면 요청이 두 배가 된다.
     checked: bool = False
+    #: **한 번이라도 체크한 적이 있나** (오늘이 아니라 통틀어서, 2026-08-20).
+    #:
+    #: 앱이 수정·삭제를 어느 길로 보낼지 이 값으로 가른다 — 아직 한 번도
+    #: 안 했으면 바로 고치고, 한 번이라도 했으면 결재를 받는다.
+    ever_checked: bool = False
+    #: **밀려 온 것이면 원래 차례였던 날** (2026-08-20 요청). null 이면 제 차례다.
+    #:
+    #: 그날 못 한 업무는 다음 근무일 목록 **뒤에** 붙어서 온다 —
+    #: 앱이 이 값으로 구분선 아래에 그린다.
+    carried_from: date | None = None
     #: 대기 중인 수정·삭제 결재 (없으면 null) — 앱이 '대기' 표시를 그린다
     pending_request: "MyTaskRequestOut | None" = None
     created_at: datetime
@@ -55,6 +130,36 @@ class MyTaskRosterRow(CamelModel):
     total: int
     done: int
     complete: bool
+
+
+class MyTaskExcuseCreate(CamelModel):
+    """누락 사유서 — 왜 못 했는지 (2026-08-21).
+
+    **사유가 필수다.** 빈 사유서를 받아 두면 결재하는 쪽이 판단할 근거가 없다.
+    """
+
+    reason: str = Field(min_length=1)
+
+
+class MyTaskMissOut(CamelModel):
+    """확정 누락 한 줄 — 본인 화면과 대표 결재함이 같이 쓴다."""
+
+    id: str
+    employee_id: str
+    date: date
+    task_count: int
+    #: 그날 못 한 업무 이름들 — 나중에 업무를 고쳐도 그때 것이 남아 있다
+    contents: list[str] | None = None
+    #: `None` 이면 사유서를 아직 안 냈다
+    excuse_reason: str | None = None
+    #: `None` 안 냄 · PENDING 대기 · APPROVED **회복** · REJECTED 확정
+    excuse_status: ProjectRequestStatus | None = None
+    decided_by_id: str | None = None
+    decided_at: datetime | None = None
+    reject_reason: str | None = None
+    created_at: datetime
+    #: 결재 화면이 '누가' 를 보여줄 수 있게 서버가 채워 준다
+    employee_name: str | None = None
 
 
 class MyTaskRequestCreate(CamelModel):

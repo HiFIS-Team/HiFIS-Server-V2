@@ -259,6 +259,9 @@ class ScoreCategory(StrEnum):
     # 지각 차감 — **늘 음수다.** 출근 스캔이 자동으로 넣는다 (`attendance.py`).
     # 랭킹 탭에는 안 선다(어느 kind 에도 안 걸린다) — 종합 점수만 깎인다.
     LATE = "LATE"
+    # 개인 업무 누락 차감 — **늘 음수다.** 다음 근무일까지도 안 하면 잡이 넣는다
+    # (`workers/my_task_miss_scan.py`). 지각과 같은 자리, 같은 방식이다.
+    TASK_MISS = "TASK_MISS"
     # 방문 경로 — 셋을 **따로** 둔다. 랭킹 내역이 '블로그 10 · 인스타 5' 처럼
     # 갈라서 보여줘야 해서 하나로 묶으면 다시 못 나눈다.
     BLOG = "BLOG"              # 블로그 보고 온 회원 등록
@@ -346,6 +349,8 @@ class InboxKind(StrEnum):
     EVENT = "EVENT"        # POST /events/{id}/approve|reject
     MY_TASK = "MY_TASK"    # POST /my-task-requests/{id}/approve|reject
     PROJECT = "PROJECT"    # POST /projects/requests/{id}/approve|reject
+    # 누락 사유서 — 주소가 달라서 MY_TASK 와 따로 둔다 (2026-08-21)
+    TASK_MISS = "TASK_MISS"  # POST /my-task-misses/{id}/approve|reject
 
 
 class InboxStatus(StrEnum):
@@ -377,3 +382,15 @@ class AnomalyKind(StrEnum):
     BULK_DELETE = "BULK_DELETE"          # 짧은 시간에 대량 삭제
     READ_BURST = "READ_BURST"            # 남의 대화·기록 열람 급증
     SCREEN_CAPTURE = "SCREEN_CAPTURE"    # 짧은 시간에 화면 캡처 반복 (iOS — 막을 수 없어 세기만 한다)
+
+
+class RenewIntent(StrEnum):
+    """PT 연장 여부 — 7회차 만족도 폼에서 회원이 고른다 (2026-08-20).
+
+    **'고민중'을 뺄 수 없다.** 예/아니오만 두면 아직 못 정한 사람이 아무거나
+    누르고, 그 값을 보고 트레이너가 판단하면 오히려 틀린다.
+    """
+
+    YES = "YES"      # 연장할게요
+    MAYBE = "MAYBE"  # 조금 더 생각해볼게요
+    NO = "NO"        # 이번엔 어려울 것 같아요

@@ -12,13 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, branch_scope, get_current_user
 from app.db.session import get_db
-from app.enums import VISIT_PATH_SCORE, RegistrationStatus, Role
+from app.enums import VISIT_PATH_SCORE, Role
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut, MemberUpdate
 from app.schemas.members.registration import RegistrationOut
+from app.services.registrations import counts_now, ensure_used_within, initial_status
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/members", tags=["members"], dependencies=[Depends(get_current_user)])
@@ -99,7 +100,14 @@ async def create_member(
     # **신규 등록에만 준다.** 재등록(`POST /registrations`)에는 안 붙는다 —
     # 방문 경로는 처음 올 때의 이야기라 재등록마다 또 주면 같은 유입으로
     # 점수가 계속 쌓인다.
+    #
+    # **지난 달 결제(기존 회원)에도 안 준다 (2026-08-21).** 앱을 켜기 전에
+    # 등록했던 사람을 뒤늦게 넣는 것이라, 오늘 점수를 주면 지난 유입이
+    # 이번 달 랭킹으로 들어온다. 매출을 `purchased_at` 으로 거르는 것과
+    # 같은 기준이다 (`services/registrations.counts_now`).
     awarded = VISIT_PATH_SCORE.get(payload.visit_path) if payload.visit_path else None
+    if awarded is not None and not counts_now(reg_in.purchased_at if reg_in else None):
+        awarded = None
     if awarded is not None:
         category, points = awarded
         owner = await db.get(Employee, payload.owner_trainer_id)
@@ -118,15 +126,18 @@ async def create_member(
 
     registration: Registration | None = None
     if reg_in is not None:
+        # 기존 회원은 **이미 받은 회차**가 있다 — 안 받으면 남은 회차가 틀리고
+        # 세션 싸인을 1회차부터 다시 받는다 (안 보내면 0 이라 옛 앱은 그대로다)
+        ensure_used_within(reg_in.used_sessions, reg_in.total_sessions)
         registration = Registration(
             member_id=member.id,
             trainer_id=reg_trainer.id,
             type=reg_in.type,
             total_sessions=reg_in.total_sessions,
-            used_sessions=0,
+            used_sessions=reg_in.used_sessions,
             price_paid=reg_in.price_paid,
             session_unit_price=reg_in.session_unit_price,
-            status=RegistrationStatus.ACTIVE,
+            status=initial_status(reg_in.used_sessions, reg_in.total_sessions),
             purchased_at=reg_in.purchased_at or datetime.now(timezone.utc),
         )
         db.add(registration)

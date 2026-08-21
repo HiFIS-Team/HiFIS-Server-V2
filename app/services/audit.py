@@ -186,6 +186,17 @@ LABELS: dict[tuple[str, str], str] = {
     ("PATCH", "/kindness-surveys/{id}/status"): "컴플레인 처리 단계 변경",
     ("POST", "/webhooks/kindness-survey"): "회원 설문 접수",
     ("POST", "/survey/{id}"): "회원 설문 접수(매장 QR)",
+    # 내 업무 — 라벨이 통째로 빠져 있어 주소가 그대로 보이던 자리다 (2026-08-21)
+    ("POST", "/my-tasks"): "내 업무 추가",
+    ("PATCH", "/my-tasks/{id}"): "내 업무 수정",
+    ("DELETE", "/my-tasks/{id}"): "내 업무 삭제",
+    ("POST", "/my-tasks/{id}/check"): "내 업무 체크",
+    ("POST", "/my-tasks/{id}/requests"): "내 업무 수정·삭제 신청",
+    ("POST", "/my-task-requests/{id}/approve"): "내 업무 결재 승인",
+    ("POST", "/my-task-requests/{id}/reject"): "내 업무 결재 반려",
+    ("POST", "/my-task-misses/{id}/excuse"): "업무 누락 사유서 제출",
+    ("POST", "/my-task-misses/{id}/approve"): "업무 누락 사유 승인",
+    ("POST", "/my-task-misses/{id}/reject"): "업무 누락 사유 반려",
     # 프로젝트
     ("POST", "/projects"): "프로젝트 만들기",
     ("PATCH", "/projects/{id}"): "프로젝트 수정",

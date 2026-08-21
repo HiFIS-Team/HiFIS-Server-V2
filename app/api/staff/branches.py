@@ -6,13 +6,13 @@
 만들기·고치기는 그대로 ADMIN 전용이다.
 """
 
-import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.tokens import public_token
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.enums import Role
@@ -63,7 +63,7 @@ async def _link(branch: Branch, kind: str, db: AsyncSession, *, reset: bool) -> 
     """지점의 공개 주소를 만들어 준다 — 없거나 [reset] 이면 새로 발급한다."""
     field = _LINKS[kind]
     if reset or not getattr(branch, field):
-        setattr(branch, field, secrets.token_urlsafe(12))
+        setattr(branch, field, public_token())
         await db.commit()
         await db.refresh(branch)
     base = settings.public_base_url.rstrip("/")

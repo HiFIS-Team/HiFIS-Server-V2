@@ -11,15 +11,17 @@
 
 컴플레인 자체는 `kindness_surveys.improvement` 다 — 설문에서 개선 의견을
 적으면 그 줄이 곧 컴플레인 한 건이고, 처리 상태도 같은 줄에 붙어 있다.
+
+**화면은 여기서 안 그린다 (2026-08-20).** `HiFIS-Client-V2` 가 `hifis.app` 에서
+그리고, 이 라우터는 값만 준다.
 """
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.enums import ComplaintStatus
 from app.models.scoring.kindness import KindnessSurvey
@@ -28,8 +30,6 @@ from app.models.staff.employee import Employee
 from app.schemas.base import CamelModel
 
 router = APIRouter(tags=["tv"])
-
-_PAGE = Path(__file__).resolve().parent.parent.parent / "web" / "tv.html"
 
 #: 이보다 짧은 개선 의견은 화면에 안 올린다.
 #:
@@ -61,10 +61,15 @@ async def _branch_of(token: str, db: AsyncSession) -> Branch:
     return branch
 
 
-@router.get("/tv/{token}", response_class=HTMLResponse, include_in_schema=False)
-async def tv_page(token: str, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
-    await _branch_of(token, db)
-    return HTMLResponse(_PAGE.read_text(encoding="utf-8"))
+@router.get("/tv/{token}", include_in_schema=False)
+async def tv_page(token: str) -> RedirectResponse:
+    """옛 주소 — **화면이 있는 곳으로 넘긴다** (2026-08-20).
+
+    TV 브라우저에 옛 주소가 즐겨찾기로 박혀 있을 수 있어서 라우트를 안 지운다.
+    몇 달씩 켜 두는 화면이라 어느 날 갑자기 안 뜨면 아무도 원인을 모른다.
+    """
+    base = settings.public_base_url.rstrip("/")
+    return RedirectResponse(f"{base}/tv/{token}", status_code=308)
 
 
 @router.get("/tv/{token}/resolved", response_model=TvOut)
