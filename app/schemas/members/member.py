@@ -17,7 +17,10 @@ class MemberRegistrationInput(CamelModel):
     price_paid: int = Field(ge=0)
     session_unit_price: int = Field(ge=0)
     trainer_id: str | None = None  # 없으면 담당 트레이너(ownerTrainerId)
+    #: 결제한 날 — 안 주면 지금. **기존 회원은 실제 결제일을 넣는다** (아래 설명)
     purchased_at: datetime | None = None
+    #: 이미 받은 회차 — 앱을 켜기 전에 쓴 만큼. 안 주면 0 (옛 앱과 같다)
+    used_sessions: int = Field(default=0, ge=0)
 
 
 class MemberCreate(CamelModel):

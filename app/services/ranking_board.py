@@ -131,13 +131,23 @@ async def build_board(
         people = [p for p in people if p.branch_id == branch_id]
     board = {p.id: _blank(p) for p in people}
 
-    # 매출 — 그 달에 등록된 등록권의 결제액. 신규/재등록을 따로 센다
+    # 매출 — 그 달에 **결제된** 등록권의 결제액. 신규/재등록을 따로 센다
+    #
+    # **`created_at` 이 아니라 `purchased_at` 을 본다 (2026-08-21).**
+    # 앞의 것은 앱에 입력한 시각이라, 앱을 켜기 한참 전에 등록했던 **기존 회원**을
+    # 뒤늦게 넣으면 그 지난 실적이 **오늘 매출**로 잡혔다.
+    #
+    # 등록권 목록(`GET /registrations?period=`)은 원래 `purchased_at` 으로 거른다 —
+    # 랭킹만 다른 값을 보던 자리라, 며칠 늦게 입력하면 목록과 랭킹이 서로 다른
+    # 달로 갈리기도 했다.
     #
     # **워크인은 뺀다** (2026-08-13 대표 결정). 센터를 보고 제 발로 온 사람이라
     # 직원이 끌어온 실적이 아니다. 방문 경로 점수를 줄 때 워크인을 빼는 것과
     # 같은 기준이다 (`VISIT_PATH_SCORE`).
     #
     # **급여는 그대로다** — 커미션은 워크인도 포함해서 계산한다. 랭킹에서만 뺀다.
+    # 애초에 커미션은 등록이 아니라 **수행한 세션 싸인**마다 붙어서(`payroll.py`)
+    # 여기를 고쳐도 급여는 한 푼도 안 움직인다.
     rows = (
         await db.execute(
             select(
@@ -148,8 +158,8 @@ async def build_board(
             )
             .join(Member, Member.id == Registration.member_id)
             .where(
-                Registration.created_at >= start,
-                Registration.created_at < end,
+                Registration.purchased_at >= start,
+                Registration.purchased_at < end,
                 Member.visit_path.is_distinct_from(VisitPath.WALK_IN),
             )
             .group_by(Registration.trainer_id, Registration.type)

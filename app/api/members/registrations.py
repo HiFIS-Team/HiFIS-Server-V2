@@ -9,11 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user
 from app.core.periods import period_range
 from app.db.session import get_db
-from app.enums import RegistrationStatus, RegistrationType, Role
+from app.enums import RegistrationType, Role
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.registration import RegistrationCreate, RegistrationOut
+from app.services.registrations import ensure_used_within, initial_status
 
 router = APIRouter(
     prefix="/registrations", tags=["registrations"], dependencies=[Depends(get_current_user)]
@@ -60,15 +61,18 @@ async def create_registration(
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "본인 담당 등록만 생성할 수 있습니다"})
     if current.role not in (Role.MASTER, Role.ADMIN) and trainer.branch_id != current.branch_id:
         raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 등록은 생성할 수 없습니다"})
+    # 기존 회원의 지난 등록권을 뒤늦게 넣을 수 있다 — 이미 받은 회차를 그대로
+    # 담고, 다 썼으면 처음부터 만료다 (`services/registrations.py`)
+    ensure_used_within(payload.used_sessions, payload.total_sessions)
     registration = Registration(
         member_id=payload.member_id,
         trainer_id=payload.trainer_id,
         type=payload.type,
         total_sessions=payload.total_sessions,
-        used_sessions=0,
+        used_sessions=payload.used_sessions,
         price_paid=payload.price_paid,
         session_unit_price=payload.session_unit_price,
-        status=RegistrationStatus.ACTIVE,
+        status=initial_status(payload.used_sessions, payload.total_sessions),
         purchased_at=payload.purchased_at or datetime.now(timezone.utc),
     )
     db.add(registration)
