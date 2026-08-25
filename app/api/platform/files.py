@@ -29,4 +29,7 @@ async def serve_signed_file(
         raise HTTPException(400, detail={"code": "INVALID_PATH", "message": "잘못된 경로입니다"})
     if not os.path.isfile(full):
         raise HTTPException(404, detail={"code": "FILE_MISSING", "message": "파일이 존재하지 않습니다"})
-    return FileResponse(full)
+    return FileResponse(
+        full,
+        headers={"Cache-Control": "private, max-age=604800"},
+    )

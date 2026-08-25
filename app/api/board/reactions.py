@@ -12,6 +12,8 @@ from app.models.staff.employee import Employee
 from app.schemas.board.reaction import ReactionAgg, ReactionToggle, ToggleResult
 from app.services.chat import is_member
 from app.services.reactions import aggregate_one, toggle_reaction
+from app.services.notice_visibility import is_notice_blocked
+from app.models.board.notice import Notice
 
 router = APIRouter(prefix="/reactions", tags=["reactions"], dependencies=[Depends(get_current_user)])
 
@@ -20,6 +22,10 @@ async def _check_target_access(
     db: AsyncSession, target_type: ReactionTargetType, target_id: str, current: Employee
 ) -> None:
     """대상마다 볼 수 있는 사람만 — 공지는 공용이라 검사가 없다."""
+    if target_type is ReactionTargetType.NOTICE:
+        if await db.get(Notice, target_id) is None or await is_notice_blocked(db, current):
+            raise HTTPException(404, detail={"code": "NOTICE_NOT_FOUND", "message": "공지를 찾을 수 없습니다"})
+        return
     if target_type is ReactionTargetType.PROJECT:
         from app.api.projects.projects import _ensure_visible, _get_project_or_404
 

@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
-from app.core.storage import save_upload
+from app.core.storage import save_chat_upload
 from app.db.session import get_db
 from app.enums import MessageKind, ReactionTargetType
 from app.models.board.reaction import Reaction
@@ -373,7 +373,7 @@ async def upload_attachment(
     대화에 붙는 사진 한 장은 그 트리에 들어갈 것이 아니다.
     """
     await _require_member(db, room_id, current.id)
-    url, ext, size = await save_upload(file)
+    url, ext, size = await save_chat_upload(file)
     return AttachmentOut(
         url=url, name=file.filename or f"file.{ext}", ext=ext, size=size
     )

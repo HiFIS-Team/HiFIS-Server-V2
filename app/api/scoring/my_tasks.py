@@ -191,7 +191,7 @@ async def list_my_tasks(
     (`/attendance` 와 같은 규칙 — backend-gap 60).
     """
     target_id = current.id
-    if employee_id and current.role in (Role.MASTER, Role.ADMIN):
+    if employee_id and current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER):
         target_id = employee_id
     day = _parse_date(date)
     owner = await db.get(Employee, target_id)
@@ -229,7 +229,7 @@ async def list_my_tasks(
 @router.get(
     "/my-tasks/roster",
     response_model=list[MyTaskRosterRow],
-    dependencies=[Depends(require_role(Role.ADMIN))],  # MASTER 자동 승계
+    dependencies=[Depends(require_role(Role.ADMIN, Role.MANAGER))],  # MASTER 자동 승계
 )
 async def my_task_roster(
     db: AsyncSession = Depends(get_db),
