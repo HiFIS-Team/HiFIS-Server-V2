@@ -1,8 +1,8 @@
-"""설문 토큰 형식 통일 — 모든 지점을 8자 공개 토큰으로 정규화
+"""설문 토큰 보완 — 토큰이 없는 지점에만 공개 토큰 발급
 
 초기 설문 토큰은 token_urlsafe(12)로 만들어 길이와 문자가 달랐다.
-현재 공개 주소 정책인 public_token()으로 모든 BRANCH 토큰을 다시 발급한다.
-기존 QR은 폐기되므로 새 토큰 기준으로 QR을 다시 뽑아야 한다.
+기존 QR을 운영 중 무효화하면 안 되므로 이미 발급된 토큰은 보존한다.
+현재 공개 주소 정책인 public_token()은 토큰이 없는 지점에만 사용한다.
 
 Revision ID: hsn000000002
 Revises: hsn000000001
@@ -24,9 +24,17 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     conn = op.get_bind()
     rows = conn.execute(
-        sa.text("SELECT id FROM branches WHERE type = 'BRANCH'")
+        sa.text(
+            "SELECT id FROM branches "
+            "WHERE type = 'BRANCH' AND survey_token IS NULL"
+        )
     ).fetchall()
-    tokens: set[str] = set()
+    tokens = {
+        token
+        for (token,) in conn.execute(
+            sa.text("SELECT survey_token FROM branches WHERE survey_token IS NOT NULL")
+        ).fetchall()
+    }
     for (branch_id,) in rows:
         token = public_token()
         while token in tokens:
@@ -39,4 +47,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("설문 토큰은 이전 값으로 복원할 수 없습니다")
+    # 기존 토큰을 보존하므로 되돌릴 때도 이미 발급된 QR을 건드리지 않는다.
+    pass
