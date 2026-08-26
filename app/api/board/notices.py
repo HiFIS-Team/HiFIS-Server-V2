@@ -8,6 +8,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.enums import EmployeeStatus, ReactionTargetType, Role
 from app.models.staff.employee import Employee
+from app.models.staff.branch import Branch
 from app.models.board.notice import Notice
 from app.models.board.notice_read import NoticeRead
 from app.models.board.reaction import Reaction
@@ -23,6 +24,7 @@ from app.services.notifications import notify
 from app.api.board.comments import count_comments
 from app.enums import CommentTargetType
 from app.services.reactions import aggregate_for
+from app.services.notice_visibility import is_notice_blocked
 
 router = APIRouter(prefix="/notices", tags=["notices"], dependencies=[Depends(get_current_user)])
 
@@ -75,6 +77,8 @@ async def _to_out(db: AsyncSession, notices: list[Notice], current: Employee) ->
 async def list_notices(
     current: Employee = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> list[NoticeOut]:
+    if await is_notice_blocked(db, current):
+        return []
     result = await db.execute(
         select(Notice).order_by(Notice.pinned.desc(), Notice.created_at.desc())
     )
@@ -93,10 +97,13 @@ async def create_notice(
     # 새 공지 알림(+웹푸시) — 재직 중 전원(어드민 포함, 작성자만 제외)
     recipients = (
         await db.scalars(
-            select(Employee.id).where(
+            select(Employee.id)
+            .join(Branch, Employee.branch_id == Branch.id, isouter=True)
+            .where(
                 Employee.status == EmployeeStatus.ACTIVE,
                 Employee.deleted_at.is_(None),
                 Employee.id != current.id,
+                Branch.name != "동광주",
             )
         )
     ).all()
@@ -116,7 +123,7 @@ async def mark_notice_read(
 ) -> None:
     """공지 열람 시 읽음 처리 — (공지·본인)당 1회, 멱등."""
     notice = await db.get(Notice, notice_id)
-    if notice is None:
+    if notice is None or await is_notice_blocked(db, current):
         raise _not_found()
     exists = await db.scalar(
         select(NoticeRead).where(
@@ -137,7 +144,7 @@ async def notice_readers(
 ) -> NoticeReadersOut:
     """확인 현황 — 대상 전원(작성자 제외 재직자) + 사람별 읽음 여부."""
     notice = await db.get(Notice, notice_id)
-    if notice is None:
+    if notice is None or await is_notice_blocked(db, current):
         raise _not_found()
     recipients = (
         await db.execute(

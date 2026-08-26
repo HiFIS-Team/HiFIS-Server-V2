@@ -46,6 +46,7 @@ from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 from app.schemas.staff.home import HomeAttendanceOut, HomeSummaryOut, InboxItemOut
+from app.services.notice_visibility import is_notice_blocked
 
 router = APIRouter(tags=["home"])
 
@@ -134,15 +135,17 @@ async def my_home(
     )
 
     # ── 안 읽은 공지 수 = 내 NoticeRead 가 없는 공지 (읽음 상태 기준, §6.4) ──
-    unread = await db.scalar(
-        select(func.count())
-        .select_from(Notice)
-        .where(
-            ~select(NoticeRead.id)
-            .where(NoticeRead.notice_id == Notice.id, NoticeRead.employee_id == current.id)
-            .exists()
+    unread = 0
+    if not await is_notice_blocked(db, current):
+        unread = await db.scalar(
+            select(func.count())
+            .select_from(Notice)
+            .where(
+                ~select(NoticeRead.id)
+                .where(NoticeRead.notice_id == Notice.id, NoticeRead.employee_id == current.id)
+                .exists()
+            )
         )
-    )
 
     # ── 이번 달 내 점수 합 ──
     month_score = await db.scalar(

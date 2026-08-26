@@ -353,6 +353,45 @@ def staff_absent(name: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# 출퇴근 단말 (2026-08-26) — 대표에게만
+# ---------------------------------------------------------------------------
+#
+# 스캐너가 죽으면 **아무 표시도 안 난다.** 스캐너 부저는 그때도 삑 소리를 내서
+# 찍은 사람은 됐다고 믿고, 저녁이 되면 `staff_absent` 가 나가서 안 나온
+# 사람처럼 보인다. 화순에서 실제로 그랬다.
+#
+# 그래서 종류를 `ATTENDANCE` 와 갈라 둔다 — 근태 알림에 섞이면 하루 수십 건
+# 사이에 묻힌다. 이건 **사람 이야기가 아니라 고장 이야기다.**
+
+
+def scan_terminal_failed(terminal_name: str, reason: str) -> dict:
+    """찍었는데 안 먹혔다 — 요청은 왔고 서버가 거절한 경우.
+
+    침묵(`scan_terminal_silent`)과 성격이 다르다. 저쪽은 요청이 아예 안 오는
+    것이고 이건 **온 요청이 튕긴 것**이라, 찍은 사람은 여전히 됐다고 믿는다.
+    """
+    return {
+        "type": "SCAN_TERMINAL",
+        "title": f"{terminal_name} 스캔이 안 먹혔어요",
+        "body": reason,
+        "link": "/attendance",
+    }
+
+
+def scan_terminal_silent(terminal_name: str, reason: str) -> dict:
+    """출근 시간이 지나도록 그 지점 스캔이 한 건도 없다.
+
+    [reason] 이 **무엇이 죽었는지**를 말한다 — 생존 신호로 가른다.
+    """
+    return {
+        "type": "SCAN_TERMINAL",
+        "title": f"{terminal_name}에서 오늘 스캔이 없어요",
+        "body": reason,
+        "link": "/attendance",
+    }
+
+
 #: 휴가 종류 → 사람이 읽는 말
 _LEAVE_LABELS = {"ANNUAL": "연차", "HALF": "반차", "SICK": "병가", "FIELD": "외근", "ETC": "기타"}
 

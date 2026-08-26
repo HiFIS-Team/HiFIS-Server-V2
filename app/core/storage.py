@@ -15,6 +15,8 @@ UPLOAD_ROOT = "uploads"
 _CHUNK = 1024 * 1024  # 1MB
 _AVATAR_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
 _AVATAR_MAX = 5 * 1024 * 1024  # 5MB
+_CHAT_EXTS = {"jpg", "jpeg", "png", "gif", "webp"}
+_CHAT_MAX = 5 * 1024 * 1024  # 5MB
 
 
 async def _save_image(upload: UploadFile, folder: str) -> str:
@@ -69,6 +71,32 @@ async def save_upload(upload: UploadFile) -> tuple[str, str, int]:
         while chunk := await upload.read(_CHUNK):
             size += len(chunk)
             out.write(chunk)
+    return f"/{rel_path}", ext, size
+
+
+async def save_chat_upload(upload: UploadFile) -> tuple[str, str, int]:
+    """사내톡 이미지 업로드를 검증하고 저장한다."""
+    filename = upload.filename or "file.jpg"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in _CHAT_EXTS:
+        raise HTTPException(400, detail={"code": "INVALID_IMAGE", "message": "사내톡에는 이미지 파일만 첨부할 수 있습니다"})
+
+    now = datetime.now(timezone.utc)
+    rel_dir = f"{UPLOAD_ROOT}/chat/{now:%Y}/{now:%m}"
+    os.makedirs(rel_dir, exist_ok=True)
+    rel_path = f"{rel_dir}/{uuid.uuid4().hex}.{ext}"
+    size = 0
+    try:
+        with open(rel_path, "wb") as out:
+            while chunk := await upload.read(_CHUNK):
+                size += len(chunk)
+                if size > _CHAT_MAX:
+                    raise HTTPException(400, detail={"code": "IMAGE_TOO_LARGE", "message": "사내톡 이미지는 5MB 이하만 가능합니다"})
+                out.write(chunk)
+    except Exception:
+        if os.path.exists(rel_path):
+            os.remove(rel_path)
+        raise
     return f"/{rel_path}", ext, size
 
 

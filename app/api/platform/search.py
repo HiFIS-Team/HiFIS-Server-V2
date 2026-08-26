@@ -16,6 +16,7 @@ from app.models.projects.meeting import Meeting
 from app.models.board.notice import Notice
 from app.models.projects.project import Project
 from app.schemas.platform.search import DocumentHit, PersonHit, SearchResults, TitleHit
+from app.services.notice_visibility import is_notice_blocked
 
 router = APIRouter(tags=["search"], dependencies=[Depends(get_current_user)])
 
@@ -24,6 +25,7 @@ router = APIRouter(tags=["search"], dependencies=[Depends(get_current_user)])
 async def search(
     q: str = Query(..., min_length=1),
     limit: int = Query(5, ge=1, le=20),
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SearchResults:
     like = f"%{q}%"
@@ -35,14 +37,16 @@ async def search(
     )
     people = (await db.scalars(people_stmt.order_by(Employee.name).limit(limit))).all()
 
-    notices = (
-        await db.scalars(
-            select(Notice)
-            .where(or_(Notice.title.ilike(like), Notice.body.ilike(like)))
-            .order_by(Notice.created_at.desc())
-            .limit(limit)
-        )
-    ).all()
+    notices = []
+    if not await is_notice_blocked(db, current):
+        notices = (
+            await db.scalars(
+                select(Notice)
+                .where(or_(Notice.title.ilike(like), Notice.body.ilike(like)))
+                .order_by(Notice.created_at.desc())
+                .limit(limit)
+            )
+        ).all()
 
     meetings = (
         await db.scalars(

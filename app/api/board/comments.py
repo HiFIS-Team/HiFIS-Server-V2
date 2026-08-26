@@ -29,6 +29,7 @@ from app.models.board.notice import Notice
 from app.models.projects.meeting import Meeting
 from app.models.staff.employee import Employee
 from app.schemas.board.comment import CommentCreate, CommentOut, CommentUpdate
+from app.services.notice_visibility import is_notice_blocked
 
 router = APIRouter(prefix="/comments", tags=["comments"], dependencies=[Depends(get_current_user)])
 
@@ -53,7 +54,7 @@ async def _ensure_target_visible(
     여기서 규칙을 다시 적으면 회의록 공개 범위가 바뀔 때 댓글만 남아 새어 나간다.
     """
     if target_type is CommentTargetType.NOTICE:
-        if await db.get(Notice, target_id) is None:
+        if await db.get(Notice, target_id) is None or await is_notice_blocked(db, current):
             raise HTTPException(404, detail={"code": "NOTICE_NOT_FOUND", "message": "공지를 찾을 수 없습니다"})
         return
 

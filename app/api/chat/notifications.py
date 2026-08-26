@@ -21,6 +21,7 @@ from app.schemas.chat.notification import (
     PushSubscribeIn,
     VapidPublicKeyOut,
 )
+from app.services.notice_visibility import is_notice_blocked
 
 router = APIRouter(tags=["notifications"], dependencies=[Depends(get_current_user)])
 
@@ -56,6 +57,8 @@ async def list_notifications(
     )
     if read is not None:
         stmt = stmt.where(Notification.read == read)
+    if await is_notice_blocked(db, current):
+        stmt = stmt.where(Notification.type != "NOTICE")
     result = await db.execute(stmt.order_by(Notification.created_at.desc()))
     return list(result.scalars().all())
 
