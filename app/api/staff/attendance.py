@@ -47,7 +47,12 @@ from app.schemas.staff.attendance import (
 from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
 from app.services.my_tasks import due_tasks
-from app.services.notifications import master_ids, notify, notify_bosses
+from app.services.notifications import (
+    master_ids,
+    notify,
+    notify_bosses,
+    notify_ops,
+)
 from app.services.scoring import accrue_score
 
 router = APIRouter(tags=["attendance"])
@@ -340,7 +345,7 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
 async def _warn_scan_failed(
     db: AsyncSession, actor: ScanActor, reason: str
 ) -> None:
-    """단말이 보낸 스캔이 튕겼다 — 대표에게 알린다 (2026-08-26).
+    """단말이 보낸 스캔이 튕겼다 — **개발자에게** 알린다 (2026-08-26).
 
     **단말이 보낸 것만 알린다.** 앱에서 사람이 찍다 틀린 것은 그 사람 화면에
     바로 뜨므로 대표가 받을 일이 아니다. 카운터 스캐너는 다르다 — 튕겨도
@@ -372,8 +377,8 @@ async def _warn_scan_failed(
     )
     if dup is not None:
         return
-    for eid in await master_ids(db):
-        await notify(db, employee_id=eid, **text)
+    # 고칠 수 있는 사람에게 간다 — 침묵 알림과 같은 기준(직군 DEVELOPER)
+    await notify_ops(db, **text)
     await db.commit()
 
 

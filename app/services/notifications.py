@@ -98,6 +98,23 @@ async def notify_developers(db: AsyncSession, **text) -> None:
         await notify(db, employee_id=eid, **text)
 
 
+async def notify_ops(db: AsyncSession, **text) -> None:
+    """고칠 사람에게 — **개발자가 없으면 대표에게 떨어진다** (2026-08-26).
+
+    [notify_developers] 는 직군이 개발자인 재직자가 하나도 없으면 **아무 데도
+    안 보내고 조용히 끝난다.** 사람이 나가거나 직군을 바꾸는 순간 알림이 통째로
+    사라지는데, 그게 **알림으로 알려지지도 않는다.**
+
+    설비 고장(출퇴근 단말 같은 것)은 아무도 못 받으면 뜻이 없다. 그래서
+    개발자가 비면 MASTER 로 떨어뜨린다 — 늦게라도 누군가는 본다.
+    """
+    ids = await developer_ids(db)
+    if not ids:
+        ids = await master_ids(db)
+    for eid in ids:
+        await notify(db, employee_id=eid, **text)
+
+
 async def notify(
     db: AsyncSession,
     *,

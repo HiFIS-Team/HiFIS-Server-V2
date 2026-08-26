@@ -1,4 +1,9 @@
-"""출퇴근 단말 침묵 감지 — 대표에게 (2026-08-26).
+"""출퇴근 단말 침묵 감지 — **개발자에게** (2026-08-26).
+
+받는 사람이 권한(MASTER)이 아니라 **직군(Rank.DEVELOPER)** 인 이유:
+스캐너 고장은 판단할 일이 아니라 **가서 고칠 일**이다. 운영 MASTER 가 네 명인데
+전원에게 보내면 고칠 수 없는 사람 셋이 매번 같이 울린다 — 5xx 급증을
+`notify_developers` 로 보내는 것과 같은 기준이다.
 
 ## 왜 만들었나
 
@@ -53,7 +58,7 @@ from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
-from app.services.notifications import master_ids, notify
+from app.services.notifications import notify_ops
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +112,7 @@ async def scan_terminal_watch(now: datetime | None = None) -> None:
                 continue  # 기계는 멀쩡하다 — 결근은 저녁에 absence_alerts 가 알린다
 
             logger.warning("단말 침묵: %s — %s", terminal.name, reason)
-            text = ntext.scan_terminal_silent(terminal.name, reason)
-            for eid in await master_ids(db):
-                await notify(db, employee_id=eid, **text)
+            await notify_ops(db, **ntext.scan_terminal_silent(terminal.name, reason))
             terminal.alerted_at = now_utc
             sent = True
 
