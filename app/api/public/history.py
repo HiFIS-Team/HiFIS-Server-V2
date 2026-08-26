@@ -62,14 +62,9 @@ class MemberOut(CamelModel):
 
 class HistoryOut(CamelModel):
     branch_name: str
+    #: 어느 달의 값인가 — 요청에서 달을 안 주면 서버가 이번 달로 정하므로,
+    #: 이 값이 없으면 받은 쪽이 무슨 달인지 알 수 없다
     month: str  # YYYY-MM
-    #: 그달이 며칠 지났나 / 며칠짜리인가 — **진행 중인 달을 오해하지 않게.**
-    #: 8월 26일에 '20일 이상'을 보고 달이 끝난 줄 알면 판단이 틀린다.
-    elapsed_days: int
-    total_days: int
-    in_progress: bool
-    #: 집계에 든 회원 수 (걸러내기 전)
-    member_count: int
     high_threshold: int
     low_threshold: int
     high: list[MemberOut]
@@ -163,10 +158,6 @@ async def history(
     return HistoryOut(
         branch_name=branch.name,
         month=f"{start.year}-{start.month:02d}",
-        elapsed_days=(min(end, today) - start).days + 1 if today >= start else 0,
-        total_days=(end - start).days + 1,
-        in_progress=start <= today <= end,
-        member_count=len(by_member),
         high_threshold=high,
         low_threshold=low,
         high=_pack([r for r in packed if r[0] >= high], reverse=True),
