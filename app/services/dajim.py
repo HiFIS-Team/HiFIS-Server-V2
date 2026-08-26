@@ -33,7 +33,6 @@
 import datetime as dt
 import hashlib
 import logging
-from typing import Any
 
 import httpx
 
