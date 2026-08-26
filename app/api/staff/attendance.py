@@ -80,6 +80,10 @@ OVERNIGHT_GRACE_MIN = 60
 # 이보다 늦으면 평범한 출근 스캔이라 어제 기록을 건드리지 않는다.
 OVERNIGHT_CHECKOUT_BEFORE_MIN = 5 * 60
 
+# 같은 스캔 실패를 이 시간 안에 또 받으면 알림을 안 보낸다 (2026-08-26).
+# 뭉갠 라벨을 계속 긁으면 초 단위로 같은 실패가 쌓인다 — 대표 폰이 울리는 자리다.
+SCAN_FAIL_DEDUPE_MIN = 10
+
 # 직전 스캔에서 이 시간 안에 또 찍히면 **무시**한다 (2026-08-13 결정, 5분).
 #
 # 스캔은 토글이라 두 번째가 곧 퇴근이다. 스캐너가 한 번에 두 번 읽거나 직원이
@@ -333,6 +337,46 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
             await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
 
 
+async def _warn_scan_failed(
+    db: AsyncSession, actor: ScanActor, reason: str
+) -> None:
+    """단말이 보낸 스캔이 튕겼다 — 대표에게 알린다 (2026-08-26).
+
+    **단말이 보낸 것만 알린다.** 앱에서 사람이 찍다 틀린 것은 그 사람 화면에
+    바로 뜨므로 대표가 받을 일이 아니다. 카운터 스캐너는 다르다 — 튕겨도
+    **부저는 삑 소리를 내서** 찍은 사람은 됐다고 믿고 그냥 간다.
+
+    같은 실패가 몇 초 사이에 여러 번 오면(바코드가 뭉갠 라벨을 계속 긁는 식)
+    한 건만 남긴다. 알림 원장이 곧 '언제 알렸나'라 상태를 따로 안 둔다
+    (`error_rate_scan` 과 같은 방식).
+    """
+    if actor.terminal_id is None:
+        return
+    from app.models.auth.scan_terminal import ScanTerminal
+    from app.models.chat.notification import Notification
+
+    terminal = await db.get(ScanTerminal, actor.terminal_id)
+    name = terminal.name if terminal else "출퇴근 단말"
+    text = ntext.scan_terminal_failed(name, reason)
+
+    since = datetime.now(timezone.utc) - timedelta(minutes=SCAN_FAIL_DEDUPE_MIN)
+    dup = await db.scalar(
+        select(Notification.id)
+        .where(
+            Notification.type == text["type"],
+            Notification.title == text["title"],
+            Notification.body == text["body"],
+            Notification.created_at >= since,
+        )
+        .limit(1)
+    )
+    if dup is not None:
+        return
+    for eid in await master_ids(db):
+        await notify(db, employee_id=eid, **text)
+    await db.commit()
+
+
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
     payload: AttendanceScanRequest | None = Body(default=None),
@@ -355,13 +399,17 @@ async def scan_attendance(
             )
         )
         if target is None:
+            # 사번 자체는 안 싣는다 — 활동 로그가 `code` 를 `***` 로 가리는 것과 같은 기준
+            await _warn_scan_failed(db, actor, "등록되지 않은 사번을 읽었어요")
             raise HTTPException(404, detail={"code": "EMP_NO_NOT_FOUND", "message": "등록되지 않은 사번입니다"})
         if not actor.all_branches and target.branch_id != actor.branch_id:
+            await _warn_scan_failed(db, actor, f"다른 지점 직원({target.name})이라 안 찍혀요")
             raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 스캔할 수 없습니다"})
     elif actor.employee is not None:
         target = actor.employee
     else:
         # 단말에는 '본인'이 없다 — 사번을 안 주면 누구를 찍을지 알 수 없다
+        await _warn_scan_failed(db, actor, "사번 없이 신호만 왔어요 (스캐너 설정 확인)")
         raise HTTPException(400, detail={"code": "CODE_REQUIRED", "message": "사번이 필요합니다"})
 
     now = datetime.now(timezone.utc)

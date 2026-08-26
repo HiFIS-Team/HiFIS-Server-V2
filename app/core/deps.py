@@ -203,3 +203,37 @@ async def scan_actor(
         employee=employee,
         terminal_id=None,
     )
+
+
+async def current_terminal(
+    terminal_token: str | None = Depends(terminal_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    """단말 **자신**을 확인한다 — 생존 신호 전용 (2026-08-26).
+
+    [scan_actor] 와 갈라 둔 이유가 하나 있고, 그게 이 함수의 전부다:
+    **`last_used_at` 을 안 민다.**
+
+    저쪽은 토큰을 푸는 김에 그 값을 찍는데, 하트비트가 5분마다 같이 밀면
+    **아무도 안 찍은 날에도 방금 찍은 것처럼** 보인다. 그 둘을 가르려고
+    만드는 기능이라 여기서 밀면 뜻이 없어진다.
+
+    사람 토큰(Bearer)은 안 받는다 — 이 신호는 카운터 PC 만 보내는 것이다.
+    """
+    from app.models.auth.scan_terminal import ScanTerminal  # 순환 import 방지
+
+    if not terminal_token:
+        raise HTTPException(
+            401, detail={"code": "INVALID_TERMINAL", "message": "유효하지 않은 단말입니다"}
+        )
+    terminal = await db.scalar(
+        select(ScanTerminal).where(
+            ScanTerminal.token_hash == hash_terminal_token(terminal_token),
+            ScanTerminal.revoked_at.is_(None),
+        )
+    )
+    if terminal is None:
+        raise HTTPException(
+            401, detail={"code": "INVALID_TERMINAL", "message": "유효하지 않은 단말입니다"}
+        )
+    return terminal

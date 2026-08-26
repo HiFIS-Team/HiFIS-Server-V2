@@ -53,3 +53,40 @@ class ScanTerminal(UUIDMixin, TimestampMixin, Base):
     last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # ------------------------------------------------------------------
+    # 생존 신호 (2026-08-26) — `last_used_at` 만으로는 못 가르는 것을 가른다
+    #
+    # 화순에서 스캔이 통째로 안 들어온 날, 서버에는 성공도 실패도 없었다.
+    # 요청이 안 온 것이라 **아무도 안 찍은 것과 구별이 안 됐다.** 그래서
+    # 프로그램이 자기가 살아 있다고 따로 말하게 했다.
+    #
+    # **이 값들은 `last_used_at` 을 건드리지 않는다.** 저 값은 계속
+    # "사람이 찍은 시각"만 뜻해야 한다 — 하트비트가 같이 밀면 아무도 안 찍은
+    # 날에도 방금 찍은 것처럼 보여서 가르려던 뜻이 사라진다.
+    # ------------------------------------------------------------------
+
+    #: 프로그램이 마지막으로 시작한 시각. **사고 시각보다 뒤면 그때는 안 떠 있던 것이다.**
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    #: 마지막 생존 신호(5분마다). 여기가 멎으면 PC 가 꺼졌거나 프로그램이 죽은 것이다.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    #: 스캐너 포트를 마지막으로 붙잡은 시각.
+    scanner_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    #: 지금 붙어 있는 포트(`COM3`). **null 이면 스캐너를 못 찾는 중이다** —
+    #: 프로그램은 도는데 케이블이 빠졌거나 드라이버가 안 잡힌 상태다.
+    scanner_port: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    #: 침묵 알림을 마지막으로 보낸 시각 — **하루 한 번**으로 묶는 데만 쓴다.
+    #: 알림 원장으로 세면 단말별로 못 가른다(같은 종류가 지점 수만큼 쌓인다).
+    alerted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
