@@ -56,7 +56,7 @@ class SurveyLinkOut(CamelModel):
 
 
 #: 어느 화면의 주소인가 — (URL 앞자리, 토큰을 담은 컬럼 이름)
-_LINKS = {"survey": "survey_token", "tv": "tv_token"}
+_LINKS = {"survey": "survey_token", "tv": "tv_token", "history": "history_token"}
 
 
 async def _link(branch: Branch, kind: str, db: AsyncSession, *, reset: bool) -> SurveyLinkOut:
@@ -139,3 +139,30 @@ async def update_branch(
     await db.commit()
     await db.refresh(branch)
     return branch
+
+
+@router.get("/{branch_id}/history-link", response_model=SurveyLinkOut)
+async def branch_history_link(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> SurveyLinkOut:
+    """출석 이력 주소 — **MASTER·ADMIN 만** (2026-08-26).
+
+    이 주소를 열면 **회원 이름·전화·출석일이 줄줄이** 나온다. 매장 벽에 붙이는
+    설문·TV 주소와 성격이 다르다 — 직원이 보는 자리다.
+
+    브로제이를 쓰는 지점이 화순뿐이라 다른 지점은 주소를 만들어도
+    `/history/{token}` 에서 막힌다 (`settings.broj_branch_name`).
+    """
+    return await _link(await _branch_or_404(branch_id, db), "history", db, reset=False)
+
+
+@router.post("/{branch_id}/history-link/reset", response_model=SurveyLinkOut)
+async def reset_branch_history_link(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> SurveyLinkOut:
+    """새로 발급 — **옛 주소는 그 즉시 안 열린다.**"""
+    return await _link(await _branch_or_404(branch_id, db), "history", db, reset=True)

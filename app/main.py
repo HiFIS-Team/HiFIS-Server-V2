@@ -30,6 +30,7 @@ from app.api.platform import (
 )
 from app.api.projects import meetings, projects, todos
 from app.api.public import (
+    history as public_history,
     legal as public_legal,
     pt_survey as public_pt_survey,
     survey as public_survey,
@@ -153,6 +154,7 @@ app.include_router(search.router)
 app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
 app.include_router(public_pt_survey.router)  # PT 만족도 폼 — **로그인 없음**(문자 링크)
 app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
+app.include_router(public_history.router)  # 출석 이력 — **로그인 없음**(직원이 보는 주소)
 app.include_router(public_legal.router)   # 약관·개인정보처리방침 — **로그인 없음**(스토어 심사용 공개 URL)
 app.include_router(dashboard.router)
 app.include_router(files.router)  # 서명 URL 파일 서빙(/files) — 정적 /uploads 공개 대체(§H2)
