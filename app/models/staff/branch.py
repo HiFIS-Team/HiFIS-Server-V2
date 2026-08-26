@@ -41,3 +41,14 @@ class Branch(UUIDMixin, TimestampMixin, Base):
     tv_token: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )
+
+    #: 출석 이력을 여는 주소 — `/history/{history_token}` (2026-08-26).
+    #:
+    #: **TV 토큰을 같이 쓰면 안 된다.** 저건 매장 벽에 걸리는 값인데 이 화면에는
+    #: **회원 이름·전화·출석일이 줄줄이** 뜬다. 벽에 걸린 주소를 아는 사람이
+    #: 곧 회원 명단을 보게 된다.
+    #:
+    #: 브로제이를 쓰는 지점이 화순뿐이라 실제로는 거기만 발급한다.
+    history_token: Mapped[str | None] = mapped_column(
+        String(32), unique=True, index=True, nullable=True
+    )

@@ -37,6 +37,23 @@ class Settings(BaseSettings):
     # 매장 벽에 붙고 회원에게 문자로 가는 주소라 `localhost` 가 들어가면 아무도 못 연다.
     public_base_url: str = "https://hifis.app"
 
+    # ── 브로제이(BroJ) — 회원 출입 관리 웹 (2026-08-26)
+    #
+    # **화순점만 쓴다.** 첨단·동광주는 브로제이를 안 써서 붙일 것이 없다.
+    # 그래서 그룹 키가 하나뿐이고, 지점별로 나누는 코드를 두지 않았다.
+    #
+    # `jgroup_token` 은 **로그인으로 안 받아진다** — 브라우저 네트워크탭에서
+    # 복사해 넣는 값이다. 만료되면 출석 조회가 통째로 막히므로 다시 복사해야 한다.
+    broj_login_id: str = ""
+    broj_login_pw: str = ""
+    broj_jgroup_token: str = ""
+    broj_jgroup_key: str = ""
+
+    #: 출석 이력을 열어 줄 지점 이름 — 여기 적힌 지점의 토큰만 통한다.
+    #: 브로제이 그룹이 하나뿐인데 다른 지점 토큰까지 받으면 **화순 명단이
+    #: 첨단 이름표를 달고** 나간다.
+    broj_branch_name: str = "화순"
+
     # 계정관리 비번 암호화 마스터 키 (§9.6) — AES-256, 64 hex(32 byte). openssl rand -hex 32
     account_master_key: str = "00" * 32
 
