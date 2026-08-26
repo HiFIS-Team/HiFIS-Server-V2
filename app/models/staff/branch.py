@@ -52,3 +52,9 @@ class Branch(UUIDMixin, TimestampMixin, Base):
     history_token: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )
+
+    #: 다짐(Dagym) 지점 키 — 출석 이력을 받을 때 `x-gym-id` 헤더로 보낸다.
+    #:
+    #: **지점마다 값이 다르다.** 채워져 있으면 그 지점은 다짐에서 출석을 받고,
+    #: 비어 있으면 브로제이 쪽을 본다 (브로제이는 그룹이 하나라 설정에 있다).
+    dajim_gym_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
