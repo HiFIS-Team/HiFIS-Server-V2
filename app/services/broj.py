@@ -24,16 +24,14 @@
 있는** 편이 작고 항상 최신이다. 대신 서버를 재기동하면 캐시가 빈다.
 """
 
-import asyncio
 import datetime as dt
 import logging
-import time
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
-from app.core.periods import KST
+from app.services.gym_history import HistoryError, add_day, cached, to_date
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +47,9 @@ PAGE_SIZE = 500
 #: 한 달 5천여 건이라 11페이지쯤인데, 늘어날 여지를 두고 잡았다.
 MAX_PAGES = 40
 
-#: 받아 둔 결과를 들고 있는 시간(초).
-#:
-#: 출석은 사람이 문을 지날 때 한 건씩 늘어난다. 5분 지난 값을 보는 것이
-#: 페이지를 열 때마다 브로제이를 11번 치는 것보다 낫다.
-CACHE_TTL = 300
-
 #: 실제 입장만 센다. `EXPIRED_TICKET` 은 만료된 회원권으로 찍어서 **입장이 안 된**
 #: 기록이라, 세면 안 온 사람이 온 것으로 잡힌다.
 OK_STATUS = "SUCCESS"
-
-_cache: dict[str, tuple[float, list[dict]]] = {}
-_lock = asyncio.Lock()
-
-
-class BrojError(RuntimeError):
-    """브로제이가 못 준다 — 자격증명 만료·장애 등. 화면이 이걸 잡아 안내한다."""
-
 
 def configured() -> bool:
     """자격증명이 다 있나 — 하나라도 비면 조회를 시도하지 않는다.
@@ -94,7 +78,7 @@ async def _login(client: httpx.AsyncClient) -> str:
     r.raise_for_status()
     token = (r.json().get("result") or {}).get("access_token")
     if not token:
-        raise BrojError("브로제이 로그인 응답에 access_token 이 없습니다")
+        raise HistoryError("브로제이 로그인 응답에 access_token 이 없습니다")
     return token
 
 
@@ -152,7 +136,7 @@ async def _fetch(start: dt.date, end: dt.date) -> list[dict]:
                     continue
                 break
             if r.status_code >= 400:
-                raise BrojError(f"브로제이 출석 조회 실패 (HTTP {r.status_code})")
+                raise HistoryError(f"브로제이 출석 조회 실패 (HTTP {r.status_code})")
 
             got = _rows_from(r.json())
             rows.extend(got)
@@ -166,59 +150,19 @@ async def _fetch(start: dt.date, end: dt.date) -> list[dict]:
     return rows
 
 
-async def attendance_rows(start: dt.date, end: dt.date) -> list[dict]:
-    """그 기간 출석 원본 — [CACHE_TTL] 초 동안 들고 있는다.
+async def summarize(start: dt.date, end: dt.date) -> dict[Any, dict]:
+    """회원별 출석일 — `{group_member_key: {name, phone, days, status, last}}`.
 
-    **락으로 묶는다.** 안 묶으면 여러 명이 동시에 열었을 때 각자 11페이지씩
-    받아서 브로제이를 그만큼 두들긴다.
-    """
-    key = f"{start}~{end}"
-    now = time.monotonic()
-
-    hit = _cache.get(key)
-    if hit and now - hit[0] < CACHE_TTL:
-        return hit[1]
-
-    async with _lock:
-        # 기다리는 사이 다른 요청이 채웠을 수 있다
-        hit = _cache.get(key)
-        if hit and time.monotonic() - hit[0] < CACHE_TTL:
-            return hit[1]
-        rows = await _fetch(start, end)
-        _cache[key] = (time.monotonic(), rows)
-    return rows
-
-
-def to_date(v: Any) -> dt.date | None:
-    """브로제이가 뭘로 주든 날짜로 — ms 타임스탬프 · ISO · `YYYYMMDD`.
-
-    **타임스탬프는 KST 로 환산한다.** UTC 로 하면 오전 9시 이전 출석이 전날로
-    밀려서, 일찍 오는 회원의 출석일이 하루씩 어긋난다.
-    """
-    if v is None or v == "":
-        return None
-    if isinstance(v, (int, float)) or (isinstance(v, str) and v.isdigit() and len(v) >= 10):
-        n = int(v)
-        if n > 10_000_000_000:  # 밀리초
-            n //= 1000
-        return dt.datetime.fromtimestamp(n, KST).date()
-    s = str(v).strip()
-    if len(s) == 8 and s.isdigit():
-        return dt.date(int(s[:4]), int(s[4:6]), int(s[6:]))
-    try:
-        return dt.date.fromisoformat(s[:10])
-    except ValueError:
-        return None
-
-
-def summarize(rows: list[dict]) -> dict[Any, dict]:
-    """회원별로 출석일을 모은다 — `{회원키: {name, phone, days, status, last}}`.
+    받아 온 원본은 [gym_history.cached] 가 잠깐 들고 있는다. 한 달이 5천여 건
+    (11페이지)이라, 페이지를 열 때마다 다시 받으면 브로제이를 그만큼 두들긴다.
 
     **직원 출근을 뺀다.** `member_type == "ADMIN"` 은 직원이 문을 지난 기록이라
     회원 출석이 아니다. 안 빼면 직원이 늘 1등이다.
 
     같은 날 여러 번 찍어도 하루다 — `days` 가 집합이라 저절로 걸러진다.
     """
+    rows = await cached(f"broj:{start}~{end}", lambda: _fetch(start, end))
+
     by_member: dict[Any, dict] = {}
     for row in rows:
         if row.get("member_type") != "CUSTOMER":
@@ -228,38 +172,12 @@ def summarize(rows: list[dict]) -> dict[Any, dict]:
         day = to_date(row.get("attendance_date"))
         if day is None:
             continue
-
-        key = row.get("group_member_key")
-        m = by_member.setdefault(
-            key,
-            {
-                "name": row.get("name") or "?",
-                "phone": row.get("phone") or "",
-                "days": set(),
-                "status": row.get("customer_status") or "",
-                "last": day,
-            },
+        add_day(
+            by_member,
+            row.get("group_member_key"),
+            day,
+            name=row.get("name"),
+            phone=row.get("phone"),
+            status=row.get("customer_status"),
         )
-        m["days"].add(day)
-        # 최근 방문 시점의 회원 상태를 남긴다 — 만료 회원인지 가리는 데 쓴다
-        if day >= m["last"]:
-            m["last"] = day
-            m["status"] = row.get("customer_status") or m["status"]
     return by_member
-
-
-def mask_phone(phone: str) -> str:
-    """`010-****-1234` — 뒤 네 자리만 남긴다.
-
-    사람을 가리는 데는 뒤 네 자리면 충분하고, 화면이 새더라도 그대로 걸 수 있는
-    번호가 안 나간다.
-    """
-    digits = "".join(c for c in phone if c.isdigit())
-    return f"{digits[:3]}-****-{digits[-4:]}" if len(digits) >= 7 else phone
-
-
-def month_range(year: int, month: int) -> tuple[dt.date, dt.date]:
-    """그달 1일과 말일."""
-    first = dt.date(year, month, 1)
-    last = dt.date(year + (month == 12), (month % 12) + 1, 1) - dt.timedelta(days=1)
-    return first, last

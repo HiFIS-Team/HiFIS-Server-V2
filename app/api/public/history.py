@@ -11,10 +11,17 @@
 2. **집 주소는 아예 안 내보낸다.** 브로제이 응답에 `simple_address` 로 들어 있는데
    (`화순군 화순읍 …아파트 101-705`) 출석 순위를 보는 데 쓸 일이 없다
 
-## 화순점만이다
+## 지점마다 보는 곳이 다르다
 
-브로제이를 쓰는 지점이 거기뿐이라 그룹 키가 하나다. 다른 지점 토큰으로 열면
-**화순 명단이 그 지점 이름표를 달고** 나가므로, 아예 막는다.
+    화순      브로제이(BroJ)   — REST, 그룹이 하나라 키가 설정에 있다
+    첨단      다짐(Dagym)      — GraphQL, `branches.dajim_gym_id`
+    동광주    다짐(Dagym)
+
+**어느 쪽을 볼지는 지점 행이 정한다.** `dajim_gym_id` 가 채워져 있으면 다짐,
+아니면 브로제이 쪽을 본다. 둘 다 아니면 그 지점은 아직 연동이 없다.
+
+다짐은 **회원 상태 칸이 없어서** '적게 나온' 목록의 상태가 `-` 로 나온다
+(브로제이는 이용중·만료임박·만료가 뜬다).
 
 ## 두 목록을 같이 준다
 
@@ -36,7 +43,7 @@ from app.core.periods import KST
 from app.db.session import get_db
 from app.models.staff.branch import Branch
 from app.schemas.base import CamelModel
-from app.services import broj
+from app.services import broj, dajim, gym_history
 
 router = APIRouter(tags=["history"])
 
@@ -78,17 +85,48 @@ async def _branch_of(token: str, db: AsyncSession) -> Branch:
             404,
             detail={"code": "HISTORY_NOT_FOUND", "message": "출석 이력 주소가 올바르지 않습니다"},
         )
-    # 브로제이 그룹이 하나뿐이라, 다른 지점 토큰을 받으면 화순 명단이
-    # 그 지점 이름표를 달고 나간다. 이름이 안 맞으면 아예 막는다.
-    if branch.name != settings.broj_branch_name:
-        raise HTTPException(
-            400,
-            detail={
-                "code": "BROJ_NOT_LINKED",
-                "message": f"{branch.name}점은 브로제이를 쓰지 않습니다",
-            },
-        )
     return branch
+
+
+async def _summarize(branch: Branch, start: dt.date, end: dt.date) -> dict:
+    """그 지점이 쓰는 곳에서 회원별 출석일을 받아 온다.
+
+    **지점 행이 어느 쪽인지 정한다.** 코드에 지점 이름을 박아 두면 지점을
+    하나 더 열 때마다 배포를 해야 한다.
+    """
+    if branch.dajim_gym_id:
+        if not dajim.configured():
+            raise HTTPException(
+                503,
+                detail={
+                    "code": "DAJIM_NOT_CONFIGURED",
+                    "message": "다짐 설정이 없습니다 (서버 .env 의 DAJIM_* 확인)",
+                },
+            )
+        return await gym_history.cached(
+            f"dajim:{branch.dajim_gym_id}:{start}~{end}",
+            lambda: dajim.summarize(branch.dajim_gym_id, start, end),
+        )
+
+    if branch.name == settings.broj_branch_name:
+        if not broj.configured():
+            raise HTTPException(
+                503,
+                detail={
+                    "code": "BROJ_NOT_CONFIGURED",
+                    "message": "브로제이 설정이 없습니다 (서버 .env 의 BROJ_* 확인)",
+                },
+            )
+        return await broj.summarize(start, end)
+
+    raise HTTPException(
+        400,
+        detail={
+            "code": "HISTORY_NOT_LINKED",
+            # 이름 뒤에 '점' 을 붙이지 않는다 — `전 지점` 이 `전 지점점` 이 된다
+            "message": f"{branch.name}: 출석 연동이 아직 없습니다",
+        },
+    )
 
 
 def _pack(rows: list[tuple], reverse: bool) -> list[MemberOut]:
@@ -101,7 +139,7 @@ def _pack(rows: list[tuple], reverse: bool) -> list[MemberOut]:
         MemberOut(
             rank=i,
             name=name,
-            phone=broj.mask_phone(phone),
+            phone=gym_history.mask_phone(phone),
             days=days,
             last_visit=last.isoformat(),
             status=STATUS_KR.get(status, status or "-"),
@@ -119,37 +157,25 @@ async def history(
     db: AsyncSession = Depends(get_db),
 ) -> HistoryOut:
     branch = await _branch_of(token, db)
-
-    if not broj.configured():
-        raise HTTPException(
-            503,
-            detail={
-                "code": "BROJ_NOT_CONFIGURED",
-                "message": "브로제이 설정이 없습니다 (서버 .env 의 BROJ_* 확인)",
-            },
-        )
-
     today = dt.datetime.now(KST).date()
     if month:
         try:
             year, mon = (int(x) for x in month.split("-")[:2])
-            start, end = broj.month_range(year, mon)
+            start, end = gym_history.month_range(year, mon)
         except (ValueError, TypeError) as exc:
             raise HTTPException(
                 400, detail={"code": "BAD_MONTH", "message": "달 형식이 올바르지 않습니다"}
             ) from exc
     else:
-        start, end = broj.month_range(today.year, today.month)
+        start, end = gym_history.month_range(today.year, today.month)
 
     try:
-        rows = await broj.attendance_rows(start, end)
-    except broj.BrojError as exc:
+        by_member = await _summarize(branch, start, end)
+    except gym_history.HistoryError as exc:
         # 자격증명 만료가 제일 흔하다 — 화면이 이 문장을 그대로 보여준다
         raise HTTPException(
-            502, detail={"code": "BROJ_FAILED", "message": str(exc)}
+            502, detail={"code": "HISTORY_FAILED", "message": str(exc)}
         ) from exc
-
-    by_member = broj.summarize(rows)
     packed = [
         (len(m["days"]), m["name"], m["phone"], m["last"], m["status"])
         for m in by_member.values()
