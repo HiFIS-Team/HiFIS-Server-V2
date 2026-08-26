@@ -18,6 +18,7 @@ QR 이 담는 값은 `branches.survey_token` 이다 (지점 id 가 아니다 —
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +29,7 @@ from app.enums import EmployeeStatus, Role, ScoreCategory
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
-from app.schemas.base import CamelModel
+from app.schemas.base import CamelModel, normalize_phone
 from app.services.scoring import accrue_score
 
 from fastapi import Depends
@@ -58,13 +59,24 @@ class SurveyBranchOut(CamelModel):
 
 
 class SurveySubmit(CamelModel):
-    motivation: str
-    praised_employee_id: str
-    praise_comment: str
-    improvement: str | None = None
-    member_name: str
-    member_phone: str
+    """설문 제출 본문.
+
+    **길이 상한이 전부 필요하다.** 로그인 없이 누구나 부르는 자리라, 상한이 없으면
+    수십 MB짜리 문자열이 그대로 DB 로 들어간다(그리고 지점 화면에서 그걸 다 그린다).
+    """
+
+    motivation: str = Field(min_length=1, max_length=200)
+    praised_employee_id: str = Field(min_length=1, max_length=36)
+    praise_comment: str = Field(min_length=1, max_length=1000)
+    improvement: str | None = Field(default=None, max_length=1000)
+    member_name: str = Field(min_length=1, max_length=40)
+    member_phone: str = Field(min_length=1, max_length=30)
     consent: bool
+
+    @field_validator("member_phone")
+    @classmethod
+    def _validate_phone(cls, v: str) -> str:
+        return normalize_phone(v)
 
 
 async def _branch_of(token: str, db: AsyncSession) -> Branch:

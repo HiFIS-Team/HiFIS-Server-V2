@@ -18,6 +18,17 @@ _AVATAR_MAX = 5 * 1024 * 1024  # 5MB
 _CHAT_EXTS = {"jpg", "jpeg", "png", "gif", "webp"}
 _CHAT_MAX = 5 * 1024 * 1024  # 5MB
 
+#: 일반 첨부 상한 — 홈서버 디스크 한 대가 전부라 무제한은 곧 장애다
+_DOC_MAX = 50 * 1024 * 1024  # 50MB
+#: 브라우저에서 **실행되는** 형식 — 화이트리스트를 못 쓰는 자리(계약서·엑셀·한글 등
+#: 무엇이 올라올지 모른다)라 위험한 것만 잘라 낸다
+_BLOCKED_EXTS = {
+    "html", "htm", "xhtml", "shtml", "svg", "js", "mjs", "xml", "swf",
+    "exe", "dll", "bat", "cmd", "com", "scr", "msi", "sh", "ps1", "jar",
+}
+#: 브라우저에 그대로 띄워도 되는 형식 — 나머지는 전부 내려받기로 강제한다
+INLINE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "pdf"}
+
 
 async def _save_image(upload: UploadFile, folder: str) -> str:
     """이미지를 uploads/{folder}/ 에 저장하고 서빙 경로 반환(확장자·용량 검증).
@@ -59,18 +70,41 @@ async def save_env_photo(upload: UploadFile) -> str:
 
 
 async def save_upload(upload: UploadFile) -> tuple[str, str, int]:
-    """멀티파트 파일을 청크 스트리밍으로 디스크에 저장. (serving url, ext, size_bytes) 반환."""
+    """멀티파트 파일을 청크 스트리밍으로 디스크에 저장. (serving url, ext, size_bytes) 반환.
+
+    예전엔 확장자도 용량도 안 봤다. 홈서버 한 대라 **누가 큰 파일 하나만 올려도
+    디스크가 차서 DB까지 같이 죽는다.** 실행되는 확장자(html/svg/js…)도 막는다 —
+    파일은 API와 같은 오리진에서 서빙되므로 세션 토큰이 노출될 수 있다.
+    """
     filename = upload.filename or "file"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    if not ext.isalnum() or len(ext) > 10:  # 경로 조작·이상한 확장자 차단
+        ext = "bin"
+    if ext in _BLOCKED_EXTS:
+        raise HTTPException(
+            400,
+            detail={"code": "INVALID_FILE_TYPE", "message": "업로드할 수 없는 형식의 파일입니다"},
+        )
     now = datetime.now(timezone.utc)
     rel_dir = f"{UPLOAD_ROOT}/documents/{now:%Y}/{now:%m}"
     os.makedirs(rel_dir, exist_ok=True)
     rel_path = f"{rel_dir}/{uuid.uuid4().hex}.{ext}"
     size = 0
-    with open(rel_path, "wb") as out:
-        while chunk := await upload.read(_CHUNK):
-            size += len(chunk)
-            out.write(chunk)
+    try:
+        with open(rel_path, "wb") as out:
+            while chunk := await upload.read(_CHUNK):
+                size += len(chunk)
+                if size > _DOC_MAX:
+                    raise HTTPException(
+                        400,
+                        detail={"code": "FILE_TOO_LARGE", "message": "파일은 50MB 이하만 업로드할 수 있습니다"},
+                    )
+                out.write(chunk)
+    except Exception:
+        # 중간에 끊긴 조각을 남기지 않는다 — 참조 없는 파일은 아무도 못 지운다
+        if os.path.exists(rel_path):
+            os.remove(rel_path)
+        raise
     return f"/{rel_path}", ext, size
 
 
