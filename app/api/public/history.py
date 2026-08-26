@@ -25,7 +25,7 @@
 
 ## 두 목록을 같이 준다
 
-- **많이 나온 사람** (기본 20일 이상) — 잘 오는 회원
+- **많이 나온 사람** (기본 16일 이상) — 잘 오는 회원
 - **적게 나온 사람** (기본 7일 이하) — 연락해서 끌어야 할 회원
 
 연속 출석은 안 쓴다 (2026-08-26 결정). 상품 지급 기준으로 쓰던 것인데
@@ -152,7 +152,7 @@ def _pack(rows: list[tuple], reverse: bool) -> list[MemberOut]:
 async def history(
     token: str,
     month: str | None = Query(None, description="YYYY-MM (기본: 이번 달)"),
-    high: int = Query(20, ge=1, le=31, description="많이 나온 기준 (이상)"),
+    high: int = Query(16, ge=1, le=31, description="많이 나온 기준 (이상)"),
     low: int = Query(7, ge=1, le=31, description="적게 나온 기준 (이하)"),
     db: AsyncSession = Depends(get_db),
 ) -> HistoryOut:
