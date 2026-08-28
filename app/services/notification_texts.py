@@ -530,3 +530,17 @@ def env_award(item: str, total: int, reason: str | None) -> dict:
         "body": reason,
         "link": "/work",
     }
+
+
+def score_reverted(points: int, reason: str | None) -> dict:
+    """깎였던 점수를 대표가 되돌렸다 (2026-08-28).
+
+    **`SCORE` 다.** 깎을 때(`late_penalty`·`task_miss_confirmed`)는 경고 쪽인데
+    되돌리는 것은 좋은 소식이라 같은 종류로 보내면 안 된다.
+    """
+    return {
+        "type": "SCORE",
+        "title": f"깎였던 {abs(points)}점이 돌아왔어요",
+        "body": reason,
+        "link": "/work",
+    }

@@ -186,6 +186,7 @@ LABELS: dict[tuple[str, str], str] = {
     # 점수
     ("POST", "/scores"): "점수 부여",
     ("POST", "/contributions"): "기여 점수 부여",
+    ("DELETE", "/scores/{id}"): "깎인 점수 되돌리기",
     ("POST", "/env-items"): "환경정비 항목 추가",
     ("PATCH", "/env-items/{id}"): "환경정비 항목 수정",
     ("POST", "/env-logs"): "환경정비 수행",
