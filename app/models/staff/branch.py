@@ -1,6 +1,6 @@
 """Branch (지점) 모델 — CLAUDE.md §2.1."""
 
-from sqlalchemy import String
+from sqlalchemy import JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -51,6 +51,24 @@ class Branch(UUIDMixin, TimestampMixin, Base):
     #: 브로제이를 쓰는 지점이 화순뿐이라 실제로는 거기만 발급한다.
     history_token: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
+    )
+
+    #: 출퇴근 QR 이 담는 값 — 매장 카운터에 붙는 종이다 (2026-08-28).
+    #:
+    #: **설문 토큰과 같은 이유로 지점 id 를 안 쓴다.** 벽에 붙는 것이라 언젠가
+    #: 새는데, id 면 갈아 끼울 방법이 없다. 새면 값을 바꾸고 QR 만 다시 뽑는다.
+    scan_secret: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    #: 그 지점 인터넷의 공인 IP 들 — **QR 을 여기서 찍었는지 가르는 값**이다.
+    #:
+    #: 고정 QR 이라 사진을 찍어 두면 집에서도 찍힌다. 그래서 요청이 그 지점
+    #: 인터넷에서 왔는지를 같이 본다. 대표가 지점에서 버튼 한 번 누르면
+    #: 지금 IP 가 여기 담긴다 (`POST /branches/{id}/scan-ip`).
+    #:
+    #: **비어 있으면 QR 스캔이 아예 안 된다** — 열어 두면 어디서나 찍힌다.
+    #: 회선이 동적이라 IP 가 바뀌면 그날 아무도 못 찍으니, 바뀌면 다시 누른다.
+    allowed_ips: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
     )
 
     #: 다짐(Dagym) 지점 키 — 출석 이력을 받을 때 `x-gym-id` 헤더로 보낸다.

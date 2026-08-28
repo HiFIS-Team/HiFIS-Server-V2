@@ -4,9 +4,10 @@
 목록은 지점 스코프(MEMBER=본인 지점).
 """
 
+import secrets
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from app.core.deps import (
     scan_actor,
 )
 from app.core.periods import KST, period_range
+from app.core.ratelimit import client_key
 from app.db.session import get_db
 from app.enums import (
     AttendanceSource,
@@ -269,6 +271,48 @@ async def _award_offhours(
     await notify(db, employee_id=target.id, **ntext.offhours_award(kind_label, OFFHOURS_POINTS))
 
 
+#: QR 이 담는 글자 — `HIFIS-SCAN:<지점 id>:<시크릿>`
+QR_PREFIX = "HIFIS-SCAN:"
+
+
+async def _branch_of_qr(db: AsyncSession, qr: str) -> Branch:
+    """QR 문자열에서 지점을 꺼낸다 — 모양이 틀리거나 시크릿이 안 맞으면 400.
+
+    **지점 id 만으로는 안 받는다.** id 는 앱 안에 굴러다니는 값이라, 아는
+    사람이 QR 을 지어낼 수 있다. 시크릿이 있어야 "그 종이를 실제로 봤다"는
+    뜻이 된다 (새면 값을 갈고 QR 만 다시 뽑는다).
+    """
+    bad = HTTPException(400, detail={"code": "BAD_QR", "message": "출퇴근 QR 이 아닙니다"})
+    if not qr.startswith(QR_PREFIX):
+        raise bad
+    parts = qr[len(QR_PREFIX) :].split(":")
+    if len(parts) != 2:
+        raise bad
+    branch_id, secret = parts
+    branch = await db.get(Branch, branch_id)
+    # 시크릿 비교는 **길이가 새지 않게** 상수 시간으로 (남는 값이 아니라 습관이다)
+    if branch is None or not branch.scan_secret:
+        raise bad
+    if not secrets.compare_digest(branch.scan_secret, secret):
+        raise bad
+    return branch
+
+
+def _at_branch(request: Request, branch: Branch) -> bool:
+    """이 요청이 **그 지점 인터넷**에서 왔나.
+
+    고정 QR 이라 사진을 찍어 두면 집에서도 찍힌다. 그걸 막는 유일한 값이라
+    **목록이 비어 있으면 아무도 못 찍는다** — 열어 두면 어디서나 찍힌다.
+
+    회선이 동적이면 IP 가 바뀐다. 그때는 대표가 지점에서
+    `POST /branches/{id}/scan-ip` 를 한 번 눌러 다시 등록한다.
+    """
+    allowed = branch.allowed_ips or []
+    if not allowed:
+        return False
+    return client_key(request) in allowed
+
+
 async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
     """지각 차감 — **여태까지 지각한 횟수**가 커질수록 많이 뺀다 ([LATE_PENALTY]).
 
@@ -384,6 +428,7 @@ async def _warn_scan_failed(
 
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
+    request: Request,
     payload: AttendanceScanRequest | None = Body(default=None),
     actor: ScanActor = Depends(scan_actor),
     db: AsyncSession = Depends(get_db),
@@ -394,8 +439,32 @@ async def scan_attendance(
     프로그램). 어느 쪽이든 **자기 지점 직원만** 찍을 수 있고, 전 지점은
     MASTER·ADMIN 뿐이다.
     """
+    # QR 스캔 — 매장 카운터에 붙은 종이를 **직원 폰**이 읽었다 (2026-08-28).
+    #
+    # 사번 스캐너와 달리 **남을 못 찍는다.** 찍히는 사람이 곧 로그인한 사람이라
+    # 남의 바코드 화면을 캡처해 대신 찍어 주는 길이 아예 없다.
+    if payload is not None and payload.qr:
+        if actor.employee is None:
+            raise HTTPException(
+                400, detail={"code": "QR_NEEDS_LOGIN", "message": "로그인한 뒤에 찍어주세요"}
+            )
+        qr_branch = await _branch_of_qr(db, payload.qr)
+        # 남의 지점 QR 은 안 받는다 — 자기 지점 근무일·당직 기준으로 판정해야 한다
+        if qr_branch.id != actor.employee.branch_id:
+            raise HTTPException(
+                403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 QR 입니다"}
+            )
+        if not _at_branch(request, qr_branch):
+            raise HTTPException(
+                403,
+                detail={
+                    "code": "NOT_AT_BRANCH",
+                    "message": "매장 와이파이에 연결한 뒤 찍어주세요",
+                },
+            )
+        target = actor.employee
     # 사번(emp_no) 스캔이면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
-    if payload is not None and payload.code:
+    elif payload is not None and payload.code:
         normalized = payload.code.strip().replace("-", "")  # 하이픈 유무 모두 허용
         target = await db.scalar(
             select(Employee).where(

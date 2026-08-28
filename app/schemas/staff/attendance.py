@@ -12,6 +12,11 @@ class AttendanceScanRequest(CamelModel):
     # 지점 스캐너가 읽은 사번(emp_no). 생략 시 로그인 본인 스캔(하위호환).
     # 입력 키는 code / barcode 모두 허용(구 스캐너 호환), 하이픈 유무 무관.
     code: str | None = Field(default=None, validation_alias=AliasChoices("code", "barcode"))
+    #: 매장 카운터에 붙은 QR 을 읽은 값 (2026-08-28) — `HIFIS-SCAN:<지점>:<시크릿>`.
+    #:
+    #: 이걸 주면 **로그인한 본인**을 찍는다. 사번(`code`)은 남을 찍는 값이라
+    #: 같이 줄 수 없다 — QR 은 "내가 지금 매장에 있다"는 증거지 남의 것이 아니다.
+    qr: str | None = Field(default=None, max_length=120)
 
 
 class AttendanceOut(CamelModel):

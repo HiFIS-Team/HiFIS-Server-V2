@@ -189,6 +189,8 @@ LABELS: dict[tuple[str, str], str] = {
     ("DELETE", "/scores/{id}"): "깎인 점수 되돌리기",
     ("POST", "/env-items"): "환경정비 항목 추가",
     ("PATCH", "/env-items/{id}"): "환경정비 항목 수정",
+    ("POST", "/branches/{id}/scan-ip"): "출퇴근 QR 매장 IP 등록",
+    ("DELETE", "/branches/{id}/scan-ip"): "출퇴근 QR 매장 IP 삭제",
     ("POST", "/env-logs"): "환경정비 수행",
     ("POST", "/env-logs/{id}/award"): "환경정비 가산점 부여",
     ("DELETE", "/env-logs/{id}"): "환경정비 취소",
