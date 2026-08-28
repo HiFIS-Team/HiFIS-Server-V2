@@ -112,6 +112,11 @@ _SECRET_KEYS = frozenset(
         "refreshToken",
         "refresh_token",
         "code",  # 비밀번호 재설정 인증번호
+        # 출퇴근 QR 원문 — **지점 시크릿이 들어 있다** (2026-08-28).
+        # 안 가리면 찍을 때마다 매장 열쇠가 로그에 한 줄씩 쌓인다.
+        # 새면 값을 갈고 QR 만 다시 뽑으라고 따로 둔 값인데, 90일치
+        # 로그에 수천 번 적히면 그 뜻이 없어진다.
+        "qr",
         "signatureBase64",  # 회원 전자서명 원본
         "signature_base64",
     }
