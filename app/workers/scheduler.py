@@ -30,7 +30,6 @@ from app.workers.error_rate_scan import error_rate_scan
 from app.workers.metrics_flush import flush_metrics
 from app.workers.my_task_miss_scan import my_task_miss_scan
 from app.workers.retention import purge_old_access_logs
-from app.workers.scan_terminal_watch import scan_terminal_watch
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +104,6 @@ def _register_jobs() -> None:
     # 15분마다 — 출퇴근 단말 침묵 감지(대표에게).
     # **아침에 잡아야 뜻이 있다** — 저녁 결근 알림이 나가기 전에 고쳐야
     # 그날 나온 사람이 결근으로 안 남는다. 하루 한 번만 알린다(alerted_at).
-    scheduler.add_job(scan_terminal_watch, CronTrigger(minute="*/15"),
-                      id="scan_terminal_watch", replace_existing=True)
     # 검증용 하트비트 — 환경변수로만 켬(운영 기본 꺼짐). 멀티워커 단일실행 확인에 사용.
     if os.getenv("SCHED_HEARTBEAT_TEST"):
         scheduler.add_job(_heartbeat, CronTrigger(second="*/2"),

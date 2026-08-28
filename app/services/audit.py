@@ -52,9 +52,7 @@ SKIP: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/trails"),
         # 단말 하트비트 — 5분마다라 단말 3대면 하루 864건이다. 지금 전체
         # (하루 390건)의 두 배가 넘어 **활동 기록 화면이 도배된다.**
-        # 시작 신호(/scan-terminals/startup)는 반대로 남긴다 — 하루에 몇 번
         # 안 오고, 자꾸 다시 뜨는 것 자체가 봐야 할 신호다
-        ("POST", "/scan-terminals/heartbeat"),
     }
 )
 
@@ -161,9 +159,6 @@ LABELS: dict[tuple[str, str], str] = {
     # 근태·월차
     ("POST", "/attendance/scan"): "출퇴근 기록",
     # 출퇴근 단말 — 81번 때 라벨이 빠져 있어서 활동 기록에 주소가 그대로 보였다
-    ("POST", "/scan-terminals"): "출퇴근 단말 발급",
-    ("POST", "/scan-terminals/{id}/revoke"): "출퇴근 단말 폐기",
-    ("POST", "/scan-terminals/startup"): "출퇴근 단말 시작",
     ("POST", "/leaves"): "월차 신청",
     ("POST", "/leaves/{id}/approve"): "월차 승인",
     ("POST", "/leaves/{id}/reject"): "월차 반려",
