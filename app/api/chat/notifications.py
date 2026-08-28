@@ -40,7 +40,15 @@ NOTIFICATION_DAYS = 7
 @router.get("/notifications", response_model=list[NotificationOut])
 async def list_notifications(
     read: bool | None = Query(None),
-    days: int = Query(NOTIFICATION_DAYS, ge=1, le=90, description="며칠치를 볼지"),
+    days: int = Query(
+        NOTIFICATION_DAYS,
+        ge=1,
+        # **보존기간에서 끌어온다.** 여기가 더 길면 파기 잡이 이미 지운 것을
+        # 달라고 하게 되어, 빈 목록이 오는데 이유를 알 수 없다
+        # (`workers/retention.py` 가 이 기간이 지난 알림을 지운다)
+        le=settings.access_log_retention_days,
+        description="며칠치를 볼지",
+    ),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Notification]:
