@@ -38,6 +38,16 @@ async def list_scores(
     employee_id: str | None = Query(None, alias="employeeId"),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
+    # 깎인 것만 — **차감을 볼 자리가 아무 데도 없었다** (2026-08-28 대표 요청).
+    #
+    # 지각(`LATE`)·업무 누락(`TASK_MISS`)은 랭킹 어느 탭에도 안 서고 종합
+    # 점수만 조용히 깎았다. 센터 기여도 화면에 `+` 와 같이 세우려는데,
+    # 카테고리를 안 걸고 다 받으면 **환경정비·수업까지 통째로** 온다
+    # (한 사람 한 달에 수백 줄, 대표는 전 직원치라 수천 줄).
+    #
+    # 카테고리를 여럿 부르는 대신 여기서 부호로 자른다 — 프로젝트 평가나
+    # 운영자 감점처럼 **음수가 될 수 있는 나머지도 같이** 걸린다.
+    negative_only: bool = Query(False, alias="negativeOnly"),
 ) -> list[ScoreEvent]:
     stmt = select(ScoreEvent)
     if scope:
@@ -48,6 +58,8 @@ async def list_scores(
         stmt = stmt.where(ScoreEvent.category == category)
     if period:
         stmt = stmt.where(ScoreEvent.period == period)
+    if negative_only:
+        stmt = stmt.where(ScoreEvent.points < 0)
     result = await db.execute(stmt.order_by(ScoreEvent.created_at.desc()))
     return list(result.scalars().all())
 
