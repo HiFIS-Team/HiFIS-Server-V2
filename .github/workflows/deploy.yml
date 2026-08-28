@@ -38,11 +38,19 @@ jobs:
         run: pip install --quiet "ruff==0.16.2"
 
       - name: 코드 검사
-        run: ruff check app/
+        run: ruff check app/ tests/
 
       - name: 서식 검사
         run: ruff format --check app/
         continue-on-error: true   # 아직 서식을 통일하지 않았다 — 참고용
+
+      # DB 도 서버도 안 띄운다 — 순수 계산만 잰다. 그래서 준비가 필요 없고
+      # **몇 초 만에 끝난다.** 무거워지면 안 돌리게 되고, 안 돌리면 없는 것과 같다.
+      - name: 테스트 준비
+        run: pip install --quiet -e ".[dev]"
+
+      - name: 테스트
+        run: pytest tests/ -q
 
       - name: 도커 이미지가 빌드되나
         run: docker build -t hifis-api:ci .
