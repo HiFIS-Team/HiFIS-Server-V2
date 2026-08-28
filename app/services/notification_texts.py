@@ -514,3 +514,19 @@ def work_status_changed(name: str, status, message: str | None) -> dict:
         "body": short(note) if note else None,
         "link": "/staff",
     }
+
+
+def env_award(item: str, total: int, reason: str | None) -> dict:
+    """가산점을 받은 사람에게 — 대표가 블로그 점수를 매겼다 (2026-08-28).
+
+    **`SCORE` 다.** 결재도 경고도 아니고 점수가 바뀌었다는 알림이다.
+
+    `total` 은 기본 배점까지 더한 **최종 점수**다. 가산분만 적으면
+    `+7` 인데 화면의 기록 줄에는 `10` 이 떠서 두 숫자가 어긋난다.
+    """
+    return {
+        "type": "SCORE",
+        "title": f"{item} 점수가 {total}점이 됐어요",
+        "body": reason,
+        "link": "/work",
+    }

@@ -189,6 +189,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("POST", "/env-items"): "환경정비 항목 추가",
     ("PATCH", "/env-items/{id}"): "환경정비 항목 수정",
     ("POST", "/env-logs"): "환경정비 수행",
+    ("POST", "/env-logs/{id}/award"): "환경정비 가산점 부여",
     ("DELETE", "/env-logs/{id}"): "환경정비 취소",
     ("POST", "/supply-orders"): "비품 주문",
     ("POST", "/peer-reviews"): "동료 평가 제출",
