@@ -1,11 +1,10 @@
 """랭킹 알림 잡 (CLAUDE.md §4.1) — 전사 통합 기준.
 
 - announce_monthly_winners: 매월 1일, 전월 5개 분야 1등에게 축하 + 전원에게 통합 발표.
-- ranking_change_scan: 5분마다, 이번 달 5개 분야 순위를 스냅샷과 비교 →
-  밀려난 본인 + 어드민에게 순위 변동 알림. (write 경로 안 건드리는 폴링 diff)
+- ranking_change_scan: 5분마다, 이번 달 5개 분야 순위를 스냅샷으로 남긴다.
 
-**안정화 전에는 알림을 안 보낸다** — `RANKING_NOTIFY_FROM` 참고.
-스캔·스냅샷은 그대로 돌아서, 다시 켜는 날 그동안 쌓인 변동이 터지지 않는다.
+**순위가 바뀌었다는 알림은 보내지 않는다** (2026-08-31 결정). 친절왕처럼 점수가
+조금만 들어와도 등수가 뒤집히는 분야는 5분마다 알림이 쏟아졌다. 달말 발표만 남긴다.
 """
 
 from datetime import date, datetime, timezone
@@ -14,7 +13,7 @@ from sqlalchemy import delete, select
 
 from app.core.periods import KST
 from app.db.session import SessionLocal
-from app.enums import EmployeeStatus, Role
+from app.enums import EmployeeStatus
 from app.models.staff.employee import Employee
 from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.ranking_snapshot import RankingSnapshot
@@ -24,14 +23,7 @@ from app.services.ranking import KIND_LABEL, RANKING_KINDS, compute_ranking
 from app.services.ranking_board import METRICS, build_board, metric_value, rank_board
 
 
-#: 랭킹 알림을 다시 켜는 날 (KST). 이 날부터 나간다.
-#
-# 쓰기 시작한 초반에는 점수가 몇 점만 들어와도 등수가 계속 뒤집혀서
-# **5분마다 알림이 쏟아진다.** 자리가 잡힐 때까지 두 주 막아 둔다
-# (2026-08-06 결정 — 안정화되면 그때 시작).
-#
-# **알림만 막고 스캔은 계속 돈다.** 스캔까지 멈추면 다시 켜는 날 첫 스캔이
-# 2주치 변동을 한꺼번에 터뜨린다 — 막아 둔 뜻이 없어진다.
+#: 달말 랭킹 발표를 시작하는 날 (KST). 이 날부터 나간다.
 RANKING_NOTIFY_FROM = date(2026, 8, 20)
 
 
@@ -45,13 +37,14 @@ def _prev_period(today: date) -> str:
     return f"{y - 1:04d}-12" if m == 1 else f"{y:04d}-{m - 1:02d}"
 
 
-async def _active_ids(db, *, roles: tuple[Role, ...] | None = None) -> list[str]:
-    stmt = select(Employee.id).where(
-        Employee.status == EmployeeStatus.ACTIVE, Employee.deleted_at.is_(None)
+async def _active_ids(db) -> list[str]:
+    return list(
+        await db.scalars(
+            select(Employee.id).where(
+                Employee.status == EmployeeStatus.ACTIVE, Employee.deleted_at.is_(None)
+            )
+        )
     )
-    if roles:
-        stmt = stmt.where(Employee.role.in_(roles))
-    return list(await db.scalars(stmt))
 
 
 async def announce_monthly_winners(now: datetime | None = None) -> None:
@@ -84,59 +77,12 @@ async def announce_monthly_winners(now: datetime | None = None) -> None:
 
 
 async def ranking_change_scan(now: datetime | None = None) -> None:
-    """5분마다 — 이번 달 순위 변동(누가 나를 앞질렀나) 감지 → 본인 + 어드민 알림."""
+    """5분마다 — 이번 달 순위를 스냅샷으로 남긴다 (알림은 보내지 않는다)."""
     now_utc = now or datetime.now(timezone.utc)
     period = now_utc.astimezone(KST).strftime("%Y-%m")
-    # 안정화 전에는 **알림만** 건너뛴다 — 스캔과 스냅샷 갱신은 그대로 돈다.
-    # 스캔까지 멈추면 다시 켜는 날 그동안 쌓인 변동이 한꺼번에 터진다.
-    notify_open = ranking_notify_open(now_utc.astimezone(KST).date())
     async with SessionLocal() as db:
-        admin_ids = await _active_ids(db, roles=(Role.MASTER, Role.ADMIN))
         for kind in RANKING_KINDS:
             ranking = await compute_ranking(db, kind=kind, period=period)  # 전사 통합
-            new_rank = {r["employee_id"]: r["rank"] for r in ranking}
-            names = {r["employee_id"]: r["name"] for r in ranking}
-            snaps = (
-                await db.scalars(
-                    select(RankingSnapshot).where(
-                        RankingSnapshot.kind == kind.value, RankingSnapshot.period == period
-                    )
-                )
-            ).all()
-            old_rank = {s.employee_id: s.rank for s in snaps}
-            label = KIND_LABEL[kind]
-
-            # 최초 스캔(스냅샷 없음)이면 baseline 만 세팅 — 오탐 방지
-            changes: list[tuple[str, list[str], int, int]] = []
-            if old_rank:
-                for b, nb in new_rank.items():
-                    ob = old_rank.get(b)
-                    if ob is None or nb <= ob:
-                        continue  # 신규 등장 / 유지 / 상승은 대상 아님
-                    # b 를 앞지른 사람 = 예전엔 b 아래였는데 지금 b 위인 사람
-                    overtakers = [
-                        names.get(a, "누군가")
-                        for a, na in new_rank.items()
-                        if a in old_rank and old_rank[a] > ob and na < nb
-                    ]
-                    if overtakers:
-                        changes.append((b, overtakers, ob, nb))
-
-                if notify_open:
-                    # 밀려난 본인 알림
-                    for b, overtakers, ob, nb in changes:
-                        who = ", ".join(overtakers[:3]) + ("…" if len(overtakers) > 3 else "")
-                        await notify(db, employee_id=b, **ntext.ranking_drop(label, who, ob, nb))
-                    # 어드민 요약(변동 있을 때만)
-                    if changes:
-                        lines = [
-                            f"{names.get(b, '?')} {ob}→{nb}위(↑{overtakers[0]})"
-                            for b, overtakers, ob, nb in changes
-                        ]
-                        body = " / ".join(lines[:6])
-                        for aid in admin_ids:
-                            await notify(db, employee_id=aid, **ntext.ranking_change_admin(label, body))
-
             # 스냅샷 갱신(교체)
             await db.execute(
                 delete(RankingSnapshot).where(
@@ -163,8 +109,8 @@ async def ranking_change_scan(now: datetime | None = None) -> None:
 # 화면에 뜨는 등수와 어긋나면 "추월했다는데 순위는 그대로"가 되므로
 # 화면이 보는 값에 맞춘다.
 #
-# 알림은 안 보낸다 — 저쪽이 이미 밀려난 본인과 관리자에게 알린다.
-# 여기서 또 보내면 같은 사건으로 두 번 울린다.
+# 알림은 안 보낸다 — 순위가 바뀜다고 푸시를 쓰면 5분마다 울린다.
+# 화면에서 기록으로만 보여 준다.
 
 
 async def board_overtake_scan(now: datetime | None = None) -> None:

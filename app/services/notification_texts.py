@@ -241,14 +241,6 @@ def ranking_announce(period: str, summary: str) -> dict:
     return {"type": "RANKING", "title": f"{period} 랭킹이 나왔어요 📢", "body": summary, "link": "/ranking"}
 
 
-def ranking_drop(label: str, overtaker_text: str, old_rank: int, new_rank: int) -> dict:
-    return {"type": "RANKING", "title": f"{label} 순위가 밀렸어요", "body": f"{overtaker_text}님이 앞질렀어요 · {old_rank}위 → {new_rank}위", "link": "/ranking"}
-
-
-def ranking_change_admin(label: str, summary: str) -> dict:
-    return {"type": "RANKING", "title": f"{label} 순위가 바뀌었어요", "body": summary, "link": "/ranking"}
-
-
 # ── 대표·관리자에게 가는 전사 알림 ──
 #
 # 위의 것들은 **본인 일**을 본인에게 알린다. 아래는 **남의 일**을 대표·관리자에게
