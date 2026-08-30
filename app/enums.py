@@ -394,3 +394,25 @@ class RenewIntent(StrEnum):
     YES = "YES"      # 연장할게요
     MAYBE = "MAYBE"  # 조금 더 생각해볼게요
     NO = "NO"        # 이번엔 어려울 것 같아요
+
+
+class WorkoutKind(StrEnum):
+    """운동일지의 종류 — 회차를 깎느냐가 갈린다 (§3.4).
+
+    PT 는 **결제한 회차 안에서만** 쓴다. 회차 번호가 붙고 한 회차에 하나뿐이다.
+    PERSONAL 은 회원이 혼자 한 운동이라 회차와 상관이 없다 — 몇 개든 쓴다.
+    """
+
+    PT = "PT"
+    PERSONAL = "PERSONAL"
+
+
+class WorkoutMediaKind(StrEnum):
+    """일지에 붙는 자료 — 사진이냐 영상이냐.
+
+    영상은 앱이 못 그린다(플레이어가 윈도우를 안 탄다). 눌렀을 때 기기의
+    기본 재생기로 넘기려면 어느 쪽인지 알아야 해서 종류를 같이 담는다.
+    """
+
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"

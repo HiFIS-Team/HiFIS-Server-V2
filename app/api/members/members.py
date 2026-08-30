@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, branch_scope, get_current_user
+from app.core.tokens import TRAINING_TOKEN_LENGTH, public_token
 from app.db.session import get_db
 from app.enums import VISIT_PATH_SCORE, Role
 from app.models.staff.branch import Branch
@@ -91,6 +92,7 @@ async def create_member(
         referrer_member_id=payload.referrer_member_id,
         visit_path=payload.visit_path,
         memo=payload.memo,
+        training_token=public_token(TRAINING_TOKEN_LENGTH),
     )
     db.add(member)
     await db.flush()  # member.id 확보
@@ -182,6 +184,10 @@ async def update_member(
     ):
         raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "담당 트레이너 변경은 관리자/매니저만 가능합니다"})
     await _validate_refs(db, None, data.get("owner_trainer_id"), data.get("referrer_member_id"))
+    # 빈 줄은 버린다 — 앱이 '추가' 로 만들어 두고 안 채운 칸이 그대로 온다.
+    # null 로 와도 빈 목록이다 (이 칸은 NOT NULL 이라 None 을 넣으면 터진다)
+    if "goals" in data:
+        data["goals"] = [line.strip() for line in (data["goals"] or []) if line.strip()]
     for key, value in data.items():
         setattr(member, key, value)
     await db.commit()

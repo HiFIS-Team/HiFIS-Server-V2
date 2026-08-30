@@ -48,6 +48,9 @@ class MemberUpdate(CamelModel):
     #: 여기서 바꿔도 이미 쌓인 점수는 그대로다 (되돌리면 지난달 랭킹이 흔들린다).
     visit_path: VisitPath | None = None
     memo: str | None = None
+    #: 운동을 하는 이유 — 통기로 덮어쓴다(순서가 곧 번호다).
+    #: 빈 줄은 서버가 걸러 낸다.
+    goals: list[str] | None = Field(default=None, max_length=20)
 
 
 class MemberOut(CamelModel):
@@ -60,6 +63,9 @@ class MemberOut(CamelModel):
     visit_path: VisitPath | None = None
     registered_at: datetime
     memo: str | None = None
+    goals: list[str] = Field(default_factory=list)
+    #: 회원에게 보내는 주소의 마지막 칸 — `hifis.app/training/{token}`
+    training_token: str | None = None
 
 
 class MemberCreateOut(MemberOut):

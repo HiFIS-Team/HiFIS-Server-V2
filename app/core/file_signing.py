@@ -56,6 +56,19 @@ def sign_upload_url(url: str | None) -> str | None:
     return f"/files/{rel}?exp={exp}&sig={_signature(rel, exp)}"
 
 
+def unsign_upload_url(url: str | None) -> str | None:
+    """'/files/<rel>?exp=..&sig=..' → '/uploads/<rel>'. 그 외는 그대로.
+
+    **받아 적는 쪽에서 쓴다.** 앱은 목록에서 받은 그대로를 다시 돌려보내는데,
+    그건 이미 서명이 붙은 주소다. 그대로 저장하면 DB에 서명이 박히고 — 7일 뒤
+    만료되는 데다 다음 조회에서 한 번 더 서명돼 아예 못 여는 주소가 된다.
+    """
+    if not url or not url.startswith("/files/"):
+        return url
+    rel = url[len("/files/"):].split("?", 1)[0]
+    return f"/uploads/{rel}"
+
+
 def verify_file_signature(rel_path: str, exp: int, sig: str) -> bool:
     if exp < int(datetime.now(timezone.utc).timestamp()):
         return False

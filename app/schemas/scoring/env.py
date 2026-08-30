@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, computed_field
 
-from app.schemas.base import CamelModel
+from app.schemas.base import CamelModel, SignedUrlOptional
 
 
 class EnvItemCreate(CamelModel):
@@ -44,7 +44,13 @@ class EnvLogCreate(CamelModel):
 
 
 class EnvLogPhotoOut(CamelModel):
-    """올린 사진의 서빙 주소 — 이걸 [EnvLogCreate.photo_url] 에 실어 보낸다."""
+    """올린 사진의 저장 주소 — 이걸 [EnvLogCreate.photo_url] 에 실어 보낸다.
+
+    **여기는 서명을 안 붙인다.** 이 값은 화면에 그리는 주소가 아니라 그대로
+    DB 에 들어갈 원본 경로다. 서명(`?exp&sig`)이 붙은 채로 저장되면 7일 뒤
+    만료된 주소가 영구히 남는다. 보여줄 때는 [EnvTaskLogOut.photo_url] 이
+    내려가면서 서명된다.
+    """
 
     url: str
 
@@ -58,7 +64,8 @@ class EnvTaskLogOut(CamelModel):
     # 누른 순간의 기본 배점 — **가산점은 안 들어 있다** (`total_points` 를 쓸 것)
     points: int
     note: str | None = None
-    photo_url: str | None = None
+    # 정적 /uploads 는 안 연다 — 서명 URL(/files/..?exp&sig)로 바꿔 내려야 그린다(§H2)
+    photo_url: SignedUrlOptional = None
     place: str | None = None
     link: str | None = None
     bonus_points: int = 0

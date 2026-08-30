@@ -14,7 +14,7 @@ from app.api.auth import auth, invite_keys
 from app.api.board import approvals, comments, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.legal import consents
-from app.api.members import members, pt_surveys, registrations, session_signs
+from app.api.members import members, pt_surveys, registrations, session_signs, workouts
 from app.api.payroll import payslips, rank_policies
 from app.api.platform import (
     access_logs,
@@ -34,6 +34,7 @@ from app.api.public import (
     legal as public_legal,
     pt_survey as public_pt_survey,
     survey as public_survey,
+    training as public_training,
     tv as public_tv,
 )
 from app.api.scoring import contributions, env, kindness, my_tasks, peer_reviews, scores
@@ -117,6 +118,7 @@ app.include_router(attendance.router)
 app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
+app.include_router(workouts.router)  # 운동일지 — PT 회차 기록·개인 운동(§3.4)
 app.include_router(pt_surveys.router)
 app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회원 개인정보(§13)
 # scoring — 점수
@@ -155,6 +157,7 @@ app.include_router(public_pt_survey.router)  # PT 만족도 폼 — **로그인 
 app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
 app.include_router(public_history.router)  # 출석 이력 — **로그인 없음**(직원이 보는 주소)
 app.include_router(public_legal.router)   # 약관·개인정보처리방침 — **로그인 없음**(스토어 심사용 공개 URL)
+app.include_router(public_training.router)  # 회원 수업 보기 — **로그인 없음**(회원에게 보내는 주소)
 app.include_router(dashboard.router)
 app.include_router(files.router)  # 서명 URL 파일 서빙(/files) — 정적 /uploads 공개 대체(§H2)
 

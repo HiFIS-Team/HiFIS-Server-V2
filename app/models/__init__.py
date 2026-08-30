@@ -39,6 +39,7 @@ from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
 from app.models.members.pt_survey import PtSurvey
 from app.models.members.session_sign import SessionSign
+from app.models.members.workout import WorkoutLog
 from app.models.projects.todo import Todo
 
 __all__ = [
@@ -91,4 +92,5 @@ __all__ = [
     "ScoreEvent",
     "SessionSign",
     "Todo",
+    "WorkoutLog",
 ]
