@@ -501,3 +501,53 @@ def score_reverted(points: int, reason: str | None) -> dict:
         "body": reason,
         "link": "/work",
     }
+
+
+def kindness_praise(member_name: str, comment: str) -> dict:
+    """칭찬을 받은 본인에게 (2026-08-31 대표 요청).
+
+    **`SCORE` 가 아니다.** 같이 붙는 KINDNESS 10점보다 칭찬 자체가 본론이라
+    점수 알림과 섞이면 안 된다.
+    """
+    return {
+        "type": "KINDNESS",
+        "title": "칭찬을 받았어요 🎉",
+        "body": f"{member_name}님 · {short(comment)}",
+        "link": "/work",
+    }
+
+
+def kindness_praise_boss(name: str, comment: str) -> dict:
+    """직원이 칭찬받았다 — 대표·관리자에게."""
+    return {
+        "type": "KINDNESS",
+        "title": f"{name}님이 칭찬받았어요",
+        "body": short(comment),
+        "link": "/work",
+    }
+
+
+def kindness_complaint(improvement: str, branch: str | None) -> dict:
+    """컴플레인이 들어왔다 (2026-08-31 대표 요청).
+
+    [branch] 는 **전 지점을 받는 사람(MASTER·ADMIN)에게만** 채운다. 자기
+    지점 것만 받는 사람에게는 뻔한 말이라 자리만 먹는다.
+    """
+    body = short(improvement)
+    return {
+        "type": "COMPLAINT",
+        "title": "컴플레인이 들어왔어요",
+        "body": f"{branch} · {body}" if branch else body,
+        "link": "/work",
+    }
+
+
+def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> dict:
+    """컴플레인이 해결됐다 — **누가 처리했는지**가 본론이다 (2026-08-31)."""
+    body = f"{resolver}님이 처리했어요 · {short(improvement)}"
+    return {
+        "type": "COMPLAINT",
+        "title": "컴플레인이 해결됐어요",
+        "body": f"{branch} · {body}" if branch else body,
+        "link": "/work",
+    }

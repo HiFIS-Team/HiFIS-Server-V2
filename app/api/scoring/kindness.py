@@ -19,12 +19,14 @@ from app.enums import ComplaintStatus, Role, ScoreCategory
 from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog
 from app.models.scoring.kindness import KindnessSurvey
+from app.models.staff.branch import Branch
 from app.schemas.scoring.kindness import (
     ComplaintStatusUpdate,
     KindnessSurveyOut,
     KindnessSurveyWebhook,
 )
-from app.services.notifications import master_ids, notify
+from app.services import notification_texts as ntext
+from app.services.notifications import boss_ids, branch_ids, master_ids, notify
 from app.services.scoring import accrue_score
 
 logger = logging.getLogger(__name__)
@@ -77,9 +79,84 @@ async def receive_kindness_survey(
         source_ref_id=survey.id,
         reason="회원 친절도 칭찬",
     )
+    await _notify_survey(db, survey, employee)
     await db.commit()
     await db.refresh(survey)
     return survey
+
+
+async def _branch_name(db: AsyncSession, branch_id: str | None) -> str | None:
+    if branch_id is None:
+        return None
+    branch = await db.get(Branch, branch_id)
+    return branch.name if branch else None
+
+
+async def _notify_survey(
+    db: AsyncSession, survey: KindnessSurvey, praised: Employee
+) -> None:
+    """설문이 들어왔다고 알린다 (2026-08-31 대표 요청).
+
+    | | 칭찬 | 컴플레인 |
+    |---|---|---|
+    | 칭찬받은 본인 | ✅ | — |
+    | MASTER · ADMIN | ✅ | ✅ **전 지점** |
+    | 그 지점 MANAGER · MEMBER | — | ✅ **자기 지점만** |
+
+    **칭찬은 지점에 안 뿌린다.** 남이 칭찬받은 것은 그 사람과 대표가 알면
+    되는 일이고, 지점 전원에게 가면 하루에도 여러 번 울린다.
+    반대로 컴플레인은 **매장 전체가 고치는 일**이라 지점이 같이 받는다.
+    """
+    branch = await _branch_name(db, praised.branch_id)
+    bosses = await boss_ids(db)
+
+    comment = (survey.praise_comment or "").strip()
+    if comment:
+        await notify(
+            db,
+            employee_id=praised.id,
+            **ntext.kindness_praise(survey.member_name, comment),
+        )
+        for eid in bosses:
+            if eid == praised.id:
+                continue
+            await notify(db, employee_id=eid, **ntext.kindness_praise_boss(praised.name, comment))
+
+    improvement = (survey.improvement or "").strip()
+    if not improvement:
+        return
+    for eid in bosses:
+        await notify(db, employee_id=eid, **ntext.kindness_complaint(improvement, branch))
+    for eid in await branch_ids(db, praised.branch_id):
+        await notify(db, employee_id=eid, **ntext.kindness_complaint(improvement, None))
+
+
+async def _notify_resolved(
+    db: AsyncSession, survey: KindnessSurvey, resolver: Employee
+) -> None:
+    """컴플레인을 **누가** 해결했는지 알린다 (2026-08-31 대표 요청).
+
+    받는 사람은 들어올 때와 같다 — 그 지점과 MASTER·ADMIN. 들어온 것만
+    알리고 끝난 것을 안 알리면 매장에 컴플레인이 계속 걸려 있는 것처럼 보인다.
+
+    **지점은 컴플레인이 난 지점이다** (칭찬받은 직원의 지점). 처리한 사람이
+    다른 지점에서 도와준 경우에도 알림은 그 매장으로 간다.
+    """
+    praised = await db.get(Employee, survey.praised_employee_id)
+    branch_id = praised.branch_id if praised else None
+    branch = await _branch_name(db, branch_id)
+    improvement = (survey.improvement or "").strip()
+
+    # **처리한 본인은 뺀다** — 올린 사람에게는 '승인됐어요' 가 이미 가고,
+    # 대표가 직접 찍었으면 자기가 한 일을 자기가 통보받는 셈이 된다
+    for eid in await boss_ids(db, exclude=resolver.id):
+        await notify(
+            db, employee_id=eid, **ntext.kindness_resolved(resolver.name, improvement, branch)
+        )
+    for eid in await branch_ids(db, branch_id, exclude=resolver.id):
+        await notify(
+            db, employee_id=eid, **ntext.kindness_resolved(resolver.name, improvement, None)
+        )
 
 
 @router.get("/kindness-surveys", response_model=list[KindnessSurveyOut], dependencies=[Depends(get_current_user)])
@@ -157,6 +234,7 @@ async def set_complaint_status(
         survey.resolved_at = now
         survey.resolved_by_id = current.id
         await _award_claim_resolved(db, current, survey)
+        await _notify_resolved(db, survey, current)
         await db.commit()
         await db.refresh(survey)
         return survey
@@ -171,7 +249,7 @@ async def set_complaint_status(
             type="COMPLAINT",
             title="컴플레인 해결 완료 결재",
             body=f"{current.name} · {(survey.improvement or '').strip()}",
-            link=f"/kindness/{survey.id}",
+            link="/work",
         )
     await db.commit()
     await db.refresh(survey)
@@ -204,8 +282,10 @@ async def approve_complaint_done(
         type="COMPLAINT",
         title="컴플레인 해결이 승인됐어요",
         body=(survey.improvement or "").strip(),
-        link=f"/kindness/{survey.id}",
+        link="/work",
     )
+    # 매장에도 알린다 — 올린 사람만 알면 나머지는 아직 걸려 있는 줄 안다
+    await _notify_resolved(db, survey, requester)
     # **신청 흔적을 안 지운다** — 지우면 대표가 직접 찍은 완료와 구분이 안 되어
     # 결재 이력의 '승인' 칸에 대표가 혼자 처리한 것까지 선다 (일정의 `decided_at`
     # 과 같은 자리다)
@@ -240,7 +320,7 @@ async def reject_complaint_done(
         type="COMPLAINT",
         title="컴플레인 해결이 반려됐어요",
         body=f"{(survey.improvement or '').strip()}{f' · {reason}' if reason else ''}",
-        link=f"/kindness/{survey.id}",
+        link="/work",
     )
     await db.commit()
     return None

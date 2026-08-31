@@ -75,6 +75,28 @@ async def notify_bosses(db: AsyncSession, *, exclude: str | None = None, **text)
         await notify(db, employee_id=eid, **text)
 
 
+async def branch_ids(
+    db: AsyncSession, branch_id: str | None, *, exclude: str | None = None
+) -> list[str]:
+    """그 지점에서 일하는 사람 — **MANAGER · MEMBER** (2026-08-31).
+
+    지점 안에서만 도는 일(회원 컴플레인)을 알릴 때 쓴다. MASTER·ADMIN 은
+    한 지점 소속이 아니라 전 지점을 보므로 [boss_ids] 로 따로 보낸다 —
+    여기에 섞으면 지점을 옮길 때마다 받는 사람이 흔들린다.
+    """
+    if branch_id is None:
+        return []
+    rows = await db.scalars(
+        select(Employee.id).where(
+            Employee.branch_id == branch_id,
+            Employee.role.in_([Role.MANAGER, Role.MEMBER]),
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    return [eid for eid in rows if eid != exclude]
+
+
 async def developer_ids(db: AsyncSession) -> list[str]:
     """서버 사고를 받는 사람 — **직군이 개발자인 재직자.**
 
