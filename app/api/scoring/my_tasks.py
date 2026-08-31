@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import branch_filter, get_current_user, require_role
+from app.core.deps import branch_pick, get_current_user, require_role
 from app.core.periods import KST
 from app.db.session import get_db
 from app.enums import EmployeeStatus, MyTaskFieldKind, MyTaskRequestType, ProjectRequestStatus, Role
@@ -250,7 +250,7 @@ async def list_my_tasks(
 )
 async def my_task_roster(
     db: AsyncSession = Depends(get_db),
-    scope: str | None = Depends(branch_filter),
+    scope: str | None = Depends(branch_pick),
     date: str | None = Query(None),
 ) -> list[MyTaskRosterRow]:
     """오늘 누가 몇 개 중 몇 개를 했나 — **한 번에** 준다.
@@ -260,6 +260,11 @@ async def my_task_roster(
 
     **MASTER·ADMIN 은 세지 않는다.** 그들에게는 내 업무 화면이 없어서 늘 0개다.
     업무를 하나도 안 만든 사람도 목록에는 선다 — 안 정했다는 것도 봐야 한다.
+
+    **점장도 지점을 고른다** (`branch_pick` — 2026-08-31 요청). 예전에는
+    `branch_filter` 라 뭘 골라도 본인 지점이 왔고, 명단에 안 뜨는 사람은
+    상세도 못 열었다. 한 사람을 집어 보는 `GET /my-tasks?employeeId=` 는
+    원래부터 지점을 안 가렸으므로 **여기만 어긋나 있었다.**
     """
     day = _parse_date(date)
     stmt = select(Employee).where(
