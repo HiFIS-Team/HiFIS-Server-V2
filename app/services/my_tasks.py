@@ -26,6 +26,17 @@
 결과다 — `MyTask` 하나와 `MyTaskCheck` 기록만 있으면 어느 날 무엇이 밀렸는지
 답이 하나로 정해진다. 행을 만들면 요일을 고치거나 결재로 지웠을 때 이미
 만들어 둔 이월분이 남아서 어긋난다.
+
+## 한 업무는 하루에 한 줄뿐이다
+
+그날 제 차례로 이미 서 있으면 밀린 것으로 **또 안 세운다**(`standing` 검사).
+매일 하는 업무를 어제 빠뜨려도 오늘 두 줄이 되지 않고, 오늘 체크하면
+그것으로 오늘 몫이 끝난다. 이름이 같아도 다른 줄이면 다른 업무다 —
+`MyTask` 행이 다르면 서로 남남이다.
+
+## [CARRY_FROM] 전 날짜는 안 민다
+
+규칙을 세우기 전에 안 한 날까지 데려오면 첫날부터 `밀린 일` 이 열 줄씩 선다.
 """
 
 from collections import defaultdict
@@ -45,6 +56,16 @@ from app.models.staff.employee import Employee
 #: 요일이 하나라도 걸려 있으면 지난 차례는 아무리 멀어도 7일 안에 있다
 #: (`weekdays` 는 비어 있을 수 없다 — 비면 매일로 본다).
 LOOKBACK = 7
+
+#: **이 날부터 밀린 것을 데려온다** (2026-09-01 대표 결정).
+#:
+#: 규칙을 세우기 전에도 안 한 날이 쌓여 있었다 — 그걸 그대로 밀어 오면
+#: 첫날부터 `밀린 일` 이 열 줄씩 서고, 아무도 안 챙기던 때의 일로 오늘이
+#: 어지러워진다. 그 전 날짜는 **없던 일로 둔다.**
+#:
+#: 확정 누락(`workers/my_task_miss_scan.STARTS_ON`)과 **같은 날이어야 한다** —
+#: 데려오지도 않는 날을 감점하거나, 데려와 놓고 감점을 안 하면 어긋난다.
+CARRY_FROM = date(2026, 9, 1)
 
 
 @dataclass(frozen=True)
@@ -243,7 +264,8 @@ async def due_tasks(
                 if t.id in standing:
                     continue  # 그날 제 차례로 이미 서 있다
                 last = _last_due(t, day, t.created_at.date())
-                if last is None:
+                # 규칙을 세우기 전 날짜는 안 민다 ([CARRY_FROM])
+                if last is None or last < CARRY_FROM:
                     continue
                 seen = book.last_check.get(t.id)
                 if seen is not None and seen >= last:

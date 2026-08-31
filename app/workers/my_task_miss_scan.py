@@ -53,7 +53,7 @@ from app.enums import EmployeeStatus, Role, ScoreCategory
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.staff.employee import Employee
 from app.services import notification_texts as ntext
-from app.services.my_tasks import carried_over
+from app.services.my_tasks import CARRY_FROM, carried_over
 from app.services.notifications import notify
 from app.services.scoring import accrue_score
 
@@ -69,7 +69,10 @@ TASK_MISS_POINTS = -20
 #:
 #: 규칙이 없던 때의 누락까지 거슬러 깎으면 몰랐던 일로 점수와 급여가 깎인다.
 #: 점장 기본급 차감(`services/payroll.py`)도 같은 날부터 센다.
-STARTS_ON = date(2026, 9, 1)
+#:
+#: **밀어 오는 기준(`services/my_tasks.CARRY_FROM`)과 같은 값이다.** 데려오지도
+#: 않는 날을 감점하거나, 데려와 놓고 감점을 안 하면 어긋난다 — 한 자리에서 가져온다.
+STARTS_ON = CARRY_FROM
 
 
 async def my_task_miss_scan(now: datetime | None = None) -> None:
