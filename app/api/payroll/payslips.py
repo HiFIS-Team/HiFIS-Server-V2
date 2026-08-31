@@ -118,6 +118,7 @@ async def my_accrued(
         session_signs=0,
         new_sessions=0,
         renewal_sessions=0,
+        renewal_downgraded=False,
         can_adjust=False,
     )
     # 아직 재기 시작 전이면 0 이다 — 앱을 켜기 전 실적을 쌓아 보여주면 안 된다
@@ -141,6 +142,7 @@ async def my_accrued(
         session_signs=data["basis"]["session_signs"],
         new_sessions=len(data["basis"]["new_sales"]),
         renewal_sessions=len(data["basis"]["renewal_sales"]),
+        renewal_downgraded=data["basis"]["renewal_downgraded"],
         can_adjust=can_adjust,
     )
 

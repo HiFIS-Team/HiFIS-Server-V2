@@ -57,6 +57,9 @@ class AccruedOut(CamelModel):
     #: 화면이 '워크인 N회' 를 붙이는 자리라 진행 중일 때도 있어야 한다
     new_sessions: int
     renewal_sessions: int
+    #: 재등록 합이 문턱을 못 넘어 **워크인 요율로 내려갔나** (트레이너만, 2026-08-31).
+    #: 화면이 왜 금액이 낮은지 한 줄로 알려 주는 자리다
+    renewal_downgraded: bool = False
     #: 신청할 때 본인이 커미션을 고칠 수 있는 사람인가 (알바·FC 는 false).
     #: 앱이 이 값으로 입력칸을 열지 정한다 — 앱이 따로 판정하면 서버와 어긋나
     #: 못 고치는 사람에게 칸이 열리고 제출에서 400 이 난다.
