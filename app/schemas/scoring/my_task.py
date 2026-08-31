@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from pydantic import Field, field_validator
 
-from app.enums import MyTaskRequestType, ProjectRequestStatus
+from app.enums import MyTaskFieldKind, MyTaskRequestType, ProjectRequestStatus
 from app.schemas.base import CamelModel
 
 #: 안 고르면 매일 — 예전 동작이 그랬으므로 기본값을 바꾸지 않는다
@@ -24,12 +24,45 @@ def clean_weekdays(value: list[int] | None) -> list[int]:
     return days or list(EVERY_DAY)
 
 
+#: 업무 하나에 붙일 수 있는 입력 칸 수 — 사람이 체크하며 채우는 값이라 이 위는 사고다
+MAX_FIELDS = 5
+
+
+class MyTaskField(CamelModel):
+    """체크할 때 받을 칸 하나 — 이름과 종류 (2026-08-31 요청).
+
+    `신규`(숫자) · `재등록`(숫자) 처럼 업무 하나에 여러 개를 걸 수 있다.
+    """
+
+    name: str = Field(min_length=1, max_length=20)
+    kind: MyTaskFieldKind = MyTaskFieldKind.NUMBER
+
+
+def clean_fields(value: list[MyTaskField] | None) -> list[dict]:
+    """**같은 이름을 두 번 두지 않는다.** 값이 이름을 키로 담기므로 겹치면 덮인다."""
+    if not value:
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for f in value:
+        name = f.name.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "kind": f.kind.value})
+    if len(out) > MAX_FIELDS:
+        raise ValueError("입력 칸이 너무 많아요")
+    return out
+
+
 class MyTaskItem(CamelModel):
     """만들 업무 한 줄 — 내용과 그 줄에 걸리는 요일."""
 
     content: str
     #: 안 주면 매일
     weekdays: list[int] | None = None
+    #: 체크할 때 받을 칸 — 안 주면 없다(누르기만 하면 된다)
+    fields: list[MyTaskField] | None = None
 
     @field_validator("weekdays")
     @classmethod
@@ -63,12 +96,18 @@ class MyTaskCreate(CamelModel):
     def _days(cls, v: list[int] | None) -> list[int]:
         return clean_weekdays(v)
 
-    def rows(self) -> list[tuple[str, list[int]]]:
-        """어느 길로 왔든 `(내용, 요일)` 목록 하나로 만들어 준다."""
+    def rows(self) -> list[tuple[str, list[int], list[dict]]]:
+        """어느 길로 왔든 `(내용, 요일, 입력 칸)` 목록 하나로 만들어 준다.
+
+        옛 모양(`contents`)에는 입력 칸이 없다 — 그때는 그런 개념이 없었다.
+        """
         if self.items:
-            return [(i.content, i.weekdays or list(EVERY_DAY)) for i in self.items]
+            return [
+                (i.content, i.weekdays or list(EVERY_DAY), clean_fields(i.fields))
+                for i in self.items
+            ]
         days = self.weekdays or list(EVERY_DAY)
-        return [(c, days) for c in (self.contents or [])]
+        return [(c, days, []) for c in (self.contents or [])]
 
 
 class MyTaskUpdate(CamelModel):
@@ -79,6 +118,18 @@ class MyTaskUpdate(CamelModel):
 
     content: str | None = None
     weekdays: list[int] | None = None
+    #: 통째로 갈아 끼운다 — 빈 배열을 주면 칸이 없어진다
+    fields: list[MyTaskField] | None = None
+
+
+class MyTaskCheckCreate(CamelModel):
+    """체크하면서 적어 넣는 값 — `{"신규": "3", "재등록": "5"}` (2026-08-31).
+
+    **글자로 받는다.** 숫자 칸은 서버가 `int` 로 바꿔 담고, 못 바꾸면 400 이다 —
+    앱이 미리 걸러도 서버가 마지막으로 본다.
+    """
+
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class MyTaskOut(CamelModel):
@@ -87,6 +138,10 @@ class MyTaskOut(CamelModel):
     content: str
     #: 돌아오는 요일 (ISO 1~7) — 앱이 목록 줄과 고르개에 그린다
     weekdays: list[int] = Field(default_factory=lambda: list(EVERY_DAY))
+    #: 체크할 때 받을 칸 — 비어 있으면 누르기만 하면 된다
+    fields: list[MyTaskField] = Field(default_factory=list)
+    #: **그날 적어 넣은 값** — 체크를 안 했으면 비어 있다
+    values: dict = Field(default_factory=dict)
     sort: int
     #: **오늘 체크했나.** 목록을 받을 때 서버가 같이 채운다 —
     #: 앱이 체크 기록을 따로 받아 id 로 맞추면 요청이 두 배가 된다.

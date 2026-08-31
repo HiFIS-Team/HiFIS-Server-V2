@@ -31,13 +31,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import KST
 from app.db.session import get_db
-from app.enums import EmployeeStatus, MyTaskRequestType, ProjectRequestStatus, Role
+from app.enums import EmployeeStatus, MyTaskFieldKind, MyTaskRequestType, ProjectRequestStatus, Role
 from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.employee import Employee
 from app.schemas.scoring.my_task import (
     EVERY_DAY,
+    MyTaskCheckCreate,
     MyTaskCreate,
+    MyTaskField,
     MyTaskDayOut,
     MyTaskExcuseCreate,
     MyTaskMissOut,
@@ -46,6 +48,7 @@ from app.schemas.scoring.my_task import (
     MyTaskRequestOut,
     MyTaskRosterRow,
     MyTaskUpdate,
+    clean_fields,
     clean_weekdays,
 )
 from app.services import notification_texts as ntext
@@ -206,11 +209,25 @@ async def list_my_tasks(
     # **오늘 체크와 따로 센다** — 앱이 수정·삭제를 바로 보낼지 결재로 보낼지
     # 이 값으로 가른다 (2026-08-20)
     ever = await _checked_ever(db, ids)
+    # 그날 적어 넣은 값 — 체크 여부는 서비스가 세지만 값까지는 안 들고 온다.
+    # 질의 하나면 되고, 칸을 쓰는 사람만 채워진다
+    filled = {
+        row.my_task_id: row.values
+        for row in (
+            await db.execute(
+                select(MyTaskCheck.my_task_id, MyTaskCheck.values).where(
+                    MyTaskCheck.my_task_id.in_(ids), MyTaskCheck.date == day
+                )
+            )
+        ).all()
+        if row.values
+    } if ids else {}
 
     out = []
     for d in due.tasks:
         item = MyTaskOut.model_validate(d.task)
         item.checked = d.task.id in due.checked
+        item.values = filled.get(d.task.id) or {}
         item.ever_checked = d.task.id in ever
         item.carried_from = d.carried_from
         req = pending.get(d.task.id)
@@ -288,13 +305,18 @@ async def create_my_tasks(
     # 담는 화면에서 같은 업무가 여러 요일에 걸리면 같은 이름이 여러 번 온다.
     # 두 줄로 만들면 어느 쪽을 체크했는지 알 수 없다 (`_reject_duplicate` 참고)
     merged: dict[str, set[int]] = {}
-    for content, days in payload.rows():
+    # 같은 이름이 여러 요일에 걸리면 **처음 것의 입력 칸**을 쓴다 — 요일마다
+    # 다른 칸을 받으면 한 줄로 합칠 때 어느 쪽을 남길지 알 수 없다
+    fields_of: dict[str, list[dict]] = {}
+    for content, days, fields in payload.rows():
         content = content.strip()
         if not content:
             continue
         if len(content) > 200:
             raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
         merged.setdefault(content, set()).update(days)
+        if fields and not fields_of.get(content):
+            fields_of[content] = fields
     if not merged:
         raise HTTPException(400, detail={"code": "CONTENT_REQUIRED", "message": "업무를 적어 주세요"})
 
@@ -313,6 +335,7 @@ async def create_my_tasks(
             employee_id=current.id,
             content=content,
             weekdays=sorted(days),
+            fields=fields_of.get(content, []),
             sort=base + i,
         )
         for i, (content, days) in enumerate(merged.items())
@@ -344,7 +367,12 @@ async def update_my_task(
     if len(content) > 200:
         raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
     days = clean_weekdays(payload.weekdays) if payload.weekdays is not None else list(task.weekdays or EVERY_DAY)
-    if content == task.content and days == sorted(task.weekdays or []):
+    fields = clean_fields(payload.fields) if payload.fields is not None else list(task.fields or [])
+    if (
+        content == task.content
+        and days == sorted(task.weekdays or [])
+        and fields == list(task.fields or [])
+    ):
         raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "바뀐 것이 없어요"})
     if content != task.content:
         # 결재로 겪었던 그 자리다 — 같은 이름 두 줄은 손쓸 방법이 없다
@@ -352,6 +380,7 @@ async def update_my_task(
 
     task.content = content
     task.weekdays = days
+    task.fields = fields
     await db.commit()
     await db.refresh(task)
     return MyTaskOut.model_validate(task)
@@ -375,20 +404,64 @@ async def delete_my_task(
 
 
 # ---------- 체크 ----------
+def _check_values(task: MyTask, raw: dict[str, str]) -> dict:
+    """적어 넣은 값을 업무가 정한 칸에 맞춰 정리한다 (2026-08-31).
+
+    **정한 칸을 다 채워야 한다.** 하나라도 비면 400 — 값을 받으려고 만든
+    칸인데 빈 채로 체크되면 그 칸이 있으나 마나다.
+
+    정한 적 없는 칸은 **조용히 버린다** (앱이 옛 화면일 수 있다).
+    """
+    fields = task.fields or []
+    if not fields:
+        return {}
+    out: dict = {}
+    for f in fields:
+        name = f.get("name", "")
+        text = (raw.get(name) or "").strip()
+        if not text:
+            raise HTTPException(
+                400,
+                detail={"code": "VALUE_REQUIRED", "message": f"{name}을(를) 적어 주세요"},
+            )
+        if f.get("kind") == MyTaskFieldKind.NUMBER.value:
+            try:
+                out[name] = int(text)
+            except ValueError:
+                raise HTTPException(
+                    400,
+                    detail={"code": "NOT_A_NUMBER", "message": f"{name}은(는) 숫자로 적어 주세요"},
+                ) from None
+        else:
+            out[name] = text[:200]
+    return out
+
+
 @router.post("/my-tasks/{task_id}/check", status_code=204)
 async def check_my_task(
     task_id: str,
+    payload: MyTaskCheckCreate | None = None,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """오늘 했다고 표시 — **멱등**이다 (두 번 눌러도 한 줄)."""
+    """오늘 했다고 표시 — **멱등**이다 (두 번 눌러도 한 줄).
+
+    업무에 입력 칸이 있으면 **값을 다 채워야** 체크가 된다.
+    이미 체크한 날에 다시 부르면 값은 **안 덮는다** — 체크가 못 되돌리는 것이라
+    (`uncheck`) 값만 바꿔치기하는 길을 열어 두면 그 규칙이 뚫린다.
+    """
     task = await _own_task(task_id, current, db)
     day = _today()
     exists = await db.scalar(
         select(MyTaskCheck.id).where(MyTaskCheck.my_task_id == task.id, MyTaskCheck.date == day)
     )
     if exists is None:
-        db.add(MyTaskCheck(my_task_id=task.id, employee_id=current.id, date=day))
+        values = _check_values(task, payload.values if payload else {})
+        db.add(
+            MyTaskCheck(
+                my_task_id=task.id, employee_id=current.id, date=day, values=values
+            )
+        )
         await db.commit()
 
 
@@ -441,14 +514,24 @@ async def create_my_task_request(
             if "weekdays" in raw
             else list(task.weekdays or EVERY_DAY)
         )
+        # 입력 칸도 같은 규칙 — 안 보내면 지금 것을 그대로 싣는다 (2026-08-31)
+        fields = (
+            clean_fields([MyTaskField.model_validate(f) for f in raw["fields"]])
+            if isinstance(raw.get("fields"), list)
+            else list(task.fields or [])
+        )
         if not content:
             raise HTTPException(400, detail={"code": "CONTENT_REQUIRED", "message": "고칠 내용을 적어 주세요"})
-        if content == task.content and days == sorted(task.weekdays or []):
+        if (
+            content == task.content
+            and days == sorted(task.weekdays or [])
+            and fields == list(task.fields or [])
+        ):
             raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "바뀐 것이 없어요"})
         if content != task.content:
             # 승인되고 나서야 겹치는 걸 알면 이미 두 줄이다 — 올릴 때 막는다
             await _reject_duplicate(db, current.id, [content], skip_id=task.id)
-        payload.payload = {"content": content, "weekdays": days}
+        payload.payload = {"content": content, "weekdays": days, "fields": fields}
 
     # 업무 하나에 대기 요청은 하나뿐 — 수정 대기 중에 삭제까지 오면
     # 처리 순서에 따라 결과가 갈린다
@@ -542,6 +625,9 @@ async def _decide(
             # 그대로 둔다 — 그때는 매일이 전제였다
             if body.get("weekdays"):
                 task.weekdays = clean_weekdays(body["weekdays"])
+            # 입력 칸은 **빈 배열도 뜻이 있다** (칸을 없애는 것) — 있는지로 가른다
+            if isinstance(body.get("fields"), list):
+                task.fields = body["fields"]
         else:
             # **행을 안 지운다.** 지우면 CASCADE 로 체크 기록까지 사라져서
             # 지난 날짜가 '하지도 않은 일을 한 것'으로 보인다

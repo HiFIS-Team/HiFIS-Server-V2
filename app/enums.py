@@ -428,3 +428,14 @@ class WorkoutMediaKind(StrEnum):
 
     IMAGE = "IMAGE"
     VIDEO = "VIDEO"
+
+
+class MyTaskFieldKind(StrEnum):
+    """개인 업무 입력 칸의 종류 — 체크할 때 받는 값이 무엇이냐 (2026-08-31 요청).
+
+    숫자는 나중에 더하거나 견줄 수 있어야 해서 `int` 로 담고, 글은 그대로 담는다.
+    주간 신규·재등록 수처럼 **세는 값**이 이 기능을 만든 이유라 기본이 숫자다.
+    """
+
+    NUMBER = "NUMBER"
+    TEXT = "TEXT"
