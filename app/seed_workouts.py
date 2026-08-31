@@ -102,7 +102,11 @@ _PERSONAL = [
 
 
 def _weights(rows: list[tuple[str, str, str, str]]) -> list[dict]:
-    return [{"part": p, "name": n, "load": l, "sets": s} for p, n, l, s in rows]
+    # `l` 은 ruff E741 (1·I 와 헷갈리는 이름) — 무게 칸이라 load 로 쓴다
+    return [
+        {"part": part, "name": name, "load": load, "sets": sets}
+        for part, name, load, sets in rows
+    ]
 
 
 def _cardio(rows: list[tuple[str, str]]) -> list[dict]:
