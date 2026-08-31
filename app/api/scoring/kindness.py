@@ -12,10 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import branch_filter, get_current_user
+from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.ratelimit import limiter
 from app.db.session import get_db
-from app.enums import ComplaintStatus, ScoreCategory
+from app.enums import ComplaintStatus, Role, ScoreCategory
 from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog
 from app.models.scoring.kindness import KindnessSurvey
@@ -24,6 +24,7 @@ from app.schemas.scoring.kindness import (
     KindnessSurveyOut,
     KindnessSurveyWebhook,
 )
+from app.services.notifications import master_ids, notify
 from app.services.scoring import accrue_score
 
 logger = logging.getLogger(__name__)
@@ -107,15 +108,175 @@ async def set_complaint_status(
 ) -> KindnessSurvey:
     """컴플레인 처리 단계 바꾸기 — 미처리 → 해결중 → 해결 완료.
 
-    **누구나 바꿀 수 있다.** 컴플레인은 매장 전체의 일이라 고친 사람이
-    표시하면 된다. 다만 누가 언제 끝냈는지는 남긴다.
+    **미처리·해결중은 누구나 바꾼다.** 컴플레인은 매장 전체의 일이라 고친
+    사람이 표시하면 된다.
 
-    **해결 완료는 되돌릴 수 없다.** 완료를 찍는 순간 환경정비 '클레임해결'
-    점수가 들어가서, 되돌렸다 다시 찍으면 점수가 두 번 쌓인다.
-    매장 TV 에 '해결 완료' 로 이미 나간 것을 물리는 것이기도 하다.
+    **해결 완료만 대표 승인을 받는다** (2026-08-31 대표 요청). 완료를 찍으면
+    찍은 사람에게 환경정비 '클레임해결' 점수가 붙어서, 아무나 찍을 수 있으면
+    점수를 그냥 가져갈 수 있다.
+
+    | 누가 눌렀나 | 결과 |
+    |---|---|
+    | MASTER | 바로 `DONE` — 승인할 사람이 자기다 |
+    | MANAGER · MEMBER | `DONE_REQUESTED` (승인 대기) — **점수는 아직 없다** |
+
+    승인 대기에서 해결중·미처리를 누르면 **신청을 무른다** (잘못 누른 것을
+    되돌리는 길). 승인은 `POST /kindness-surveys/{id}/approve` 다.
+
+    **해결 완료는 되돌릴 수 없다.** 완료를 찍는 순간 점수가 들어가서,
+    되돌렸다 다시 찍으면 두 번 쌓인다. 매장 TV 에 '해결 완료' 로 이미
+    나간 것을 물리는 것이기도 하다.
 
     개선 의견이 없는 설문(칭찬만 있는 것)은 컴플레인이 아니라서 막는다.
     """
+    if payload.status is ComplaintStatus.DONE_REQUESTED:
+        # 서버가 매기는 값이다 — 요청자가 이걸로 건너뛰면 승인 없이 대기가 된다
+        raise HTTPException(
+            400,
+            detail={"code": "NOT_SETTABLE", "message": "완료 승인 대기는 직접 지정할 수 없습니다"},
+        )
+    survey = await _complaint(db, survey_id)
+    if survey.improvement_status == ComplaintStatus.DONE:
+        raise HTTPException(
+            400,
+            detail={"code": "ALREADY_RESOLVED", "message": "이미 해결 완료된 컴플레인입니다"},
+        )
+
+    if payload.status is not ComplaintStatus.DONE:
+        # 해결중·미처리로 내린다 — 올려 둔 승인 신청이 있으면 같이 무른다
+        survey.improvement_status = payload.status
+        survey.done_requested_by_id = None
+        survey.done_requested_at = None
+        await db.commit()
+        await db.refresh(survey)
+        return survey
+
+    now = datetime.now(timezone.utc)
+    if current.role is Role.MASTER:
+        survey.improvement_status = ComplaintStatus.DONE
+        survey.resolved_at = now
+        survey.resolved_by_id = current.id
+        await _award_claim_resolved(db, current, survey)
+        await db.commit()
+        await db.refresh(survey)
+        return survey
+
+    survey.improvement_status = ComplaintStatus.DONE_REQUESTED
+    survey.done_requested_by_id = current.id
+    survey.done_requested_at = now
+    for eid in await master_ids(db, exclude=current.id):
+        await notify(
+            db,
+            employee_id=eid,
+            type="COMPLAINT",
+            title="컴플레인 해결 완료 결재",
+            body=f"{current.name} · {(survey.improvement or '').strip()}",
+            link=f"/kindness/{survey.id}",
+        )
+    await db.commit()
+    await db.refresh(survey)
+    return survey
+
+
+@router.post(
+    "/kindness-surveys/{survey_id}/approve",
+    response_model=KindnessSurveyOut,
+    dependencies=[Depends(require_role(Role.MASTER))],
+)
+async def approve_complaint_done(
+    survey_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> KindnessSurvey:
+    """컴플레인 해결 완료 승인 — **점수는 올린 사람에게 간다.**
+
+    대표가 눌러 준다고 대표가 치운 것은 아니다. 실제로 해결한 사람이
+    `done_requested_by_id` 라 그 사람 앞으로 클레임해결 기록을 남긴다.
+    """
+    survey = await _complaint(db, survey_id)
+    requester = await _pending_requester(db, survey)
+    survey.improvement_status = ComplaintStatus.DONE
+    survey.resolved_at = datetime.now(timezone.utc)
+    survey.resolved_by_id = requester.id
+    await _award_claim_resolved(db, requester, survey)
+    await notify(
+        db,
+        employee_id=requester.id,
+        type="COMPLAINT",
+        title="컴플레인 해결이 승인됐어요",
+        body=(survey.improvement or "").strip(),
+        link=f"/kindness/{survey.id}",
+    )
+    # **신청 흔적을 안 지운다** — 지우면 대표가 직접 찍은 완료와 구분이 안 되어
+    # 결재 이력의 '승인' 칸에 대표가 혼자 처리한 것까지 선다 (일정의 `decided_at`
+    # 과 같은 자리다)
+    await db.commit()
+    await db.refresh(survey)
+    return survey
+
+
+@router.post(
+    "/kindness-surveys/{survey_id}/reject",
+    status_code=204,
+    dependencies=[Depends(require_role(Role.MASTER))],
+)
+async def reject_complaint_done(
+    survey_id: str,
+    reason: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """해결 완료 반려 — **해결중으로 되돌린다.**
+
+    미처리로 내리면 아무도 손대지 않은 것처럼 보인다. 실제로는 누가 붙어
+    있다가 아직 덜 된 것이라 해결중이 맞다.
+    """
+    survey = await _complaint(db, survey_id)
+    requester = await _pending_requester(db, survey)
+    survey.improvement_status = ComplaintStatus.WORKING
+    survey.done_requested_by_id = None
+    survey.done_requested_at = None
+    await notify(
+        db,
+        employee_id=requester.id,
+        type="COMPLAINT",
+        title="컴플레인 해결이 반려됐어요",
+        body=f"{(survey.improvement or '').strip()}{f' · {reason}' if reason else ''}",
+        link=f"/kindness/{survey.id}",
+    )
+    await db.commit()
+    return None
+
+
+@router.delete(
+    "/kindness-surveys/{survey_id}/complaint",
+    status_code=204,
+    dependencies=[Depends(require_role(Role.MASTER))],
+)
+async def delete_complaint(
+    survey_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """컴플레인 지우기 — **개선 의견만 지운다** (2026-08-31 대표 요청).
+
+    설문 한 건에 칭찬과 개선 의견이 같이 들어 있다. 줄을 통째로 지우면
+    그 회원이 남긴 칭찬과 이미 붙은 친절 점수까지 같이 날아간다.
+    개선 의견을 비우면 앱이 컴플레인으로 세지 않아 그 줄만 사라진다.
+
+    **되돌릴 수 없다** — 지운 글은 어디에도 안 남는다. 활동 기록에는
+    누가 언제 지웠는지가 남는다.
+    """
+    survey = await _complaint(db, survey_id)
+    survey.improvement = None
+    survey.improvement_status = ComplaintStatus.PENDING
+    survey.done_requested_by_id = None
+    survey.done_requested_at = None
+    survey.resolved_at = None
+    survey.resolved_by_id = None
+    await db.commit()
+    return None
+
+
+async def _complaint(db: AsyncSession, survey_id: str) -> KindnessSurvey:
+    """설문을 꺼내되 **컴플레인인 것만** — 넷이 같은 검사를 쓴다."""
     survey = await db.get(KindnessSurvey, survey_id)
     if survey is None:
         raise HTTPException(404, detail={"code": "SURVEY_NOT_FOUND", "message": "설문을 찾을 수 없습니다"})
@@ -123,20 +284,25 @@ async def set_complaint_status(
         raise HTTPException(
             400, detail={"code": "NOT_A_COMPLAINT", "message": "개선 의견이 없는 설문입니다"}
         )
-    if survey.improvement_status == ComplaintStatus.DONE:
-        raise HTTPException(
-            400,
-            detail={"code": "ALREADY_RESOLVED", "message": "이미 해결 완료된 컴플레인입니다"},
-        )
-
-    survey.improvement_status = payload.status
-    if payload.status == ComplaintStatus.DONE:
-        survey.resolved_at = datetime.now(timezone.utc)
-        survey.resolved_by_id = current.id
-        await _award_claim_resolved(db, current, survey)
-    await db.commit()
-    await db.refresh(survey)
     return survey
+
+
+async def _pending_requester(db: AsyncSession, survey: KindnessSurvey) -> Employee:
+    """승인 대기 중인 신청과 올린 사람 — 아니면 400."""
+    if survey.improvement_status != ComplaintStatus.DONE_REQUESTED:
+        raise HTTPException(
+            400, detail={"code": "NOT_PENDING", "message": "승인을 기다리는 컴플레인이 아닙니다"}
+        )
+    requester = (
+        await db.get(Employee, survey.done_requested_by_id)
+        if survey.done_requested_by_id
+        else None
+    )
+    if requester is None:
+        raise HTTPException(
+            400, detail={"code": "REQUESTER_NOT_FOUND", "message": "올린 사람을 찾을 수 없습니다"}
+        )
+    return requester
 
 
 # 컴플레인을 끝내면 이 환경정비 항목으로 점수가 붙는다.

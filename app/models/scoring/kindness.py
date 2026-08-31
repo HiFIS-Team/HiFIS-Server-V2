@@ -36,6 +36,14 @@ class KindnessSurvey(UUIDMixin, TimestampMixin, Base):
         default=ComplaintStatus.PENDING,
         server_default=ComplaintStatus.PENDING.value,
     )
+    #: 완료를 올린 사람 — 승인되면 **이 사람에게** 클레임해결 점수가 간다.
+    #: 대표가 눌러 준다고 대표가 치운 것은 아니다.
+    done_requested_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=True
+    )
+    done_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

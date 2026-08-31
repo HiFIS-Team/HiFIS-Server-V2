@@ -32,5 +32,8 @@ class KindnessSurveyOut(CamelModel):
     submitted_at: datetime
     # 컴플레인 처리 — `improvement` 가 적힌 설문에서만 의미가 있다
     improvement_status: ComplaintStatus = ComplaintStatus.PENDING
+    #: 완료를 올린 사람 — 승인되면 이 사람에게 클레임해결 점수가 간다
+    done_requested_by_id: str | None = None
+    done_requested_at: datetime | None = None
     resolved_at: datetime | None = None
     resolved_by_id: str | None = None

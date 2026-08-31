@@ -197,6 +197,9 @@ LABELS: dict[tuple[str, str], str] = {
     ("POST", "/supply-orders"): "비품 주문",
     ("POST", "/peer-reviews"): "동료 평가 제출",
     ("PATCH", "/kindness-surveys/{id}/status"): "컴플레인 처리 단계 변경",
+    ("POST", "/kindness-surveys/{id}/approve"): "컴플레인 해결 승인",
+    ("POST", "/kindness-surveys/{id}/reject"): "컴플레인 해결 반려",
+    ("DELETE", "/kindness-surveys/{id}/complaint"): "컴플레인 삭제",
     ("POST", "/webhooks/kindness-survey"): "회원 설문 접수",
     ("POST", "/survey/{id}"): "회원 설문 접수(매장 QR)",
     # 내 업무 — 라벨이 통째로 빠져 있어 주소가 그대로 보이던 자리다 (2026-08-21)

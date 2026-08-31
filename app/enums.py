@@ -204,6 +204,11 @@ class ComplaintStatus(StrEnum):
 
     PENDING = "PENDING"  # 미처리
     WORKING = "WORKING"  # 해결중
+    #: 완료 승인 대기 — MANAGER·MEMBER 가 완료를 눌렀지만 아직 안 끝났다 (2026-08-31)
+    #:
+    #: 완료를 찍으면 찍은 사람에게 환경정비 '클레임해결' 점수가 붙는다.
+    #: 아무나 찍을 수 있으면 점수를 그냥 가져갈 수 있어서 대표가 한 번 본다.
+    DONE_REQUESTED = "DONE_REQUESTED"
     DONE = "DONE"        # 해결 완료
 
 
@@ -351,6 +356,8 @@ class InboxKind(StrEnum):
     PROJECT = "PROJECT"    # POST /projects/requests/{id}/approve|reject
     # 누락 사유서 — 주소가 달라서 MY_TASK 와 따로 둔다 (2026-08-21)
     TASK_MISS = "TASK_MISS"  # POST /my-task-misses/{id}/approve|reject
+    # 컴플레인 해결 완료 (2026-08-31)
+    COMPLAINT = "COMPLAINT"  # POST /kindness-surveys/{id}/approve|reject
 
 
 class InboxStatus(StrEnum):
