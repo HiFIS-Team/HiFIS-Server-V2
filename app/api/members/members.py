@@ -20,7 +20,7 @@ from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut, MemberUpdate
 from app.schemas.members.registration import RegistrationOut
-from app.services.registrations import counts_now, ensure_used_within, initial_status
+from app.services.registrations import accrue_sales_score, counts_now, ensure_used_within, initial_status
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/members", tags=["members"], dependencies=[Depends(get_current_user)])
@@ -143,6 +143,8 @@ async def create_member(
             purchased_at=reg_in.purchased_at or datetime.now(timezone.utc),
         )
         db.add(registration)
+        await db.flush()
+        await accrue_sales_score(db, registration, reg_trainer)
 
     await db.commit()
     await db.refresh(member)

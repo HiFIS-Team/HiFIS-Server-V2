@@ -22,7 +22,6 @@ from app.enums import (
     Rank,
     RegistrationType,
     Role,
-    ScoreCategory,
 )
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.staff.employee import Employee
@@ -32,24 +31,18 @@ from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.payday_policy import PaydayPolicy
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.members.registration import Registration
-from app.models.scoring.score_event import ScoreEvent
 from app.models.members.session_sign import SessionSign
-from app.services.scoring import accrue_score
 
 FREELANCE_RATE = 0.033
 # 4대보험 근로자 부담분 근사치 (건강보험 기준 장기요양 별도)
 INSURANCE_RATES = (("국민연금", 0.045), ("건강보험", 0.03545), ("고용보험", 0.009))
 LONGTERM_CARE_RATE = 0.1295  # 장기요양 = 건강보험료 × 12.95%
 
-# 매출성과(SALES) 자동 기여도 — 최종 점수표:
-# 100,000원당 10점(= 매출 ÷ 10,000 이 기본점수) × 0.25. 월 총 PT매출(신규+재등록) 기준.
-# 예) 월 총매출 1,000,000원 → 100 × 0.25 = 25점.
-SALES_WON_PER_POINT = 10_000  # 10,000원 = 기본 1점 (100,000원 = 10점)
-SALES_MULTIPLIER = 0.25
-
-
-def sales_points(total_sales: int) -> int:
-    return round(total_sales / SALES_WON_PER_POINT * SALES_MULTIPLIER)
+# 매출성과(SALES) 점수는 **여기 없다** — 등록권을 만들 때 바로 매긴다
+# (`services/registrations.py` 의 `accrue_sales_score`, 2026-08-31 대표 요청).
+#
+# 예전에는 이 마감이 그 달 매출을 통째로 더해 한 번에 매겼는데, 그러면
+# 한 달이 끝나야 점수가 보이고 **급여 개시일 전 주기는 통째로 빠졌다.**
 
 
 # 직급별 전사 기본 급여 정책 (기본급, 워크인 요율, 재등록/지인소개 요율).
@@ -552,16 +545,10 @@ async def generate_branch_payslips(
         return []
 
     employee_ids = [employee.id for employee in employees]
-    sales_ref = f"sales:{year_month}"
-    # 재생성 = 기존 명세서 + 자동 SALES 점수 교체 (멱등)
+    # 재생성 = 기존 명세서 교체 (멱등)
     await db.execute(
         delete(Payslip).where(
             Payslip.year_month == year_month, Payslip.employee_id.in_(employee_ids)
-        )
-    )
-    await db.execute(
-        delete(ScoreEvent).where(
-            ScoreEvent.source_ref_id == sales_ref, ScoreEvent.employee_id.in_(employee_ids)
         )
     )
 
@@ -597,26 +584,4 @@ async def generate_branch_payslips(
         payslip = Payslip(employee_id=employee.id, year_month=year_month, **data)
         db.add(payslip)
         generated.append(payslip)
-
-        # SALES 자동 기여도 = 이 달 **등록 매출**(신규+재등록 결제액) 기준 (세션 커미션과 별개)
-        sales_total = (
-            await db.execute(
-                select(func.coalesce(func.sum(Registration.price_paid), 0)).where(
-                    Registration.trainer_id == employee.id,
-                    Registration.purchased_at >= start,
-                    Registration.purchased_at < end,
-                )
-            )
-        ).scalar_one()
-        if sales_total > 0:
-            await accrue_score(
-                db,
-                employee_id=employee.id,
-                branch_id=employee.branch_id,
-                category=ScoreCategory.CONTRIB,
-                points=sales_points(sales_total),
-                source_ref_id=sales_ref,
-                period=year_month,
-                reason="매출성과(자동)",
-            )
     return generated

@@ -21,8 +21,57 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.periods import KST
-from app.enums import RegistrationStatus
+from app.enums import RegistrationStatus, ScoreCategory
+from app.models.members.registration import Registration
+from app.models.staff.employee import Employee
+from app.services.scoring import accrue_score
+
+#: 매출성과 점수 — 결제액 10,000원이 기본 1점, 거기에 배율을 곱한다.
+#: 55만원 결제 → 55 × 0.25 = 13.75 → **14점**
+SALES_WON_PER_POINT = 10_000
+SALES_MULTIPLIER = 0.25
+
+
+def sales_points(price_paid: int) -> int:
+    return round(price_paid / SALES_WON_PER_POINT * SALES_MULTIPLIER)
+
+
+async def accrue_sales_score(
+    db: AsyncSession, registration: Registration, trainer: Employee
+) -> None:
+    """등록권 하나가 만들어질 때 **바로** 매출성과 점수를 쌓는다 (2026-08-31 대표 요청).
+
+    예전에는 급여 마감이 그 달 매출을 통째로 더해 한 번에 매겼다. 그러면
+    **한 달이 끝나야 점수가 보이고**, 급여 개시일 전 주기는 마감이 통째로
+    건너뛰어서 그 달 매출이 점수로 영영 안 남았다 (8월 6,626만원이 그랬다).
+    등록하는 순간 매기면 두 문제가 같이 없어진다.
+
+    **지난 달 결제는 안 준다** — 기존 회원을 뒤늦게 넣는 자리가 있어서다
+    ([counts_now] 와 같은 기준, 방문 경로 점수도 같은 규칙이다).
+
+    `source_ref_id` 가 등록권 id 라 **한 등록권에 한 번만** 쌓인다. 랭킹의
+    매출 탭은 `sales:%` 로 거르므로 그대로 걸린다.
+    """
+    if not counts_now(registration.purchased_at):
+        return
+    points = sales_points(registration.price_paid)
+    if points <= 0:
+        return
+    await accrue_score(
+        db,
+        employee_id=trainer.id,
+        branch_id=trainer.branch_id,
+        category=ScoreCategory.CONTRIB,
+        points=points,
+        source_ref_id=f"sales:{registration.id}",
+        period=registration.purchased_at.astimezone(KST).strftime("%Y-%m"),
+        reason="매출성과(자동)",
+    )
+
+
 
 
 def counts_now(purchased_at: datetime | None, *, now: datetime | None = None) -> bool:
