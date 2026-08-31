@@ -42,7 +42,9 @@ from app.schemas.scoring.my_task import (
     MyTaskField,
     MyTaskDayOut,
     MyTaskExcuseCreate,
+    MyTaskMissAlertOut,
     MyTaskMissOut,
+    MyTaskMissStaffRow,
     MyTaskOut,
     MyTaskRequestCreate,
     MyTaskRequestOut,
@@ -52,7 +54,7 @@ from app.schemas.scoring.my_task import (
     clean_weekdays,
 )
 from app.services import notification_texts as ntext
-from app.services.my_tasks import due_tasks
+from app.services.my_tasks import carried_over, due_tasks, missing_now
 from app.services.notifications import master_ids, notify
 
 router = APIRouter(tags=["my-tasks"], dependencies=[Depends(get_current_user)])
@@ -291,6 +293,57 @@ async def my_task_roster(
         )
         for p in people
     ]
+
+
+@router.get("/my-tasks/miss-alert", response_model=MyTaskMissAlertOut)
+async def my_task_miss_alert(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MyTaskMissAlertOut:
+    """앱을 열 때 띄울 **누락 경고** — 있으면 채워서, 없으면 비워서 준다.
+
+    | 누가 | 무엇을 받나 | 앱이 어떻게 |
+    |---|---|---|
+    | 누락한 본인 | `mine` | **열 때마다** 뜬다 |
+    | MASTER · ADMIN | `staff` (전 지점) | **한 번만** |
+    | 점장 | `staff` (자기 지점) | 한 번만 — 단 `mine` 이 있으면 그건 매번 |
+    | 그 밖 | 빈 목록 | 안 뜬다 |
+
+    **판정을 서버가 한다.** 앱이 "퇴근을 찍었나 + 남은 것이 있나" 를 조합하면
+    매시간 푸시(`my_task_miss_reminders`)와 갈려서, 폰은 울리는데 앱을 열면
+    아무것도 안 뜨게 된다.
+    """
+    day = _today()
+    mine: list[str] = []
+    last_chance = False
+    # 대표·관리자는 내 업무 화면이 없다 — 늘 0개라 물어볼 것이 없다
+    if current.role not in (Role.MASTER, Role.ADMIN):
+        got = await missing_now(db, [current], day)
+        mine = [t.content for t in got.get(current.id, [])]
+        if mine:
+            # 지난 근무일에도 안 한 것이 섞였으면 오늘이 마지막 기회다
+            last_chance = bool(await carried_over(db, [current], day))
+
+    staff: list[MyTaskMissStaffRow] = []
+    if current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        stmt = select(Employee).where(
+            Employee.role.notin_([Role.MASTER, Role.ADMIN]),
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+            Employee.id != current.id,
+        )
+        # 점장은 자기 지점만 — 남의 지점 사람을 챙길 자리가 아니다
+        if current.role is Role.MANAGER:
+            stmt = stmt.where(Employee.branch_id == current.branch_id)
+        others = list(await db.scalars(stmt.order_by(Employee.name)))
+        found = await missing_now(db, others, day)
+        staff = [
+            MyTaskMissStaffRow(employee_id=p.id, name=p.name, count=len(found[p.id]))
+            for p in others
+            if p.id in found
+        ]
+
+    return MyTaskMissAlertOut(date=day, mine=mine, last_chance=last_chance, staff=staff)
 
 
 @router.post("/my-tasks", response_model=list[MyTaskOut], status_code=201)

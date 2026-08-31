@@ -187,6 +187,31 @@ class MyTaskRosterRow(CamelModel):
     complete: bool
 
 
+class MyTaskMissStaffRow(CamelModel):
+    """남이 남기고 퇴근한 것 한 줄 — 모달이 이름으로 그린다."""
+
+    employee_id: str
+    name: str
+    count: int
+
+
+class MyTaskMissAlertOut(CamelModel):
+    """앱을 열 때 띄울 **누락 경고** — 있는지 없는지를 서버가 판정한다.
+
+    앱이 "퇴근을 찍었나 + 남은 것이 있나 + 지난 근무일에도 안 했나" 를 조합하면
+    규칙이 두 곳으로 갈린다. 매시간 푸시와 **같은 함수**(`missing_now`)를 쓴다 —
+    폰은 울리는데 앱을 열면 아무것도 안 뜨는 일이 없어야 한다.
+    """
+
+    date: date
+    #: 본인이 남긴 업무 이름 — **비어 있으면 경고가 없다**
+    mine: list[str] = Field(default_factory=list)
+    #: 오늘이 마지막 기회인가 — 안 하면 내일 확정 -20 (앱이 붉게 그린다)
+    last_chance: bool = False
+    #: 남이 남긴 것 — MASTER·ADMIN 은 전 지점, 점장은 자기 지점, 그 밖은 빈 목록
+    staff: list[MyTaskMissStaffRow] = Field(default_factory=list)
+
+
 class MyTaskExcuseCreate(CamelModel):
     """누락 사유서 — 왜 못 했는지 (2026-08-21).
 

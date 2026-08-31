@@ -28,6 +28,7 @@
 만들어 둔 이월분이 남아서 어긋난다.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -36,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import LeaveStatus, LeaveType
 from app.models.scoring.my_task import MyTask, MyTaskCheck
-from app.models.staff.attendance import LeaveRequest
+from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 
 #: 지난 차례를 며칠까지 거슬러 보나 — **7일이면 충분하다.**
@@ -261,3 +262,115 @@ async def due_tasks(
             complete=is_complete(len(due), len(checked), person, day),
         )
     return out
+
+
+def prev_workday(person: Employee, day: date) -> date | None:
+    """[day] 바로 앞의 **근무일** — 없으면 `None`.
+
+    쉬는 날은 건너뛴다. 못 한 일을 만회할 기회를 쓰는 날은 근무일뿐이라 그렇다.
+    """
+    for back in range(1, LOOKBACK + 1):
+        d = day - timedelta(days=back)
+        if is_workday(person, d):
+            return d
+    return None
+
+
+@dataclass(frozen=True)
+class Carried:
+    """지난 근무일에도 안 했고 그날도 안 한 것 — **그날이 마지막 기회다**."""
+
+    #: 원래 차례였던 날 (지난 근무일)
+    since: date
+    tasks: list[MyTask]
+
+
+async def carried_over(
+    db: AsyncSession, people: list[Employee], day: date
+) -> dict[str, Carried]:
+    """마지막 기회를 쓰고 있는 사람 — **확정 판정과 매시간 재촉이 같이 쓴다**.
+
+    | 부르는 곳 | 무엇에 |
+    |---|---|
+    | `my_task_miss_scan` | 어제까지 안 했으면 그 앞 근무일을 **확정 누락**으로 |
+    | `my_task_miss_reminders` | 오늘이 마지막 기회면 **하루 내내** 재촉 |
+
+    **둘이 갈리면 안 된다.** 재촉이 멎었는데 점수가 깎이거나, 안 깎이는데
+    밤새 울린다.
+
+    ## `carried_from` 으로 가르면 틀린다
+
+    **매일 하는 업무는 그 값이 안 붙는다** — 매일 제 차례라 '밀려 온 것'이
+    아니라 그냥 또 서기 때문이다 (`due_tasks` 의 `standing` 검사). 지금 업무는
+    거의 다 매일이라 그걸로 갈랐으면 한 건도 안 걸렸다.
+
+    그래서 요일 업무든 매일 업무든 똑같이 다루는 값 하나만 쓴다 — **그날 안 한
+    것**(`DueDay.left`). 그게 이틀(근무일 기준) 연속 걸리면 지난 차례가 지금
+    마지막 기회를 쓰고 있는 것이다.
+    """
+    graced = [p for p in people if is_workday(p, day)]
+    if not graced:
+        return {}
+
+    # 앞 근무일이 사람마다 다르다 (근무 요일이 다르므로). 같은 날끼리 묶어서
+    # 질의를 몇 개로 줄인다 — 사람마다 부르면 23명이면 23번이다
+    by_prev: dict[date, list[Employee]] = defaultdict(list)
+    for person in graced:
+        prev = prev_workday(person, day)
+        if prev is not None:
+            by_prev[prev].append(person)
+    if not by_prev:
+        return {}
+
+    left_now = {
+        pid: {t.id for t in due.left}
+        for pid, due in (await due_tasks(db, graced, day, today=day)).items()
+    }
+    out: dict[str, Carried] = {}
+    for prev, group in by_prev.items():
+        for pid, due in (await due_tasks(db, group, prev, today=prev)).items():
+            still = [t for t in due.left if t.id in left_now.get(pid, set())]
+            if still:
+                out[pid] = Carried(since=prev, tasks=still)
+    return out
+
+
+async def _checked_out(db: AsyncSession, people_ids: list[str], day: date) -> set[str]:
+    """그날 **퇴근을 찍은** 사람."""
+    if not people_ids:
+        return set()
+    rows = await db.scalars(
+        select(Attendance.employee_id).where(
+            Attendance.employee_id.in_(people_ids),
+            Attendance.date == day,
+            Attendance.check_out.is_not(None),
+        )
+    )
+    return set(rows)
+
+
+async def missing_now(
+    db: AsyncSession, people: list[Employee], day: date
+) -> dict[str, list[MyTask]]:
+    """지금 **누락 경고가 서 있는** 사람 — 매시간 푸시와 앱 모달이 같이 쓴다.
+
+    | 남은 것 | 언제 경고인가 |
+    |---|---|
+    | 지난 근무일에도 안 한 것이 섞여 있다 | **하루 내내** — 오늘이 마지막 기회다 |
+    | 오늘 제 차례 것만 남았다 | **퇴근을 찍은 뒤부터** |
+
+    퇴근 전에도 울리면 아직 일하는 중인 사람을 매시간 쪼는 셈이다. 요청이
+    "누락되고 **퇴근이 스캔되면**" 이었다 (2026-08-31 대표 결정).
+
+    **판정을 여기 하나로 둔다.** 매시간 푸시(`my_task_miss_reminders`)와
+    앱 모달(`GET /my-tasks/miss-alert`)이 갈리면 폰은 울리는데 앱을 열면
+    아무것도 안 뜬다.
+    """
+    due = await due_tasks(db, people, day, today=day)
+    left = {pid: d.left for pid, d in due.items() if d.left}
+    if not left:
+        return {}
+    still = [p for p in people if p.id in left]
+    carried = await carried_over(db, still, day)
+    gone = await _checked_out(db, list(left), day)
+    return {pid: tasks for pid, tasks in left.items() if pid in carried or pid in gone}

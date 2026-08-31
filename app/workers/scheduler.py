@@ -28,6 +28,7 @@ from app.workers.ranking_jobs import (
 from app.workers.anomaly_scan import anomaly_scan
 from app.workers.error_rate_scan import error_rate_scan
 from app.workers.metrics_flush import flush_metrics
+from app.workers.my_task_miss_reminders import my_task_miss_reminders
 from app.workers.my_task_miss_scan import my_task_miss_scan
 from app.workers.peer_review_miss_scan import peer_review_miss_scan
 from app.workers.peer_review_reminders import peer_review_reminders
@@ -94,6 +95,12 @@ def _register_jobs() -> None:
     # 보기 때문이다. 자정 직후가 그 첫 자리다.
     scheduler.add_job(my_task_miss_scan, CronTrigger(hour=15, minute=30),
                       id="my_task_miss_scan", replace_existing=True)
+    # 매시 정각 — 개인 업무 누락 재촉 푸시(**본인에게만**). 시간대를 안 자른다:
+    # 누락은 퇴근한 뒤에 나는 일이라 밤을 빼면 저녁에 한두 번 울리고 끝난다
+    # (2026-08-31 대표 결정 — "확정 전까지는 1시간마다 그냥").
+    # 쉬는 날은 목록이 비어서 저절로 조용하다.
+    scheduler.add_job(my_task_miss_reminders, CronTrigger(minute=0),
+                      id="my_task_miss_reminder", replace_existing=True)
     # 매시 정각 UTC 00~14 (=KST 09~23) — 동료평가 재촉 푸시.
     # **잡 안에서 창(말일·1일)인지 다시 본다** — 크론은 시각만 자른다.
     scheduler.add_job(peer_review_reminders, CronTrigger(hour="0-14", minute=0),
