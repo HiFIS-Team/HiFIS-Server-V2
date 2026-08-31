@@ -931,11 +931,15 @@ async def leave_balance(
     joined = target.joined_at.astimezone(KST).date()
     granted = annual_leave_granted(joined, as_of)
     year_start = _leave_year_start(joined, as_of)
-    # 사용=승인+대기(신청중) 연차/반차 — 이번 연차연도. 병가·외근·기타는 연차 차감 아님.
+    # 사용=승인+대기(신청중) 월차/반차/휴가 — 이번 연차연도.
+    # 병가·외근·기타는 안 센다. 휴가는 월차와 같은 지갑이라 쓴 날수가 그대로 쌓인다
+    # (2026-08-31).
     used_raw = await db.scalar(
         select(func.coalesce(func.sum(LeaveRequest.days), 0.0)).where(
             LeaveRequest.employee_id == target.id,
-            LeaveRequest.type.in_([LeaveType.ANNUAL, LeaveType.HALF]),
+            LeaveRequest.type.in_(
+                [LeaveType.ANNUAL, LeaveType.HALF, LeaveType.VACATION]
+            ),
             LeaveRequest.status.in_([LeaveStatus.APPROVED, LeaveStatus.PENDING]),
             LeaveRequest.start_date >= year_start,
         )

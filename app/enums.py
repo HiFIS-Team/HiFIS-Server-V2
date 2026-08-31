@@ -181,8 +181,13 @@ class AttendanceStatus(StrEnum):
 
 
 class LeaveType(StrEnum):
-    ANNUAL = "ANNUAL"  # 연차
+    ANNUAL = "ANNUAL"  # 월차
     HALF = "HALF"      # 반차
+    #: 휴가 (2026-08-31) — 월차와 **같은 지갑**에서 나간다.
+    #:
+    #: 월차는 하루씩 쓰는 이름이고 휴가는 며칠을 묶어 쓰는 이름일 뿐이라,
+    #: 쓴 날수가 그대로 사용 일수에 쌓인다. 병가·외근·기타와는 다르다.
+    VACATION = "VACATION"
     SICK = "SICK"      # 병가
     FIELD = "FIELD"    # 외근
     ETC = "ETC"

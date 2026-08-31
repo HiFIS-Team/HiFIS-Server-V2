@@ -167,8 +167,9 @@ async def my_home(
 
 # 월차 종류를 화면 말로 — 앱의 신청 화면과 같은 이름을 쓴다
 _LEAVE_LABEL = {
-    LeaveType.ANNUAL: "연차",
+    LeaveType.ANNUAL: "월차",
     LeaveType.HALF: "반차",
+    LeaveType.VACATION: "휴가",
     LeaveType.SICK: "병가",
     LeaveType.FIELD: "외근",
     LeaveType.ETC: "기타",
