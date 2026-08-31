@@ -314,10 +314,14 @@ class ReactionTargetType(StrEnum):
 
 
 class CommentTargetType(StrEnum):
-    """댓글이 달리는 글 — 공지·회의록 (2026-08-19).
+    """댓글이 달리는 글 — 공지·회의록·프로젝트·전자결재.
 
     반응(`ReactionTargetType`)과 따로 둔다. 저쪽에는 사내톡 메시지가 있는데
     메시지에는 댓글이 아니라 **답글**이 달린다 (`Message.reply_to_id`).
+
+    `APPROVAL` 은 나중에 붙었다 (2026-08-31). 결재 댓글은 원래 `approvals.comments`
+    JSONB 였는데 **줄마다 id 가 없어서** 고치고 지울 수가 없었다. 공지·회의록과
+    같은 창을 쓰려면 같은 표에 있어야 한다.
     """
 
     NOTICE = "NOTICE"
@@ -325,6 +329,10 @@ class CommentTargetType(StrEnum):
     #: 프로젝트 (2026-08-19) — 예전에는 `project_activities` 에 시스템 활동과
     #: 섞여 있었다. 화면이 공지·회의록과 같아지면서 저장도 여기로 모았다.
     PROJECT = "PROJECT"
+    #: 전자결재 (2026-08-31) — 예전에는 `approvals.comments` JSONB 였다.
+    #: 줄마다 id 가 없어 고치고 지울 수가 없었고, 그래서 결재만 댓글 창이
+    #: 달랐다. 옛 JSONB 는 남겨 두고(옛 앱이 읽는다) 새 댓글은 여기 쌓인다.
+    APPROVAL = "APPROVAL"
 
 
 class MessageKind(StrEnum):
