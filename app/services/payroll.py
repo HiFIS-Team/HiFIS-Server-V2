@@ -18,6 +18,7 @@ from app.enums import (
     DeductionMethod,
     EmployeeStatus,
     EmploymentType,
+    PayslipStatus,
     ProjectRequestStatus,
     Rank,
     RegistrationType,
@@ -545,15 +546,41 @@ async def generate_branch_payslips(
         return []
 
     employee_ids = [employee.id for employee in employees]
-    # 재생성 = 기존 명세서 교체 (멱등)
+
+    # **손 안 댄 초안만 갈아끼운다** (2026-08-31).
+    #
+    # 예전에는 그 달 명세서를 상태를 안 보고 통째로 지웠다. 이 잡이 매월 1일에
+    # 도는데 화순은 지급일이 말일이라, **9/30 에 신청·승인·지급까지 끝낸 것을
+    # 10/1 에 지우고 미제출로 되돌렸다.** 대표가 확인하고 지급한 기록(`paid_at`)
+    # 까지 날아가서, 직원이 다시 신청하면 이미 준 급여가 결재 대기에 또 선다.
+    # 개시일 전 달이면 지우기만 하고 안 만들어서 **행이 통째로 사라지기도 했다.**
+    #
+    # 사람이 손을 댄 뒤에는(제출·승인·반려·지급) 자동 계산이 덮으면 안 된다.
+    locked = set(
+        (
+            await db.execute(
+                select(Payslip.employee_id).where(
+                    Payslip.year_month == year_month,
+                    Payslip.employee_id.in_(employee_ids),
+                    Payslip.status != PayslipStatus.DRAFT,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     await db.execute(
         delete(Payslip).where(
-            Payslip.year_month == year_month, Payslip.employee_id.in_(employee_ids)
+            Payslip.year_month == year_month,
+            Payslip.employee_id.in_(employee_ids),
+            Payslip.status == PayslipStatus.DRAFT,
         )
     )
 
     generated: list[Payslip] = []
     for employee in employees:
+        if employee.id in locked:
+            continue  # 이미 신청·결재가 걸린 달 — 자동 계산이 덮지 않는다
         # 지급일 규칙이 사람마다 다르다 — 급여 주기와 측정 개시일이 여기서 갈린다
         payday = await get_payday_policy(db, employee.branch_id, employee.rank, start)
         if not payroll_started(year_month, payday):
