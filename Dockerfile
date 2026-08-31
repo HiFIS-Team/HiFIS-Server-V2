@@ -28,7 +28,13 @@ EXPOSE 8000
 # 사라져도 배포 스크립트가 alembic 을 따로 돌려서 **한동안 티가 안 난다** — 그게 더 나쁘다.
 # 그래서 두 브랜치를 같은 내용으로 맞춰 둔다.
 #
+# **`head` 가 아니라 `heads` 다.** 이 레포는 갈래가 여럿이라 헤드도 여럿인데,
+# `upgrade head` 는 그때 DB 상태와 상관없이 **무조건 죽는다**
+# (`Multiple head revisions are present`). 죽으면 gunicorn 이 안 떠서
+# 컨테이너가 재시작만 돈다 — 2026-08-31 운영이 실제로 그렇게 내려갔다.
+# 사람이 손으로 돌릴 때도 `alembic upgrade heads` 다 (CLAUDE.md).
+#
 # 워커 수는 `.env` 의 `GUNICORN_WORKERS` 로 바꾼다 (기본 4).
 # 예전에는 2로 박혀 있었는데 서버 코어가 8개라 놀리는 자원이 많았다.
 # **재빌드 없이** 바꾸려고 환경변수로 뺐다 — `sh -c` 라 여기서 풀린다.
-CMD ["sh", "-c", "alembic upgrade head && gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --access-logfile -"]
+CMD ["sh", "-c", "alembic upgrade heads && gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} --access-logfile -"]
