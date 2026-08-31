@@ -34,9 +34,27 @@ from app.services.scoring import accrue_score, scores_apply_to
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
 
 
+#: 동료평가 점수는 **평가받은 사람에게 안 보인다** (2026-08-31 대표 지시).
+#:
+#: 익명이 이 기능의 전제다. 평가 내용(`/peer-reviews`)은 원래 본인이 쓴 것만
+#: 보이는데, **점수 원장이 그 구멍이었다** — 자기 PEER 줄을 조회하면 몇 명이
+#: 평가했는지, 각각 몇 점을 줬는지가 그대로 나왔다 (평가자 이름까지 나오던
+#: 것은 `peer_reviews.py` 에서 따로 막았다).
+#:
+#: 그래서 MEMBER·MANAGER 에게는 **PEER 가 아예 없는 값**이다 — 목록에서 빠지고
+#: 요약의 칸과 합계에서도 빠진다. 볼 수 있는 것은 MASTER·ADMIN 뿐이다.
+#:
+#: ⚠️ **종합 랭킹에는 여전히 섞여 있다.** 종합은 원장 전체 합이라 PEER 가
+#: 들어간다 — 다만 항목이 안 갈려서 어느 만큼이 동료평가인지는 알 수 없다.
+#: 거기서까지 빼려면 점수 체계를 바꿔야 해서 그대로 뒀다.
+def _hides_peer(role: Role) -> bool:
+    return role in (Role.MEMBER, Role.MANAGER)
+
+
 @router.get("", response_model=list[ScoreEventOut])
 async def list_scores(
     db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
     scope: str | None = Depends(branch_scope),
     employee_id: str | None = Query(None, alias="employeeId"),
     category: ScoreCategory | None = Query(None),
@@ -53,6 +71,10 @@ async def list_scores(
     negative_only: bool = Query(False, alias="negativeOnly"),
 ) -> list[ScoreEvent]:
     stmt = select(ScoreEvent)
+    # 동료평가는 평가받은 사람에게 안 보인다 ([_hides_peer]) — 종류를 콕 집어
+    # 물어도 빈 목록이 온다 (403 을 주면 '있긴 있다'는 게 드러난다)
+    if _hides_peer(current.role):
+        stmt = stmt.where(ScoreEvent.category != ScoreCategory.PEER)
     if scope:
         stmt = stmt.where(ScoreEvent.branch_id == scope)
     if employee_id:
@@ -70,11 +92,18 @@ async def list_scores(
 @router.get("/ranking", response_model=list[RankingItem])
 async def ranking(
     db: AsyncSession = Depends(get_db),
+    current: Employee = Depends(get_current_user),
     kind: RankingKind | None = Query(None),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
     branch_id: str | None = Query(None, alias="branchId"),
 ) -> list[RankingItem]:
+    # 피드백왕(PEER)은 동료평가 총점 줄세우기다 — 누가 몇 점 받았는지가 그대로
+    # 드러나서 MASTER·ADMIN 만 본다. 앱 랭킹 탭에는 원래 없는 항목이다
+    if (kind is RankingKind.PEER or category is ScoreCategory.PEER) and _hides_peer(current.role):
+        raise HTTPException(
+            403, detail={"code": "FORBIDDEN", "message": "동료평가 랭킹은 볼 수 없습니다"}
+        )
     # 랭킹은 '전사 통합'(전 지점) — 전 인원을 한 줄로 세운다(멤버·매니저 모두 동일한 통합 랭킹).
     # 특정 지점 랭킹만 보려면 branchId 로 필터. (지점 스코프를 걸지 않는 이유: §branch_scope 주석)
     #
@@ -145,8 +174,14 @@ async def summary(
     by_category = {category.value: 0 for category in ScoreCategory}
     for category, points in rows:
         by_category[str(category)] = points
+    # 칸만 지우면 **합계에서 빼서 되짚을 수 있다** — 둘 다 뺀다
+    if _hides_peer(current.role):
+        by_category.pop(ScoreCategory.PEER.value, None)
     return ScoreSummary(
-        employee_id=employee_id, period=period, total=sum(by_category.values()), by_category=by_category
+        employee_id=employee_id,
+        period=period,
+        total=sum(by_category.values()),
+        by_category=by_category,
     )
 
 

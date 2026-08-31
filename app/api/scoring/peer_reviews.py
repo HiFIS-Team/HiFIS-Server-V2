@@ -117,7 +117,17 @@ async def create_peer_review(
         branch_id=reviewee.branch_id,
         category=ScoreCategory.PEER,
         points=total,
-        created_by_id=current.id,
+        # **평가자를 안 남긴다** (2026-08-31 대표 지시 — 익명이 이 기능의 전제다).
+        #
+        # 예전에는 `created_by_id=current.id` 였다. 그런데 `GET /scores` 는
+        # 사람을 안 가려서, **평가받은 사람이 자기 PEER 점수 줄에서 누가
+        # 평가했는지 그대로 봤다** (점수로 별점까지 역산된다). 실제로 재 봤다 —
+        # `+76점 createdById=권나연`.
+        #
+        # 누가 썼는지는 `peer_reviews.reviewer_id` 에 그대로 남는다. 그 표는
+        # MEMBER·MANAGER 에게 **본인이 쓴 것만** 보이므로(익명성 보호, §33)
+        # 면담 자료로는 여전히 ADMIN·MASTER 가 볼 수 있다.
+        created_by_id=None,
         source_ref_id=review.id,
         period=payload.period,
         reason="동료평가",
