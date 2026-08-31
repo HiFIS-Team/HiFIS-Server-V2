@@ -172,6 +172,23 @@ class MyTaskDayOut(CamelModel):
     complete: bool
 
 
+class MyTaskHistoryDay(CamelModel):
+    """한 달 내역의 하루 한 줄 — 그날 무엇을 했고 무엇을 빠뜨렸나.
+
+    **근무일만 준다.** 쉬는 날은 할 일이 없어서 빈 줄이 달력만큼 쌓인다.
+    종일 월차라 그날 것이 다음 근무일로 옮겨진 날도 뺀다(`moved_out`).
+    """
+
+    date: date
+    total: int
+    done: int
+    #: 다 했나 — 업무를 하나도 안 정한 근무일은 **누락**이다
+    complete: bool
+    #: 그날 한 것 · 못 한 것 — 이름을 그대로 싣는다 (화면에 찍히는 값이다)
+    done_tasks: list[str] = Field(default_factory=list)
+    left_tasks: list[str] = Field(default_factory=list)
+
+
 class MyTaskRosterRow(CamelModel):
     """대표·관리자가 보는 사람 한 줄 — 오늘 몇 개 중 몇 개를 했나.
 

@@ -22,7 +22,7 @@
 결재가 뜻을 잃는다. 그래서 앱이 누르기 전에 한 번 묻는다.
 """
 
-from datetime import datetime, timezone
+from datetime import date as _date_t, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -42,6 +42,7 @@ from app.schemas.scoring.my_task import (
     MyTaskField,
     MyTaskDayOut,
     MyTaskExcuseCreate,
+    MyTaskHistoryDay,
     MyTaskMissAlertOut,
     MyTaskMissOut,
     MyTaskMissStaffRow,
@@ -54,7 +55,7 @@ from app.schemas.scoring.my_task import (
     clean_weekdays,
 )
 from app.services import notification_texts as ntext
-from app.services.my_tasks import carried_over, due_tasks, missing_now
+from app.services.my_tasks import carried_over, due_tasks, is_workday, missing_now
 from app.services.notifications import master_ids, notify
 
 router = APIRouter(tags=["my-tasks"], dependencies=[Depends(get_current_user)])
@@ -74,6 +75,22 @@ def _parse_date(date: str | None) -> "datetime.date":
         return datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(400, detail={"code": "INVALID_DATE", "message": "date 형식은 YYYY-MM-DD 입니다"})
+
+
+def _parse_month(month: str | None, today: "_date_t") -> "_date_t":
+    """`2026-08` → 그 달 1일. 안 주면 이번 달."""
+    if not month:
+        return today.replace(day=1)
+    try:
+        return datetime.strptime(month, "%Y-%m").date().replace(day=1)
+    except ValueError:
+        raise HTTPException(400, detail={"code": "INVALID_MONTH", "message": "month 형식은 YYYY-MM 입니다"})
+
+
+def _month_end(first: "_date_t") -> "_date_t":
+    """그 달 마지막 날 — 다음 달 1일에서 하루 뺀다."""
+    nxt = first.replace(year=first.year + 1, month=1) if first.month == 12 else first.replace(month=first.month + 1)
+    return nxt - timedelta(days=1)
 
 
 def _not_found() -> HTTPException:
@@ -293,6 +310,68 @@ async def my_task_roster(
         )
         for p in people
     ]
+
+
+@router.get("/my-tasks/history", response_model=list[MyTaskHistoryDay])
+async def my_task_history(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    month: str | None = Query(None),
+    # 남의 것 — 대표·관리자·점장만. 그 밖에는 넣어도 본인 것이 온다
+    employee_id: str | None = Query(None, alias="employeeId"),
+) -> list[MyTaskHistoryDay]:
+    """한 달치 내역 — **며칠에 무엇을 했고 무엇을 빠뜨렸나** (2026-08-31 요청).
+
+    예전에는 하루씩만 볼 수 있어서(`GET /my-tasks?date=`) "8월에 며칠
+    누락했지" 를 세려면 날짜를 서른 번 눌러야 했다.
+
+    **판정은 서비스가 한다** (`due_tasks`). 요일·이월·월차를 여기서 따로
+    셈하면 본인 화면과 이 목록이 갈린다 — 화면은 다 했다는데 내역에는
+    누락으로 남는다.
+
+    **최신 날짜가 앞이다.** 앱이 그대로 내려 그리므로 여기서 세워 준다.
+
+    ## 하루에 질의 셋이다
+
+    `due_tasks` 가 날마다 업무·체크·휴가를 다시 읽는다. 한 달이면 90개 남짓 —
+    **한 사람이 가끔 여는 화면**이라 그대로 뒀다. 날짜를 가로질러 한 번에
+    읽게 고치면 판정이 두 벌이 되고, 그 어긋남이 곧 위 문단의 사고다.
+    """
+    target_id = current.id
+    if employee_id and current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER):
+        target_id = employee_id
+    owner = await db.get(Employee, target_id)
+    if owner is None:
+        raise _not_found()
+
+    today = _today()
+    first = _parse_month(month, today)
+    # 이번 달이면 **오늘까지만** — 오지 않은 날은 누락도 완료도 아니다
+    last = min(_month_end(first), today)
+    if last < first:
+        return []
+
+    out: list[MyTaskHistoryDay] = []
+    day = first
+    while day <= last:
+        # 쉬는 날은 건너뛴다 — 할 일이 없어서 빈 줄만 쌓인다
+        if is_workday(owner, day):
+            due = (await due_tasks(db, [owner], day, today=today))[owner.id]
+            if not due.moved_out:
+                left = {t.id for t in due.left}
+                out.append(
+                    MyTaskHistoryDay(
+                        date=day,
+                        total=due.total,
+                        done=due.done,
+                        complete=due.complete,
+                        done_tasks=[d.task.content for d in due.tasks if d.task.id not in left],
+                        left_tasks=[t.content for t in due.left],
+                    )
+                )
+        day += timedelta(days=1)
+    out.reverse()
+    return out
 
 
 @router.get("/my-tasks/miss-alert", response_model=MyTaskMissAlertOut)
