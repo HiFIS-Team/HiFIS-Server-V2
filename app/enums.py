@@ -272,6 +272,10 @@ class ScoreCategory(StrEnum):
     # 개인 업무 누락 차감 — **늘 음수다.** 다음 근무일까지도 안 하면 잡이 넣는다
     # (`workers/my_task_miss_scan.py`). 지각과 같은 자리, 같은 방식이다.
     TASK_MISS = "TASK_MISS"
+    # 동료평가 미제출 차감 — **늘 음수다.** 평가 창(말일·1일)이 닫힌 뒤
+    # 하나라도 안 낸 사람에게 잡이 넣는다 (`workers/peer_review_miss_scan.py`).
+    # 지각·업무 누락과 같은 자리, 같은 방식이다.
+    PEER_MISS = "PEER_MISS"
     # 방문 경로 — 셋을 **따로** 둔다. 랭킹 내역이 '블로그 10 · 인스타 5' 처럼
     # 갈라서 보여줘야 해서 하나로 묶으면 다시 못 나눈다.
     BLOG = "BLOG"              # 블로그 보고 온 회원 등록

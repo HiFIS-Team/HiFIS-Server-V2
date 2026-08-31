@@ -29,6 +29,8 @@ from app.workers.anomaly_scan import anomaly_scan
 from app.workers.error_rate_scan import error_rate_scan
 from app.workers.metrics_flush import flush_metrics
 from app.workers.my_task_miss_scan import my_task_miss_scan
+from app.workers.peer_review_miss_scan import peer_review_miss_scan
+from app.workers.peer_review_reminders import peer_review_reminders
 from app.workers.retention import purge_old_access_logs
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,15 @@ def _register_jobs() -> None:
     # 보기 때문이다. 자정 직후가 그 첫 자리다.
     scheduler.add_job(my_task_miss_scan, CronTrigger(hour=15, minute=30),
                       id="my_task_miss_scan", replace_existing=True)
+    # 매시 정각 UTC 00~14 (=KST 09~23) — 동료평가 재촉 푸시.
+    # **잡 안에서 창(말일·1일)인지 다시 본다** — 크론은 시각만 자른다.
+    scheduler.add_job(peer_review_reminders, CronTrigger(hour="0-14", minute=0),
+                      id="peer_review_reminder", replace_existing=True)
+    # 매일 15:30 UTC(=00:30 KST) — 동료평가 미제출 감점.
+    # **창이 닫힌 다음 날(2일)에만** 실제로 돈다 (잡이 어제가 1일인지 본다).
+    # 개인 업무 누락 판정과 같은 시각이다 — 하루가 다 끝난 뒤가 첫 자리다.
+    scheduler.add_job(peer_review_miss_scan, CronTrigger(hour=15, minute=30),
+                      id="peer_review_miss_scan", replace_existing=True)
     # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
     scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
                       id="access_log_purge", replace_existing=True)

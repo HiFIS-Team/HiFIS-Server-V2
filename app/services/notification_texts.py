@@ -315,6 +315,37 @@ def task_miss_confirmed(day, contents: list[str]) -> dict:
     }
 
 
+def peer_review_due(period: str, remaining: int, last_day: bool) -> dict:
+    """본인에게 — 동료평가 창이 열려 있는데 아직 안 냈다 (2026-08-31 대표 결정).
+
+    창이 **이틀뿐**이라 매시간(KST 09~23) 나간다. 다 낸 사람에게는 안 간다.
+    **남은 날을 말해 준다** — '오늘까지' 와 '내일까지' 는 급한 정도가 다르다.
+    """
+    when = "내일까지" if last_day else "오늘까지"
+    month = int(period.split("-")[1])
+    return {
+        "type": "PEER_REVIEW",
+        "title": f"{month}월 동료평가가 열렸어요",
+        "body": f"{when} {remaining}명 남았어요 · 안 내면 20점이 깎여요",
+        "link": "/work",
+    }
+
+
+def peer_review_missed(period: str, remaining: int, points: int) -> dict:
+    """본인에게 — 창이 닫혔는데 안 낸 사람이 남아 감점됐다.
+
+    재촉 알림과 글이 갈려야 한다. 저쪽은 '아직 낼 수 있다' 는 뜻이고 이쪽은
+    이미 깎였다는 뜻이라, 같은 문장이면 낼 수 있는 이틀을 놓친다.
+    """
+    month = int(period.split("-")[1])
+    return {
+        "type": "PEER_REVIEW_MISSING",
+        "title": f"{month}월 동료평가가 누락됐어요",
+        "body": f"{remaining}명을 안 내서 {points}점이 반영됐어요",
+        "link": "/work",
+    }
+
+
 def task_miss_excuse(name: str, day) -> dict:
     """대표에게 — 누락 사유서가 올라왔다 (2026-08-21).
 
