@@ -68,7 +68,9 @@ class MessageOut(CamelModel):
     sender_id: str
     body: str
     kind: MessageKind = MessageKind.TEXT
-    attachments: list[str] = Field(default_factory=list)
+    #: 내려줄 때마다 새로 서명한다 — 서명은 7일이면 만료돼서, DB 에 든 것을
+    #: 그대로 주면 일주일 뒤부터 사진이 영영 안 뜬다 (실제로 그랬다)
+    attachments: list[SignedUrl] = Field(default_factory=list)
     reactions: list[ReactionAgg] = Field(default_factory=list)
     reply_to: MessageRef | None = None
 

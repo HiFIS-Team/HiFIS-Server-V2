@@ -23,6 +23,7 @@ from app.db.session import get_db
 from app.enums import (
     ApprovalStatus,
     AttendanceStatus,
+    ComplaintStatus,
     EventStatus,
     InboxKind,
     InboxStatus,
@@ -41,6 +42,7 @@ from app.models.board.notice_read import NoticeRead
 from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
+from app.models.scoring.kindness import KindnessSurvey
 from app.models.scoring.my_task import MyTask, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
@@ -165,8 +167,9 @@ async def my_home(
 
 # 월차 종류를 화면 말로 — 앱의 신청 화면과 같은 이름을 쓴다
 _LEAVE_LABEL = {
-    LeaveType.ANNUAL: "연차",
+    LeaveType.ANNUAL: "월차",
     LeaveType.HALF: "반차",
+    LeaveType.VACATION: "휴가",
     LeaveType.SICK: "병가",
     LeaveType.FIELD: "외근",
     LeaveType.ETC: "기타",
@@ -412,6 +415,45 @@ async def my_inbox(
                 ),
             )
         )
+
+    # 컴플레인 해결 완료 (2026-08-31) — 완료를 찍으면 클레임해결 점수가 붙어서
+    # MANAGER·MEMBER 가 누른 것은 대표가 한 번 본다.
+    #
+    # **반려 칸에는 안 선다** — 반려하면 해결중으로 되돌아갈 뿐 행이 안 남는다
+    # (일정과 같은 사정이다). 승인은 `done_requested_at` 이 있는 것만 —
+    # 대표가 혼자 찍은 완료는 결재를 거친 적이 없다.
+    if status is not InboxStatus.REJECTED:
+        complaint_q = select(KindnessSurvey).where(
+            KindnessSurvey.improvement_status
+            == (
+                ComplaintStatus.DONE_REQUESTED
+                if pending
+                else ComplaintStatus.DONE
+            )
+        )
+        if not pending:
+            complaint_q = complaint_q.where(
+                KindnessSurvey.done_requested_at.is_not(None)
+            )
+        for survey in (await db.scalars(complaint_q)).all():
+            who = survey.done_requested_by_id
+            if who is None:
+                continue
+            rows.append(
+                (
+                    survey.done_requested_at
+                    if pending
+                    else (survey.resolved_at or survey.done_requested_at),
+                    InboxItemOut(
+                        kind=InboxKind.COMPLAINT,
+                        id=survey.id,
+                        employee_id=who,
+                        title="컴플레인 해결",
+                        detail=(survey.improvement or "").strip(),
+                        created_at=survey.done_requested_at or survey.submitted_at,
+                    ),
+                )
+            )
 
     # 대기는 오래된 것부터(먼저 처리돼야 한다), 처리된 것은 최근 것부터
     rows.sort(key=lambda row: row[0], reverse=not pending)

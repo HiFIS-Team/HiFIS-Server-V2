@@ -18,11 +18,11 @@ from app.enums import (
     DeductionMethod,
     EmployeeStatus,
     EmploymentType,
+    PayslipStatus,
     ProjectRequestStatus,
     Rank,
     RegistrationType,
     Role,
-    ScoreCategory,
 )
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.staff.employee import Employee
@@ -32,29 +32,36 @@ from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.payday_policy import PaydayPolicy
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.members.registration import Registration
-from app.models.scoring.score_event import ScoreEvent
 from app.models.members.session_sign import SessionSign
-from app.services.scoring import accrue_score
 
 FREELANCE_RATE = 0.033
 # 4대보험 근로자 부담분 근사치 (건강보험 기준 장기요양 별도)
 INSURANCE_RATES = (("국민연금", 0.045), ("건강보험", 0.03545), ("고용보험", 0.009))
 LONGTERM_CARE_RATE = 0.1295  # 장기요양 = 건강보험료 × 12.95%
 
-# 매출성과(SALES) 자동 기여도 — 최종 점수표:
-# 100,000원당 10점(= 매출 ÷ 10,000 이 기본점수) × 0.25. 월 총 PT매출(신규+재등록) 기준.
-# 예) 월 총매출 1,000,000원 → 100 × 0.25 = 25점.
-SALES_WON_PER_POINT = 10_000  # 10,000원 = 기본 1점 (100,000원 = 10점)
-SALES_MULTIPLIER = 0.25
-
-
-def sales_points(total_sales: int) -> int:
-    return round(total_sales / SALES_WON_PER_POINT * SALES_MULTIPLIER)
+# 매출성과(SALES) 점수는 **여기 없다** — 등록권을 만들 때 바로 매긴다
+# (`services/registrations.py` 의 `accrue_sales_score`, 2026-08-31 대표 요청).
+#
+# 예전에는 이 마감이 그 달 매출을 통째로 더해 한 번에 매겼는데, 그러면
+# 한 달이 끝나야 점수가 보이고 **급여 개시일 전 주기는 통째로 빠졌다.**
 
 
 # 직급별 전사 기본 급여 정책 (기본급, 워크인 요율, 재등록/지인소개 요율).
 # 개발자·대표(ADMIN)는 PT 급여 대상 아님 → 정책 없음(마감에서 건너뜀).
 # FC = 세전 210만 + FC권 매출(별도·미모델링) → PT 세션 커미션 없음(요율 0).
+#: 재등록 요율이 유지되는 문턱 — **트레이너만** (2026-08-31 대표 요청)
+#:
+#: 그 주기의 재등록·지인소개 세션 단가 합이 이 값을 **넘어야** 재등록 요율(50%)
+#: 이고, 못 넘으면 워크인 요율(40%)로 내려간다. 300만원 정확히면 '안 넘은'
+#: 것이라 40% 다.
+#:
+#: **커미션이 아니라 단가 합으로 잰다** — 요율을 정하는 값이 요율 결과에
+#: 걸리면 앞뒤가 물린다.
+#:
+#: 달이 바뀌면 저절로 리셋된다. [build_payslip_data] 가 주기마다 그 주기
+#: 싸인만 다시 세기 때문에 따로 지울 상태가 없다.
+RENEWAL_RATE_THRESHOLD = 3_000_000
+
 _POLICY_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 BASE_RANK_POLICIES: dict[Rank, tuple[int, float, float]] = {
     Rank.TRAINER: (800_000, 0.40, 0.50),
@@ -494,8 +501,20 @@ async def build_payslip_data(
             new_items.append(item)
             new_base += per_session
 
+    # **트레이너만** — 재등록·지인소개 합이 문턱을 못 넘으면 그 달은 워크인
+    # 요율로 내려간다 (2026-08-31 대표 요청). 달이 바뀌면 저절로 리셋된다
+    # (이 함수가 주기마다 처음부터 다시 세기 때문이다).
+    renewal_rate = policy.renewal_rate
+    downgraded = (
+        employee.rank == Rank.TRAINER
+        and renewal_base <= RENEWAL_RATE_THRESHOLD
+        and policy.renewal_rate > policy.new_rate
+    )
+    if downgraded:
+        renewal_rate = policy.new_rate
+
     incentive_new = round(new_base * policy.new_rate)
-    incentive_renewal = round(renewal_base * policy.renewal_rate)
+    incentive_renewal = round(renewal_base * renewal_rate)
     other_allowances = 0
     miss_count, miss_cut = await manager_miss_cut(db, employee)
     base_salary = policy.base_salary - miss_cut
@@ -521,6 +540,10 @@ async def build_payslip_data(
         "basis": {
             "new_sales": new_items,
             "renewal_sales": renewal_items,
+            # 재등록이 문턱을 못 넘어 워크인 요율로 내려갔나 — 결재자가
+            # 왜 금액이 낮은지 알 수 있어야 한다
+            "renewal_downgraded": downgraded,
+            "renewal_base": renewal_base,
             "session_signs": len(signs),
             # 왜 기본급이 줄었나 — **화면에 새로 그리지 않는다.** 근거를 남겨
             # 두는 것이 목적이다 (알바 `hourly` 와 같은 취급)
@@ -552,21 +575,41 @@ async def generate_branch_payslips(
         return []
 
     employee_ids = [employee.id for employee in employees]
-    sales_ref = f"sales:{year_month}"
-    # 재생성 = 기존 명세서 + 자동 SALES 점수 교체 (멱등)
-    await db.execute(
-        delete(Payslip).where(
-            Payslip.year_month == year_month, Payslip.employee_id.in_(employee_ids)
+
+    # **손 안 댄 초안만 갈아끼운다** (2026-08-31).
+    #
+    # 예전에는 그 달 명세서를 상태를 안 보고 통째로 지웠다. 이 잡이 매월 1일에
+    # 도는데 화순은 지급일이 말일이라, **9/30 에 신청·승인·지급까지 끝낸 것을
+    # 10/1 에 지우고 미제출로 되돌렸다.** 대표가 확인하고 지급한 기록(`paid_at`)
+    # 까지 날아가서, 직원이 다시 신청하면 이미 준 급여가 결재 대기에 또 선다.
+    # 개시일 전 달이면 지우기만 하고 안 만들어서 **행이 통째로 사라지기도 했다.**
+    #
+    # 사람이 손을 댄 뒤에는(제출·승인·반려·지급) 자동 계산이 덮으면 안 된다.
+    locked = set(
+        (
+            await db.execute(
+                select(Payslip.employee_id).where(
+                    Payslip.year_month == year_month,
+                    Payslip.employee_id.in_(employee_ids),
+                    Payslip.status != PayslipStatus.DRAFT,
+                )
+            )
         )
+        .scalars()
+        .all()
     )
     await db.execute(
-        delete(ScoreEvent).where(
-            ScoreEvent.source_ref_id == sales_ref, ScoreEvent.employee_id.in_(employee_ids)
+        delete(Payslip).where(
+            Payslip.year_month == year_month,
+            Payslip.employee_id.in_(employee_ids),
+            Payslip.status == PayslipStatus.DRAFT,
         )
     )
 
     generated: list[Payslip] = []
     for employee in employees:
+        if employee.id in locked:
+            continue  # 이미 신청·결재가 걸린 달 — 자동 계산이 덮지 않는다
         # 지급일 규칙이 사람마다 다르다 — 급여 주기와 측정 개시일이 여기서 갈린다
         payday = await get_payday_policy(db, employee.branch_id, employee.rank, start)
         if not payroll_started(year_month, payday):
@@ -597,26 +640,4 @@ async def generate_branch_payslips(
         payslip = Payslip(employee_id=employee.id, year_month=year_month, **data)
         db.add(payslip)
         generated.append(payslip)
-
-        # SALES 자동 기여도 = 이 달 **등록 매출**(신규+재등록 결제액) 기준 (세션 커미션과 별개)
-        sales_total = (
-            await db.execute(
-                select(func.coalesce(func.sum(Registration.price_paid), 0)).where(
-                    Registration.trainer_id == employee.id,
-                    Registration.purchased_at >= start,
-                    Registration.purchased_at < end,
-                )
-            )
-        ).scalar_one()
-        if sales_total > 0:
-            await accrue_score(
-                db,
-                employee_id=employee.id,
-                branch_id=employee.branch_id,
-                category=ScoreCategory.CONTRIB,
-                points=sales_points(sales_total),
-                source_ref_id=sales_ref,
-                period=year_month,
-                reason="매출성과(자동)",
-            )
     return generated

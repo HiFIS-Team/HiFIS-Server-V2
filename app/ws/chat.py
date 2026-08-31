@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.security import decode_token
 from app.db.session import SessionLocal
+from app.enums import EmployeeStatus, Role
 from app.models.chat.chat import ChatRoomMember
 from app.models.staff.employee import Employee
 from app.services.chat import broadcast_event, is_member, post_message
@@ -28,14 +30,28 @@ router = APIRouter()
 
 
 async def _authenticate(token: str) -> str | None:
-    """토큰 검증 → 유효하면 employee_id, 아니면 None."""
+    """토큰 검증 → 유효하면 employee_id, 아니면 None.
+
+    **REST(`get_current_user`)와 같은 기준으로 본다.** 예전엔 `deleted_at` 만 봐서,
+    로그아웃·비번 재설정으로 폐기한 토큰이나 정지·퇴사된 계정이 소켓으로는
+    만료(30분)까지 그대로 붙었다. 대표 전용 잠금도 소켓만 비껴갔다.
+    """
     try:
         payload = decode_token(token, expected_type="access")
     except Exception:
         return None
+    subject = payload.get("sub")
+    if not subject:
+        return None
     async with SessionLocal() as db:
-        employee = await db.get(Employee, payload.get("sub"))
+        employee = await db.get(Employee, subject)
         if employee is None or employee.deleted_at is not None:
+            return None
+        if payload.get("ver", 0) != employee.token_version:  # 로그아웃/비번변경으로 폐기된 세션
+            return None
+        if employee.suspended_at is not None or employee.status == EmployeeStatus.RESIGNED:
+            return None
+        if settings.master_only and employee.role != Role.MASTER:
             return None
         return employee.id
 

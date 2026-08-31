@@ -5,20 +5,21 @@ POST [MEMBER]: 서명 저장 → usedSessions +1 → 만료 판정 → CLASS 점
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
 from app.core.tokens import public_token
 from app.core.storage import save_signature
-from app.enums import RegistrationStatus, RegistrationType, Role, ScoreCategory
+from app.enums import RegistrationStatus, RegistrationType, Role, ScoreCategory, WorkoutKind
 from app.db.session import get_db
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.pt_survey import PtSurvey
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
+from app.models.members.workout import WorkoutLog
 from app.schemas.members.registration import RegistrationOut
 from app.schemas.members.session_sign import SessionSignCreate, SessionSignOut, SessionSignResult
 from app.services.scoring import accrue_score
@@ -79,6 +80,46 @@ def _sign_out(
     return out
 
 
+async def _require_workout(db: AsyncSession, registration: Registration) -> None:
+    """이번에 찍을 회차의 **운동일지가 있어야 싸인이다** (2026-08-31 대표 요청).
+
+    일지를 안 써도 싸인이 되면 회차는 줄어드는데 그날 뭘 했는지가 어디에도
+    안 남는다. 회원이 공개 주소로 자기 기록을 보는 화면이 생기면서 그 구멍이
+    그대로 드러났다 — 찍힌 회차와 일지 수가 안 맞는다.
+
+    **회차를 세는 자리가 둘이라 옮겨 담아야 한다.**
+
+    | | 세는 법 | 재등록하면 |
+    |---|---|---|
+    | 싸인 | `registration.used_sessions + 1` | **1 로 돌아간다** |
+    | 일지 | 회원의 `max(session_no) + 1` | 11·12 로 이어진다 |
+
+    그래서 등록권 하나만 보면 재등록한 회원이 전부 막힌다. 회원의 **모든**
+    등록권에서 쓴 회차를 더해 누적 회차로 바꾼 뒤 그 번호의 일지를 찾는다.
+    """
+    used = await db.scalar(
+        select(func.coalesce(func.sum(Registration.used_sessions), 0)).where(
+            Registration.member_id == registration.member_id
+        )
+    )
+    session_no = int(used or 0) + 1
+    exists = await db.scalar(
+        select(WorkoutLog.id).where(
+            WorkoutLog.member_id == registration.member_id,
+            WorkoutLog.kind == WorkoutKind.PT,
+            WorkoutLog.session_no == session_no,
+        )
+    )
+    if exists is None:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "NO_WORKOUT_LOG",
+                "message": f"{session_no}회차 운동일지를 먼저 써 주세요",
+            },
+        )
+
+
 @router.post("", response_model=SessionSignResult, status_code=201)
 async def create_session_sign(
     payload: SessionSignCreate,
@@ -91,6 +132,7 @@ async def create_session_sign(
         raise HTTPException(404, detail={"code": "REGISTRATION_NOT_FOUND", "message": "등록을 찾을 수 없습니다"})
     if registration.status == RegistrationStatus.EXPIRED or registration.used_sessions >= registration.total_sessions:
         raise HTTPException(400, detail={"code": "NO_SESSIONS_LEFT", "message": "남은 세션이 없습니다"})
+    await _require_workout(db, registration)
 
     performer_id = payload.performed_by_trainer_id or current.id
     performer = current if performer_id == current.id else await db.get(Employee, performer_id)

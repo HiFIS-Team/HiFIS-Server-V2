@@ -25,7 +25,7 @@ from app.schemas.payroll.payslip import (
     PayslipSubmit,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify
+from app.services.notifications import master_ids, notify
 from app.services.payroll import (
     NoScheduleError,
     apply_incentive_override,
@@ -118,6 +118,7 @@ async def my_accrued(
         session_signs=0,
         new_sessions=0,
         renewal_sessions=0,
+        renewal_downgraded=False,
         can_adjust=False,
     )
     # 아직 재기 시작 전이면 0 이다 — 앱을 켜기 전 실적을 쌓아 보여주면 안 된다
@@ -141,6 +142,7 @@ async def my_accrued(
         session_signs=data["basis"]["session_signs"],
         new_sessions=len(data["basis"]["new_sales"]),
         renewal_sessions=len(data["basis"]["renewal_sales"]),
+        renewal_downgraded=data["basis"]["renewal_downgraded"],
         can_adjust=can_adjust,
     )
 
@@ -218,6 +220,14 @@ async def submit_my_payslip(
     payslip.reject_reason = None
     payslip.decided_at = None
     payslip.decided_by_id = None
+    # **대표에게 알린다** — 급여만 신청 알림이 없었다 (2026-08-31 대표 요청).
+    # 지급일 당일에만 낼 수 있어서 그날 못 보면 그날 결재가 통째로 밀린다.
+    for eid in await master_ids(db, exclude=current.id):
+        await notify(
+            db,
+            employee_id=eid,
+            **ntext.payslip_submitted(current.name, payload.year_month, payslip.net),
+        )
     await db.commit()
     await db.refresh(payslip)
     return payslip

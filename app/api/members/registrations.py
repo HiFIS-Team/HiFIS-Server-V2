@@ -14,7 +14,7 @@ from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.registration import RegistrationCreate, RegistrationOut
-from app.services.registrations import ensure_used_within, initial_status
+from app.services.registrations import accrue_sales_score, ensure_used_within, initial_status
 
 router = APIRouter(
     prefix="/registrations", tags=["registrations"], dependencies=[Depends(get_current_user)]
@@ -76,6 +76,8 @@ async def create_registration(
         purchased_at=payload.purchased_at or datetime.now(timezone.utc),
     )
     db.add(registration)
+    await db.flush()  # 점수의 source_ref_id 에 쓸 등록권 id 를 먼저 얻는다
+    await accrue_sales_score(db, registration, trainer)
     await db.commit()
     await db.refresh(registration)
     return registration

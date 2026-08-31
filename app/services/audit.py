@@ -52,9 +52,7 @@ SKIP: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/trails"),
         # 단말 하트비트 — 5분마다라 단말 3대면 하루 864건이다. 지금 전체
         # (하루 390건)의 두 배가 넘어 **활동 기록 화면이 도배된다.**
-        # 시작 신호(/scan-terminals/startup)는 반대로 남긴다 — 하루에 몇 번
         # 안 오고, 자꾸 다시 뜨는 것 자체가 봐야 할 신호다
-        ("POST", "/scan-terminals/heartbeat"),
     }
 )
 
@@ -114,6 +112,11 @@ _SECRET_KEYS = frozenset(
         "refreshToken",
         "refresh_token",
         "code",  # 비밀번호 재설정 인증번호
+        # 출퇴근 QR 원문 — **지점 시크릿이 들어 있다** (2026-08-28).
+        # 안 가리면 찍을 때마다 매장 열쇠가 로그에 한 줄씩 쌓인다.
+        # 새면 값을 갈고 QR 만 다시 뽑으라고 따로 둔 값인데, 90일치
+        # 로그에 수천 번 적히면 그 뜻이 없어진다.
+        "qr",
         "signatureBase64",  # 회원 전자서명 원본
         "signature_base64",
     }
@@ -161,9 +164,6 @@ LABELS: dict[tuple[str, str], str] = {
     # 근태·월차
     ("POST", "/attendance/scan"): "출퇴근 기록",
     # 출퇴근 단말 — 81번 때 라벨이 빠져 있어서 활동 기록에 주소가 그대로 보였다
-    ("POST", "/scan-terminals"): "출퇴근 단말 발급",
-    ("POST", "/scan-terminals/{id}/revoke"): "출퇴근 단말 폐기",
-    ("POST", "/scan-terminals/startup"): "출퇴근 단말 시작",
     ("POST", "/leaves"): "월차 신청",
     ("POST", "/leaves/{id}/approve"): "월차 승인",
     ("POST", "/leaves/{id}/reject"): "월차 반려",
@@ -186,13 +186,20 @@ LABELS: dict[tuple[str, str], str] = {
     # 점수
     ("POST", "/scores"): "점수 부여",
     ("POST", "/contributions"): "기여 점수 부여",
+    ("DELETE", "/scores/{id}"): "깎인 점수 되돌리기",
     ("POST", "/env-items"): "환경정비 항목 추가",
     ("PATCH", "/env-items/{id}"): "환경정비 항목 수정",
+    ("POST", "/branches/{id}/scan-ip"): "출퇴근 QR 매장 IP 등록",
+    ("DELETE", "/branches/{id}/scan-ip"): "출퇴근 QR 매장 IP 삭제",
     ("POST", "/env-logs"): "환경정비 수행",
+    ("POST", "/env-logs/{id}/award"): "환경정비 가산점 부여",
     ("DELETE", "/env-logs/{id}"): "환경정비 취소",
     ("POST", "/supply-orders"): "비품 주문",
     ("POST", "/peer-reviews"): "동료 평가 제출",
     ("PATCH", "/kindness-surveys/{id}/status"): "컴플레인 처리 단계 변경",
+    ("POST", "/kindness-surveys/{id}/approve"): "컴플레인 해결 승인",
+    ("POST", "/kindness-surveys/{id}/reject"): "컴플레인 해결 반려",
+    ("DELETE", "/kindness-surveys/{id}/complaint"): "컴플레인 삭제",
     ("POST", "/webhooks/kindness-survey"): "회원 설문 접수",
     ("POST", "/survey/{id}"): "회원 설문 접수(매장 QR)",
     # 내 업무 — 라벨이 통째로 빠져 있어 주소가 그대로 보이던 자리다 (2026-08-21)

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # 보안 — 실제 값은 .env 로 주입 (§9.6, §10 시크릿)
     jwt_secret: str = "change-me-in-env"
     jwt_algorithm: str = "HS256"
+    #: 업로드 파일 서명 URL 전용 HMAC 키. 비워 두면 `jwt_secret` 에서 파생한다
+    #: (§9.2) — 용도가 다른 서명끼리 키를 공유하지 않게 하려는 것.
+    file_signing_key: str = ""
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
     password_reset_token_expire_minutes: int = 10  # 비번 재설정 토큰 유효(분) — verify→confirm 사이

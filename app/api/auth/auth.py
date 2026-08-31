@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.staff.employees import SUSPEND_DEFAULT_REASON
@@ -18,6 +19,7 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.enums import AccessEvent, EmployeeStatus, InviteStatus
+from app.models.legal.consent import EmployeeConsent
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.auth.invite import InviteKey
@@ -40,11 +42,15 @@ from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
 from app.services.notifications import notify_bosses
 from app.services.password_reset import consume_reset_token, issue_code, normalize_contact, verify_code
+from app.ws.manager import manager
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # 로그인 타이밍 오라클 방지 — 사용자가 없어도 더미 해시로 verify 를 돌려 응답시간을 균일화
 _DUMMY_HASH = hash_password("timing-equalizer-placeholder")
+
+#: 가입에 반드시 있어야 하는 동의 — 하나라도 빠지면 계정을 안 만든다
+_REQUIRED_CONSENTS = {"TERMS", "PRIVACY"}
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=201)
@@ -52,16 +58,31 @@ _DUMMY_HASH = hash_password("timing-equalizer-placeholder")
 async def signup(
     request: Request, payload: SignupRequest, db: AsyncSession = Depends(get_db)
 ) -> SignupResponse:
+    given = {c.doc_type for c in payload.consents}
+    # 보냈으면 둘 다 있어야 한다. 아예 안 보낸 건 구버전 앱이라 통과시킨다
+    # (그쪽은 가입 직후 `POST /employees/me/consents` 로 따로 남긴다).
+    if given and not _REQUIRED_CONSENTS.issubset(given):
+        raise HTTPException(
+            400, detail={"code": "CONSENT_REQUIRED", "message": "이용약관과 개인정보 처리방침에 동의해야 가입할 수 있습니다"}
+        )
     if (await db.execute(select(Employee).where(Employee.email == payload.email))).scalar_one_or_none():
         raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
 
     # 회원가입은 유효한 초대키 필수 → 즉시 가입 (승인 대기 흐름 폐지)
+    #
+    # **행을 잠근다.** 잠그지 않으면 같은 초대키로 동시에 들어온 두 요청이 둘 다
+    # UNUSED 를 읽고 둘 다 통과해 계정이 두 개 생긴다 (1회용이라는 전제가 깨진다).
     key = (
-        await db.execute(select(InviteKey).where(InviteKey.code == payload.invite_key))
+        await db.execute(
+            select(InviteKey).where(InviteKey.code == payload.invite_key).with_for_update()
+        )
     ).scalar_one_or_none()
     now = datetime.now(timezone.utc)
     if key is None or key.status != InviteStatus.UNUSED or key.expires_at <= now:
         raise HTTPException(400, detail={"code": "INVALID_INVITE_KEY", "message": "유효하지 않은 초대키입니다"})
+    # 대표 전용 잠금 중에는 새 계정도 안 만든다 — 잠가 놓고 초대키로 들어와
+    # 자리를 잡는 길이 열려 있으면 잠근 의미가 없다(초대키는 1회용 소진도 된다)
+    ensure_not_locked(key.role)
     employee = Employee(
         name=payload.name,
         email=payload.email,
@@ -79,6 +100,17 @@ async def signup(
     )
     key.status = InviteStatus.USED
     db.add(employee)
+    await db.flush()  # employee.id 확보 — 동의 이력이 이걸 참조한다
+    ip = client_key(request)[:64]
+    for agreement in payload.consents:
+        db.add(
+            EmployeeConsent(
+                employee_id=employee.id,
+                doc_type=agreement.doc_type,
+                doc_version=agreement.doc_version,
+                ip=ip,
+            )
+        )
     # 대표·관리자에게 알린다 (2026-08-11 대표 요청) — 초대키를 준 사람이 실제로
     # 들어왔는지는 조직도를 열어 봐야만 알 수 있었다.
     branch = await db.get(Branch, employee.branch_id) if employee.branch_id else None
@@ -90,7 +122,11 @@ async def signup(
             ntext.rank_label(employee.rank),
         ),
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:  # 같은 이메일이 동시에 들어온 경우 — 유니크 제약이 최종 판정
+        await db.rollback()
+        raise HTTPException(409, detail={"code": "EMAIL_TAKEN", "message": "이미 사용 중인 이메일입니다"})
     return SignupResponse(result="JOINED")
 
 
@@ -212,6 +248,8 @@ async def logout(
 ) -> None:
     user.token_version += 1  # 이 계정의 기존 access·refresh 토큰 전부 무효화(§M2)
     await db.commit()
+    # 이미 붙어 있는 사내톡 소켓도 끊는다 — 접속 시점만 검사하면 만료(30분)까지 살아남는다
+    await manager.kick([user.id])
     return None
 
 
@@ -264,4 +302,5 @@ async def password_reset_confirm(
     employee.password_hash = hash_password(payload.password)
     employee.token_version += 1  # 재설정 시 기존 세션 전부 무효화(§M2)
     await db.commit()
+    await manager.kick([employee.id])  # 붙어 있는 소켓까지 끊는다
     return None

@@ -14,6 +14,7 @@ from app.core.periods import current_period
 from app.db.session import get_db
 from app.enums import RankingKind, Role, ScoreCategory
 from app.models.staff.employee import Employee
+from app.models.scoring.my_task import MyTaskMiss
 from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.score import (
@@ -24,6 +25,8 @@ from app.schemas.scoring.score import (
     ScoreEventOut,
     ScoreSummary,
 )
+from app.services import notification_texts as ntext
+from app.services.notifications import notify
 from app.services.ranking import compute_ranking
 from app.services.ranking_board import METRICS, build_board, rank_board
 from app.services.scoring import accrue_score, scores_apply_to
@@ -38,6 +41,16 @@ async def list_scores(
     employee_id: str | None = Query(None, alias="employeeId"),
     category: ScoreCategory | None = Query(None),
     period: str | None = Query(None),
+    # 깎인 것만 — **차감을 볼 자리가 아무 데도 없었다** (2026-08-28 대표 요청).
+    #
+    # 지각(`LATE`)·업무 누락(`TASK_MISS`)은 랭킹 어느 탭에도 안 서고 종합
+    # 점수만 조용히 깎았다. 센터 기여도 화면에 `+` 와 같이 세우려는데,
+    # 카테고리를 안 걸고 다 받으면 **환경정비·수업까지 통째로** 온다
+    # (한 사람 한 달에 수백 줄, 대표는 전 직원치라 수천 줄).
+    #
+    # 카테고리를 여럿 부르는 대신 여기서 부호로 자른다 — 프로젝트 평가나
+    # 운영자 감점처럼 **음수가 될 수 있는 나머지도 같이** 걸린다.
+    negative_only: bool = Query(False, alias="negativeOnly"),
 ) -> list[ScoreEvent]:
     stmt = select(ScoreEvent)
     if scope:
@@ -48,6 +61,8 @@ async def list_scores(
         stmt = stmt.where(ScoreEvent.category == category)
     if period:
         stmt = stmt.where(ScoreEvent.period == period)
+    if negative_only:
+        stmt = stmt.where(ScoreEvent.points < 0)
     result = await db.execute(stmt.order_by(ScoreEvent.created_at.desc()))
     return list(result.scalars().all())
 
@@ -162,6 +177,53 @@ async def create_score(
     await db.commit()
     await db.refresh(event)
     return event
+
+
+@router.delete("/{score_id}", status_code=204)
+async def revert_score(
+    score_id: str,
+    # **MASTER 만이다.** 깎은 것을 없던 일로 하는 자리라, 프로젝트 점수 부여·
+    # 사유서 승인과 같은 종류다 — 판단하는 한 사람이 한다.
+    current: Employee = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """깎인 점수 되돌리기 — **음수 줄만 지운다** (2026-08-28 대표 요청).
+
+    지각·업무 누락은 자동으로 깎이는데, 사정이 있어 봐줘야 할 때 손댈 자리가
+    없었다. 사유서(누락)는 승인 경로가 있지만 지각에는 그것도 없다.
+
+    **상쇄로 `+20` 을 한 줄 넣지 않고 줄을 지운다.** 원장 합은 같지만 랭킹
+    내역에 `지각 -10` 과 `지각 +10` 이 나란히 서서 무슨 일인지 알 수 없다
+    (사유서 승인이 같은 이유로 그렇게 한다).
+
+    지웠다는 사실은 **활동 기록**(`audit_logs`)에 남는다 — 누가 언제 어느
+    줄을 되돌렸는지가 거기 있다.
+
+    **양수는 못 지운다.** 여기로 열어 두면 남이 쌓은 점수를 지우는 길이 된다.
+    환경정비·기여처럼 원본이 있는 점수는 그 원본을 지우는 자기 경로가 있다.
+    """
+    event = await db.get(ScoreEvent, score_id)
+    if event is None:
+        raise HTTPException(404, detail={"code": "SCORE_NOT_FOUND", "message": "점수 기록을 찾을 수 없습니다"})
+    if event.points >= 0:
+        raise HTTPException(
+            400,
+            detail={"code": "NOT_A_PENALTY", "message": "깎인 점수만 되돌릴 수 있습니다"},
+        )
+
+    # 누락 기록이 이 줄을 가리키고 있으면 끊는다 — 안 끊으면 나중에 사유서를
+    # 승인할 때 이미 없는 줄을 지우려 든다 (그쪽은 None 을 견디지만, 남은 id 가
+    # '아직 깎여 있다'는 뜻으로 읽힌다)
+    miss = await db.scalar(select(MyTaskMiss).where(MyTaskMiss.score_event_id == event.id))
+    if miss is not None:
+        miss.score_event_id = None
+
+    employee_id, points, reason = event.employee_id, event.points, event.reason
+    await db.delete(event)
+    # 깎였다고 알림을 받은 사람이라 되돌린 것도 알려야 한다
+    await notify(db, employee_id=employee_id, **ntext.score_reverted(points, reason))
+    await db.commit()
+    return None
 
 
 @router.get(

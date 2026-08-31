@@ -6,6 +6,7 @@ REST 전송·WS 전송 공통 진입점. 방 멤버에게 인메모리 매니저
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.file_signing import unsign_upload_url
 from app.enums import MessageKind
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
 from app.models.staff.employee import Employee
@@ -116,7 +117,10 @@ async def post_message(
         room_id=room_id,
         sender_id=sender_id,
         body=body,
-        attachments=attachments,
+        # 앱은 올릴 때 받은 **서명된** 주소를 그대로 돌려보낸다. 그걸 그냥 담으면
+        # 만료 시각이 DB 에 박혀서 7일 뒤에 못 여는 주소가 된다 (§H2).
+        # REST 와 WS 가 둘 다 여기를 지나므로 여기서 한 번만 벗긴다.
+        attachments=[unsign_upload_url(url) or url for url in attachments],
         reply_to_id=reply_to_id,
         kind=kind,
     )

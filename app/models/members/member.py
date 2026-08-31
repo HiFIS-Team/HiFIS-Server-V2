@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -36,3 +37,17 @@ class Member(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 운동을 하는 이유 — 문장 여러 줄. 상담에서 받아 적고 수업마다 다시 본다
+    #:
+    #: 줄마다 행을 두지 않는다. 순서가 곧 뜻이라 늘 통째로 읽고 통째로 쓴다.
+    goals: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    #: 회원이 자기 수업을 보는 공개 주소의 마지막 칸 — `hifis.app/training/{token}`
+    #:
+    #: **회원 id 를 안 쓴다.** 새면 갈아 끼울 수 있어야 하고, id 가 새면 다른
+    #: API 의 공격 재료가 된다. 설문 토큰(8자)보다 길게 잡는다 — 한 사람의
+    #: 운동 기록 전부가 보이는 주소다.
+    training_token: Mapped[str | None] = mapped_column(
+        String(24), nullable=True, unique=True, index=True
+    )

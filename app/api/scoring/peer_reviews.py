@@ -17,6 +17,13 @@ from app.schemas.scoring.peer_review import (
     PeerReviewCreate,
     PeerReviewOut,
     PeerScores,
+    PeerWindowOut,
+)
+from app.services.peer_reviews import (
+    latest_period,
+    missing_targets,
+    open_period,
+    review_targets,
 )
 from app.services.scoring import accrue_score
 
@@ -57,6 +64,18 @@ async def create_peer_review(
     current: Employee = Depends(require_role(Role.MEMBER, Role.MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> PeerReviewOut:
+    # 평가 창은 **말일과 다음달 1일 이틀뿐**이다 (2026-08-31 대표 결정).
+    # 앱도 그때만 열어 주지만, 막는 것은 여기가 마지막 자리다.
+    period = open_period()
+    if period is None:
+        raise HTTPException(
+            400,
+            detail={"code": "NOT_REVIEW_PERIOD", "message": "동료평가는 매월 말일과 다음달 1일에만 낼 수 있습니다"},
+        )
+    # 두 날이 같은 달을 평가한다 — 9/1 에 내는 것은 9월이 아니라 8월 것이다.
+    # 앱이 딴 값을 보내면 여기서 바로잡는다 (안 그러면 한 창이 두 기간으로 갈린다)
+    payload.period = period
+
     reviewee = await db.get(Employee, payload.reviewee_id)
     if reviewee is None:
         raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "평가 대상이 존재하지 않습니다"})
@@ -106,6 +125,29 @@ async def create_peer_review(
     await db.commit()
     await db.refresh(review)
     return _to_out(review)
+
+
+@router.get("/window", response_model=PeerWindowOut)
+async def peer_review_window(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PeerWindowOut:
+    """지금 평가를 쓸 수 있는지 + 내가 몇 명 남았는지.
+
+    앱이 이걸로 **안내 줄**(기간이 아닐 때)과 **재촉 모달**(안 낸 사람에게)을
+    정한다. 권한 없이 본인 것만 본다.
+    """
+    # 닫혀 있어도 **기간은 준다** — 지난 창에 낸 평가를 읽어야 하고,
+    # 앱에 날짜 계산을 두면 서버와 갈릴 자리가 하나 더 생긴다
+    period = latest_period()
+    targets = await review_targets(db, current)
+    missing = await missing_targets(db, current, period)
+    return PeerWindowOut(
+        is_open=open_period() is not None,
+        period=period,
+        total=len(targets),
+        remaining=len(missing),
+    )
 
 
 @router.get("/aggregate", response_model=list[PeerAggregateItem], dependencies=[Depends(require_role(Role.ADMIN))])

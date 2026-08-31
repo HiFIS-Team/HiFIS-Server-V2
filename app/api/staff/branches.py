@@ -7,13 +7,14 @@
 """
 
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.tokens import public_token
 from app.core.deps import get_current_user, require_role
+from app.core.ratelimit import client_key
 from app.db.session import get_db
 from app.enums import Role
 from app.models.staff.branch import Branch
@@ -166,3 +167,88 @@ async def reset_branch_history_link(
 ) -> SurveyLinkOut:
     """새로 발급 — **옛 주소는 그 즉시 안 열린다.**"""
     return await _link(await _branch_or_404(branch_id, db), "history", db, reset=True)
+
+
+# ---------- 출퇴근 QR (2026-08-28) ----------
+class ScanQrOut(CamelModel):
+    """카운터에 붙일 QR 과, 지금 등록된 매장 IP."""
+
+    branch_name: str
+    #: QR 에 넣을 글자 — `HIFIS-SCAN:<지점>:<시크릿>`
+    payload: str
+    #: 이 지점 인터넷으로 인정하는 공인 IP 들
+    allowed_ips: list[str]
+
+
+@router.get("/{branch_id}/scan-qr", response_model=ScanQrOut)
+async def branch_scan_qr(
+    branch_id: str,
+    _: Role = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> ScanQrOut:
+    """카운터에 붙일 출퇴근 QR — **MASTER 만**.
+
+    이 값이 그 지점 QR 의 전부라, 보는 사람이 곧 QR 을 만들 수 있는 사람이다.
+    매장 IP 가 한 겹 더 막지만 그건 매장 안까지의 이야기라, 발급은 좁게 둔다.
+    """
+    branch = await _branch_or_404(branch_id, db)
+    if not branch.scan_secret:
+        branch.scan_secret = public_token()
+        await db.commit()
+        await db.refresh(branch)
+    return ScanQrOut(
+        branch_name=branch.name,
+        payload=f"HIFIS-SCAN:{branch.id}:{branch.scan_secret}",
+        allowed_ips=list(branch.allowed_ips or []),
+    )
+
+
+@router.post("/{branch_id}/scan-ip", response_model=ScanQrOut)
+async def register_branch_scan_ip(
+    request: Request,
+    branch_id: str,
+    _: Role = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> ScanQrOut:
+    """**지금 이 요청이 온 IP** 를 그 지점 인터넷으로 등록한다 — MASTER 만.
+
+    대표가 지점에 가서 매장 와이파이에 붙은 채 한 번 누르면 된다. 회선이
+    동적이라 IP 가 바뀌면 그날 아무도 QR 을 못 찍으니, 그때 다시 누른다.
+    **값을 손으로 적게 하지 않는다** — 공인 IP 를 알아내는 것부터가 일이다.
+
+    이미 있으면 그대로 둔다 (여러 번 눌러도 목록이 안 늘어난다).
+    """
+    branch = await _branch_or_404(branch_id, db)
+    ip = client_key(request)
+    ips = list(branch.allowed_ips or [])
+    if ip not in ips:
+        # **갈아 끼우지 않고 더한다.** 유선·무선이 다른 회선으로 나가는 지점이
+        # 있어서, 새로 누를 때마다 앞의 것을 지우면 한쪽이 계속 막힌다.
+        ips.append(ip)
+        branch.allowed_ips = ips
+        await db.commit()
+        await db.refresh(branch)
+    return ScanQrOut(
+        branch_name=branch.name,
+        payload=f"HIFIS-SCAN:{branch.id}:{branch.scan_secret or ''}",
+        allowed_ips=list(branch.allowed_ips or []),
+    )
+
+
+@router.delete("/{branch_id}/scan-ip", response_model=ScanQrOut)
+async def forget_branch_scan_ip(
+    branch_id: str,
+    ip: str = Query(..., description="지울 IP"),
+    _: Role = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> ScanQrOut:
+    """등록된 매장 IP 하나를 지운다 — 회선을 바꿨을 때 옛 IP 를 걷는다."""
+    branch = await _branch_or_404(branch_id, db)
+    branch.allowed_ips = [x for x in (branch.allowed_ips or []) if x != ip]
+    await db.commit()
+    await db.refresh(branch)
+    return ScanQrOut(
+        branch_name=branch.name,
+        payload=f"HIFIS-SCAN:{branch.id}:{branch.scan_secret or ''}",
+        allowed_ips=list(branch.allowed_ips or []),
+    )

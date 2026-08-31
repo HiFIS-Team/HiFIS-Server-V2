@@ -24,7 +24,9 @@ class ScoreEvent(UUIDMixin, TimestampMixin, Base):
     )
     points: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_ref_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # 원천 기록 id
+    #: 원천 기록 id — uuid 하나이거나 `sales:{등록권id}` 처럼 앞말이 붙는다.
+    #: 그래서 36 이 아니라 넉넉히 잡는다 (2026-08-31, 42자가 안 들어가 늘렸다)
+    source_ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # "2026-07"
     # 시스템 발생 점수(웹훅·스케줄러)는 부여 주체가 없어 null 허용
     created_by_id: Mapped[str | None] = mapped_column(

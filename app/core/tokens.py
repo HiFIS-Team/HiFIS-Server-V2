@@ -36,6 +36,10 @@ ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
 #: 기본 길이 — 세 화면이 같은 값을 쓴다 (한쪽만 길면 문자 길이가 갈린다)
 LENGTH = 8
 
+#: 회원 수업 주소(`/training/{token}`) 길이 — 한 사람의 운동 기록 전부가 보이는
+#: 주소라 더 길게 잡는다. 31¹² ≈ 8×10¹⁷
+TRAINING_TOKEN_LENGTH = 12
+
 
 def public_token(length: int = LENGTH) -> str:
     """회원에게 나가는 주소의 마지막 칸을 만든다."""

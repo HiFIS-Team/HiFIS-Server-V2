@@ -1,14 +1,10 @@
 """공통 의존성 — 현재 사용자 로드 · 권한 가드 (CLAUDE.md §8, §9.1)."""
 
-import hashlib
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, HTTPException, Query
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -106,16 +102,17 @@ async def branch_pick(
     scope: str | None = Depends(branch_scope),
     branch_id: str | None = Query(None, alias="branchId"),
 ) -> str | None:
-    """볼 지점 — **MANAGER 도 고른다.** 지금 쓰는 곳은 `/env-logs` 하나다.
+    """볼 지점 — **MANAGER 도 고른다.** 쓰는 곳이 둘이다.
 
     점장에게 지점을 준 이유가 '다른 지점이 어떻게 하나 보라'는 것인데,
-    업무 화면에서 그게 실제로 뜻이 있는 자리는 **환경정비 기록 하나뿐**이다.
+    업무 화면에서 그게 실제로 뜻이 있는 자리는 **남이 한 것을 보는 판**뿐이다.
     나머지 탭(동료평가·친절도·수업개수·기여도)은 점장에게 **본인 것만**
     보여주는 화면이라, 지점을 걸면 보이던 내 것이 0건이 된다.
 
     | | 무엇을 쓰나 | 왜 |
     |---|---|---|
     | `/env-logs` | **이 함수** | 다른 지점이 오늘 뭘 했는지 보는 자리 |
+    | `/my-tasks/roster` | **이 함수** (2026-08-31) | 같은 자리 — 누구를 누를지 고르는 명단이다 |
     | `/env-items` | `branch_filter` | 누르는 칩이라 늘 본인 지점 (전사면 22개가 겹친다) |
     | 회원·등록권·싸인·친절도·기여도 | `branch_filter`·`branch_scope` | 어차피 본인 것만 그린다 |
 
@@ -131,109 +128,3 @@ async def branch_pick(
         # 안 고르면 전 지점 — MASTER·ADMIN 과 같은 뜻이 되게 한다
         return branch_id
     return scope or branch_id
-
-
-# ---------- 지점 출퇴근 단말 ----------
-#
-# 사람이 아닌 기기가 부르는 길이다. 이 토큰으로 할 수 있는 것은
-# `POST /attendance/scan` **하나뿐**이며, 다른 라우터는 이 의존성을 쓰지 않으므로
-# 애초에 닿지 않는다 (그쪽은 전부 `get_current_user` 를 탄다).
-terminal_scheme = APIKeyHeader(name="X-Terminal-Token", auto_error=False)
-
-
-def hash_terminal_token(token: str) -> str:
-    """원문을 저장하지 않으려고 해시로 찾는다."""
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-@dataclass(frozen=True)
-class ScanActor:
-    """출퇴근 스캔을 요청한 주체 — 사람이거나 지점 단말이다.
-
-    둘의 차이는 **어느 지점까지 찍을 수 있나**와 **사번 없이 본인을 찍을 수
-    있나** 둘뿐이라, 엔드포인트가 이 두 값만 보면 된다.
-    """
-
-    branch_id: str | None
-    #: MASTER·ADMIN 만 참 — 전 지점을 찍을 수 있다
-    all_branches: bool
-    #: 사람일 때만 채워진다. 단말은 '본인'이 없어서 사번을 반드시 줘야 한다
-    employee: Employee | None
-    terminal_id: str | None
-
-
-async def scan_actor(
-    terminal_token: str | None = Depends(terminal_scheme),
-    credentials: HTTPAuthorizationCredentials | None = Depends(
-        HTTPBearer(auto_error=False)
-    ),
-    db: AsyncSession = Depends(get_db),
-) -> ScanActor:
-    # 단말 토큰이 있으면 그쪽을 먼저 본다 — 이 헤더를 붙였다는 건 사람이 아니라는 뜻
-    if terminal_token:
-        from app.models.auth.scan_terminal import ScanTerminal  # 순환 import 방지
-
-        terminal = await db.scalar(
-            select(ScanTerminal).where(
-                ScanTerminal.token_hash == hash_terminal_token(terminal_token),
-                ScanTerminal.revoked_at.is_(None),
-            )
-        )
-        if terminal is None:
-            raise HTTPException(
-                401,
-                detail={"code": "INVALID_TERMINAL", "message": "유효하지 않은 단말입니다"},
-            )
-        terminal.last_used_at = datetime.now(timezone.utc)
-        return ScanActor(
-            branch_id=terminal.branch_id,
-            all_branches=False,  # 단말은 자기 지점만 — 전 지점을 여는 순간 뜻이 없다
-            employee=None,
-            terminal_id=terminal.id,
-        )
-
-    if credentials is None:
-        raise HTTPException(
-            401, detail={"code": "UNAUTHORIZED", "message": "인증이 필요합니다"}
-        )
-    employee = await get_current_user(credentials, db)
-    return ScanActor(
-        branch_id=employee.branch_id,
-        all_branches=employee.role in (Role.MASTER, Role.ADMIN),
-        employee=employee,
-        terminal_id=None,
-    )
-
-
-async def current_terminal(
-    terminal_token: str | None = Depends(terminal_scheme),
-    db: AsyncSession = Depends(get_db),
-):
-    """단말 **자신**을 확인한다 — 생존 신호 전용 (2026-08-26).
-
-    [scan_actor] 와 갈라 둔 이유가 하나 있고, 그게 이 함수의 전부다:
-    **`last_used_at` 을 안 민다.**
-
-    저쪽은 토큰을 푸는 김에 그 값을 찍는데, 하트비트가 5분마다 같이 밀면
-    **아무도 안 찍은 날에도 방금 찍은 것처럼** 보인다. 그 둘을 가르려고
-    만드는 기능이라 여기서 밀면 뜻이 없어진다.
-
-    사람 토큰(Bearer)은 안 받는다 — 이 신호는 카운터 PC 만 보내는 것이다.
-    """
-    from app.models.auth.scan_terminal import ScanTerminal  # 순환 import 방지
-
-    if not terminal_token:
-        raise HTTPException(
-            401, detail={"code": "INVALID_TERMINAL", "message": "유효하지 않은 단말입니다"}
-        )
-    terminal = await db.scalar(
-        select(ScanTerminal).where(
-            ScanTerminal.token_hash == hash_terminal_token(terminal_token),
-            ScanTerminal.revoked_at.is_(None),
-        )
-    )
-    if terminal is None:
-        raise HTTPException(
-            401, detail={"code": "INVALID_TERMINAL", "message": "유효하지 않은 단말입니다"}
-        )
-    return terminal

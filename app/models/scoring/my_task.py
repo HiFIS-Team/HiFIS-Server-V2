@@ -54,6 +54,15 @@ class MyTask(UUIDMixin, TimestampMixin, Base):
     weekdays: Mapped[list[int]] = mapped_column(
         ARRAY(Integer), nullable=False, server_default="{1,2,3,4,5,6,7}"
     )
+    #: **체크할 때 받을 입력 칸** — `[{"name": "신규", "kind": "NUMBER"}, ...]`
+    #:
+    #: 비어 있으면 예전처럼 누르기만 하면 된다. 칸이 있으면 **다 채워야 체크가 된다**
+    #: (2026-08-31 요청 — 주간 신규·재등록 수처럼 체크와 함께 받아야 하는 값이 있다).
+    #: 환경정비의 현수막 사진처럼 항목 이름을 코드에 박는 방식은 개인 업무에 못 쓴다 —
+    #: 본인이 이름을 지어 만드는 목록이라 서버가 미리 알 수 없다.
+    fields: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     #: 표시 순서 — 작을수록 위. 환경정비 칩과 같은 규칙이다
     sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     #: 지운 항목 — **행을 지우지 않는다.**
@@ -83,6 +92,13 @@ class MyTaskCheck(UUIDMixin, TimestampMixin, Base):
     #: **KST 근무일.** 근태 기록(`Attendance.date`)과 같은 기준이라
     #: '누락 상태로 퇴근했나'를 같은 날짜로 맞출 수 있다
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    #: 그날 적어 넣은 값 — `{"신규": 3, "재등록": 5}`. 칸이 없는 업무는 빈 것이다
+    #:
+    #: **업무가 아니라 여기 담는다.** 값은 날마다 달라지는 것이라
+    #: 업무에 담으면 지난주에 적은 것이 이번주 값으로 덮인다.
+    values: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
 
 
 class MyTaskMiss(UUIDMixin, TimestampMixin, Base):

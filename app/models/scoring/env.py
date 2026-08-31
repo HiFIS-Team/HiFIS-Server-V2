@@ -1,6 +1,8 @@
 """환경정비 모델 — EnvItem · EnvTaskLog · SupplyOrder (CLAUDE.md §4.2)."""
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -55,6 +57,23 @@ class EnvTaskLog(UUIDMixin, TimestampMixin, Base):
     source_todo_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("project_todos.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 블로그 글 주소 — **블로그만 채워진다** (2026-08-28 대표 요청).
+    #
+    # 배점을 10 → 3 으로 내리는 대신 대표가 글을 보고 가산점을 얹기로 했는데,
+    # 링크가 없으면 무엇을 보고 매길지가 없다. 현수막이 사진을 받는 것과 같은
+    # 자리다. **다만 필수는 아니다** — 링크를 아직 못 받은 채로 남길 수 있다.
+    link: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # 대표 가산점 — **기본 배점 위에 얹는다** (기본 3 + 가산 7 = 최종 10).
+    #
+    # 프로젝트 점수 부여(`ScoreEvent` 를 통째로 갈아끼우는 것)와 달리 여기는
+    # 얹는 값이라 따로 든다. 점수 원장에는 `points + bonus_points` 한 줄로만
+    # 나가서, 기록을 지울 때 예전처럼 한 번에 회수된다.
+    bonus_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    bonus_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bonus_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=True
+    )
+    bonus_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SupplyOrder(UUIDMixin, TimestampMixin, Base):

@@ -181,8 +181,13 @@ class AttendanceStatus(StrEnum):
 
 
 class LeaveType(StrEnum):
-    ANNUAL = "ANNUAL"  # 연차
+    ANNUAL = "ANNUAL"  # 월차
     HALF = "HALF"      # 반차
+    #: 휴가 (2026-08-31) — 월차와 **같은 지갑**에서 나간다.
+    #:
+    #: 월차는 하루씩 쓰는 이름이고 휴가는 며칠을 묶어 쓰는 이름일 뿐이라,
+    #: 쓴 날수가 그대로 사용 일수에 쌓인다. 병가·외근·기타와는 다르다.
+    VACATION = "VACATION"
     SICK = "SICK"      # 병가
     FIELD = "FIELD"    # 외근
     ETC = "ETC"
@@ -204,6 +209,11 @@ class ComplaintStatus(StrEnum):
 
     PENDING = "PENDING"  # 미처리
     WORKING = "WORKING"  # 해결중
+    #: 완료 승인 대기 — MANAGER·MEMBER 가 완료를 눌렀지만 아직 안 끝났다 (2026-08-31)
+    #:
+    #: 완료를 찍으면 찍은 사람에게 환경정비 '클레임해결' 점수가 붙는다.
+    #: 아무나 찍을 수 있으면 점수를 그냥 가져갈 수 있어서 대표가 한 번 본다.
+    DONE_REQUESTED = "DONE_REQUESTED"
     DONE = "DONE"        # 해결 완료
 
 
@@ -262,6 +272,10 @@ class ScoreCategory(StrEnum):
     # 개인 업무 누락 차감 — **늘 음수다.** 다음 근무일까지도 안 하면 잡이 넣는다
     # (`workers/my_task_miss_scan.py`). 지각과 같은 자리, 같은 방식이다.
     TASK_MISS = "TASK_MISS"
+    # 동료평가 미제출 차감 — **늘 음수다.** 평가 창(말일·1일)이 닫힌 뒤
+    # 하나라도 안 낸 사람에게 잡이 넣는다 (`workers/peer_review_miss_scan.py`).
+    # 지각·업무 누락과 같은 자리, 같은 방식이다.
+    PEER_MISS = "PEER_MISS"
     # 방문 경로 — 셋을 **따로** 둔다. 랭킹 내역이 '블로그 10 · 인스타 5' 처럼
     # 갈라서 보여줘야 해서 하나로 묶으면 다시 못 나눈다.
     BLOG = "BLOG"              # 블로그 보고 온 회원 등록
@@ -300,10 +314,14 @@ class ReactionTargetType(StrEnum):
 
 
 class CommentTargetType(StrEnum):
-    """댓글이 달리는 글 — 공지·회의록 (2026-08-19).
+    """댓글이 달리는 글 — 공지·회의록·프로젝트·전자결재.
 
     반응(`ReactionTargetType`)과 따로 둔다. 저쪽에는 사내톡 메시지가 있는데
     메시지에는 댓글이 아니라 **답글**이 달린다 (`Message.reply_to_id`).
+
+    `APPROVAL` 은 나중에 붙었다 (2026-08-31). 결재 댓글은 원래 `approvals.comments`
+    JSONB 였는데 **줄마다 id 가 없어서** 고치고 지울 수가 없었다. 공지·회의록과
+    같은 창을 쓰려면 같은 표에 있어야 한다.
     """
 
     NOTICE = "NOTICE"
@@ -311,6 +329,10 @@ class CommentTargetType(StrEnum):
     #: 프로젝트 (2026-08-19) — 예전에는 `project_activities` 에 시스템 활동과
     #: 섞여 있었다. 화면이 공지·회의록과 같아지면서 저장도 여기로 모았다.
     PROJECT = "PROJECT"
+    #: 전자결재 (2026-08-31) — 예전에는 `approvals.comments` JSONB 였다.
+    #: 줄마다 id 가 없어 고치고 지울 수가 없었고, 그래서 결재만 댓글 창이
+    #: 달랐다. 옛 JSONB 는 남겨 두고(옛 앱이 읽는다) 새 댓글은 여기 쌓인다.
+    APPROVAL = "APPROVAL"
 
 
 class MessageKind(StrEnum):
@@ -351,6 +373,8 @@ class InboxKind(StrEnum):
     PROJECT = "PROJECT"    # POST /projects/requests/{id}/approve|reject
     # 누락 사유서 — 주소가 달라서 MY_TASK 와 따로 둔다 (2026-08-21)
     TASK_MISS = "TASK_MISS"  # POST /my-task-misses/{id}/approve|reject
+    # 컴플레인 해결 완료 (2026-08-31)
+    COMPLAINT = "COMPLAINT"  # POST /kindness-surveys/{id}/approve|reject
 
 
 class InboxStatus(StrEnum):
@@ -394,3 +418,36 @@ class RenewIntent(StrEnum):
     YES = "YES"      # 연장할게요
     MAYBE = "MAYBE"  # 조금 더 생각해볼게요
     NO = "NO"        # 이번엔 어려울 것 같아요
+
+
+class WorkoutKind(StrEnum):
+    """운동일지의 종류 — 회차를 깎느냐가 갈린다 (§3.4).
+
+    PT 는 **결제한 회차 안에서만** 쓴다. 회차 번호가 붙고 한 회차에 하나뿐이다.
+    PERSONAL 은 회원이 혼자 한 운동이라 회차와 상관이 없다 — 몇 개든 쓴다.
+    """
+
+    PT = "PT"
+    PERSONAL = "PERSONAL"
+
+
+class WorkoutMediaKind(StrEnum):
+    """일지에 붙는 자료 — 사진이냐 영상이냐.
+
+    영상은 앱이 못 그린다(플레이어가 윈도우를 안 탄다). 눌렀을 때 기기의
+    기본 재생기로 넘기려면 어느 쪽인지 알아야 해서 종류를 같이 담는다.
+    """
+
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"
+
+
+class MyTaskFieldKind(StrEnum):
+    """개인 업무 입력 칸의 종류 — 체크할 때 받는 값이 무엇이냐 (2026-08-31 요청).
+
+    숫자는 나중에 더하거나 견줄 수 있어야 해서 `int` 로 담고, 글은 그대로 담는다.
+    주간 신규·재등록 수처럼 **세는 값**이 이 기능을 만든 이유라 기본이 숫자다.
+    """
+
+    NUMBER = "NUMBER"
+    TEXT = "TEXT"

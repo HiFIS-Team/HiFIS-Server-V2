@@ -13,12 +13,27 @@ class LoginRequest(CamelModel):
     password: str  # 로그인은 길이 검증 안 함(기존 계정 그대로 인증)
 
 
+class ConsentAgreement(CamelModel):
+    """가입 화면에서 체크한 동의 한 건."""
+
+    doc_type: str = Field(min_length=1, max_length=40)   # "TERMS" / "PRIVACY"
+    doc_version: str = Field(min_length=1, max_length=40)
+
+
 class SignupRequest(CamelModel):
-    name: str
-    email: str
-    password: str = Field(min_length=8)  # 비밀번호 정책 — 최소 8자
-    phone: str  # 필수 — 휴대폰 번호(정규화 저장)
-    invite_key: str = Field(min_length=1)  # 필수 — 회원가입은 초대키만(승인 대기 폐지)
+    name: str = Field(min_length=1, max_length=50)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)  # 비밀번호 정책 — 최소 8자
+    phone: str = Field(max_length=30)  # 필수 — 휴대폰 번호(정규화 저장)
+    invite_key: str = Field(min_length=1, max_length=64)  # 필수 — 회원가입은 초대키만(승인 대기 폐지)
+    #: 약관·개인정보 동의 — **가입과 같은 트랜잭션에 남긴다.**
+    #: 예전엔 앱이 가입 후 잠깐 로그인해 따로 불렀는데, 그사이 실패하면
+    #: 동의 기록 없는 계정만 남았다(입증 책임은 회사에 있다).
+    #:
+    #: 비어 있어도 받는다 — 스토어에 이미 깔린 구버전 앱은 이 칸을 안 보낸다.
+    #: 그쪽은 여전히 `POST /employees/me/consents` 로 따로 남긴다.
+    #: **모든 기기가 올라가면 필수로 바꾼다.**
+    consents: list[ConsentAgreement] = Field(default_factory=list)
 
     @field_validator("phone")
     @classmethod
@@ -61,4 +76,4 @@ class PasswordResetVerifyResp(CamelModel):
 
 class PasswordResetConfirmReq(CamelModel):
     reset_token: str
-    password: str = Field(min_length=8)
+    password: str = Field(min_length=8, max_length=128)

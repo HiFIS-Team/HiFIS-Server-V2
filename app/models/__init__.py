@@ -18,7 +18,6 @@ from app.models.scoring.env import EnvItem, EnvTaskLog, SupplyOrder
 from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskRequest
 from app.models.board.event import Event
 from app.models.auth.invite import InviteKey
-from app.models.auth.scan_terminal import ScanTerminal
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.projects.meeting import Meeting
 from app.models.members.member import Member
@@ -40,6 +39,7 @@ from app.models.members.registration import Registration
 from app.models.scoring.score_event import ScoreEvent
 from app.models.members.pt_survey import PtSurvey
 from app.models.members.session_sign import SessionSign
+from app.models.members.workout import WorkoutLog
 from app.models.projects.todo import Todo
 
 __all__ = [
@@ -67,7 +67,6 @@ __all__ = [
     "SupplyOrder",
     "Event",
     "InviteKey",
-    "ScanTerminal",
     "KindnessSurvey",
     "Meeting",
     "Member",
@@ -93,4 +92,5 @@ __all__ = [
     "ScoreEvent",
     "SessionSign",
     "Todo",
+    "WorkoutLog",
 ]

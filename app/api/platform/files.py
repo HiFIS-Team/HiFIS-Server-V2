@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from app.core.file_signing import verify_file_signature
+from app.core.storage import INLINE_EXTS
 
 router = APIRouter(tags=["files"])
 
@@ -29,7 +30,14 @@ async def serve_signed_file(
         raise HTTPException(400, detail={"code": "INVALID_PATH", "message": "잘못된 경로입니다"})
     if not os.path.isfile(full):
         raise HTTPException(404, detail={"code": "FILE_MISSING", "message": "파일이 존재하지 않습니다"})
-    return FileResponse(
-        full,
-        headers={"Cache-Control": "private, max-age=604800"},
-    )
+    headers = {
+        "Cache-Control": "private, max-age=604800",
+        # 확장자와 다른 내용을 브라우저가 알아서 추측해 실행하는 걸 막는다
+        "X-Content-Type-Options": "nosniff",
+    }
+    ext = full.rsplit(".", 1)[-1].lower() if "." in os.path.basename(full) else ""
+    if ext not in INLINE_EXTS:
+        # 이미지·PDF 외에는 내려받기로 강제 — 업로드된 문서가 API 오리진에서
+        # 그대로 렌더링되면 저장형 XSS 가 된다
+        headers["Content-Disposition"] = "attachment"
+    return FileResponse(full, headers=headers)

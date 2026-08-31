@@ -204,15 +204,26 @@ def payslip_paid(year_month: str) -> dict:
 
 
 def payday_today(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "오늘 급여를 신청해 주세요", "body": f"{year_month} 급여 지급일이에요", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "오늘은 급여 신청 날이에요", "body": f"{year_month} 급여 지급일이에요", "link": "/payroll"}
 
 
 def payday_tomorrow(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "내일이 급여 신청일이에요", "body": f"{year_month} 급여를 미리 확인해 두세요", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "내일은 급여 신청 날이에요", "body": f"{year_month} 급여를 미리 확인해 두세요", "link": "/payroll"}
 
 
-def payday_deadline(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "오늘 20시까지 신청해 주세요", "body": f"{year_month} 급여를 아직 안 냈어요", "link": "/payroll"}
+def payslip_submitted(name: str, year_month: str, net: int) -> dict:
+    """직원이 급여를 냈다 — **대표에게** (2026-08-31 대표 요청).
+
+    급여만 신청 알림이 없었다. 월차·전자결재·일정·프로젝트·컴플레인은 다
+    올라오면 알려 주는데 급여는 홈 결재함을 직접 열어야 알 수 있었고,
+    **지급일 당일에만 낼 수 있어서** 그날 못 보면 그날 결재가 통째로 밀린다.
+    """
+    return {
+        "type": "PAYROLL",
+        "title": "급여 신청이 올라왔어요",
+        "body": f"{name} · {year_month} 실수령 {net:,}원",
+        "link": "/payroll",
+    }
 
 
 # ── 일정 ──
@@ -239,14 +250,6 @@ def ranking_winner(period: str, label: str) -> dict:
 
 def ranking_announce(period: str, summary: str) -> dict:
     return {"type": "RANKING", "title": f"{period} 랭킹이 나왔어요 📢", "body": summary, "link": "/ranking"}
-
-
-def ranking_drop(label: str, overtaker_text: str, old_rank: int, new_rank: int) -> dict:
-    return {"type": "RANKING", "title": f"{label} 순위가 밀렸어요", "body": f"{overtaker_text}님이 앞질렀어요 · {old_rank}위 → {new_rank}위", "link": "/ranking"}
-
-
-def ranking_change_admin(label: str, summary: str) -> dict:
-    return {"type": "RANKING", "title": f"{label} 순위가 바뀌었어요", "body": summary, "link": "/ranking"}
 
 
 # ── 대표·관리자에게 가는 전사 알림 ──
@@ -312,6 +315,37 @@ def task_miss_confirmed(day, contents: list[str]) -> dict:
     }
 
 
+def peer_review_due(period: str, remaining: int, last_day: bool) -> dict:
+    """본인에게 — 동료평가 창이 열려 있는데 아직 안 냈다 (2026-08-31 대표 결정).
+
+    창이 **이틀뿐**이라 매시간(KST 09~23) 나간다. 다 낸 사람에게는 안 간다.
+    **남은 날을 말해 준다** — '오늘까지' 와 '내일까지' 는 급한 정도가 다르다.
+    """
+    when = "내일까지" if last_day else "오늘까지"
+    month = int(period.split("-")[1])
+    return {
+        "type": "PEER_REVIEW",
+        "title": f"{month}월 동료평가가 열렸어요",
+        "body": f"{when} {remaining}명 남았어요 · 안 내면 20점이 깎여요",
+        "link": "/work",
+    }
+
+
+def peer_review_missed(period: str, remaining: int, points: int) -> dict:
+    """본인에게 — 창이 닫혔는데 안 낸 사람이 남아 감점됐다.
+
+    재촉 알림과 글이 갈려야 한다. 저쪽은 '아직 낼 수 있다' 는 뜻이고 이쪽은
+    이미 깎였다는 뜻이라, 같은 문장이면 낼 수 있는 이틀을 놓친다.
+    """
+    month = int(period.split("-")[1])
+    return {
+        "type": "PEER_REVIEW_MISSING",
+        "title": f"{month}월 동료평가가 누락됐어요",
+        "body": f"{remaining}명을 안 내서 {points}점이 반영됐어요",
+        "link": "/work",
+    }
+
+
 def task_miss_excuse(name: str, day) -> dict:
     """대표에게 — 누락 사유서가 올라왔다 (2026-08-21).
 
@@ -357,41 +391,6 @@ def staff_absent(name: str) -> dict:
 # 출퇴근 단말 (2026-08-26) — 대표에게만
 # ---------------------------------------------------------------------------
 #
-# 스캐너가 죽으면 **아무 표시도 안 난다.** 스캐너 부저는 그때도 삑 소리를 내서
-# 찍은 사람은 됐다고 믿고, 저녁이 되면 `staff_absent` 가 나가서 안 나온
-# 사람처럼 보인다. 화순에서 실제로 그랬다.
-#
-# 그래서 종류를 `ATTENDANCE` 와 갈라 둔다 — 근태 알림에 섞이면 하루 수십 건
-# 사이에 묻힌다. 이건 **사람 이야기가 아니라 고장 이야기다.**
-
-
-def scan_terminal_failed(terminal_name: str, reason: str) -> dict:
-    """찍었는데 안 먹혔다 — 요청은 왔고 서버가 거절한 경우.
-
-    침묵(`scan_terminal_silent`)과 성격이 다르다. 저쪽은 요청이 아예 안 오는
-    것이고 이건 **온 요청이 튕긴 것**이라, 찍은 사람은 여전히 됐다고 믿는다.
-    """
-    return {
-        "type": "SCAN_TERMINAL",
-        "title": f"{terminal_name} 스캔이 안 먹혔어요",
-        "body": reason,
-        "link": "/attendance",
-    }
-
-
-def scan_terminal_silent(terminal_name: str, reason: str) -> dict:
-    """출근 시간이 지나도록 그 지점 스캔이 한 건도 없다.
-
-    [reason] 이 **무엇이 죽었는지**를 말한다 — 생존 신호로 가른다.
-    """
-    return {
-        "type": "SCAN_TERMINAL",
-        "title": f"{terminal_name}에서 오늘 스캔이 없어요",
-        "body": reason,
-        "link": "/attendance",
-    }
-
-
 #: 휴가 종류 → 사람이 읽는 말
 _LEAVE_LABELS = {"ANNUAL": "연차", "HALF": "반차", "SICK": "병가", "FIELD": "외근", "ETC": "기타"}
 
@@ -513,4 +512,84 @@ def work_status_changed(name: str, status, message: str | None) -> dict:
         # 상태 메시지는 **선택**이다 — 안 적었으면 제목 한 줄로 끝난다
         "body": short(note) if note else None,
         "link": "/staff",
+    }
+
+
+def env_award(item: str, total: int, reason: str | None) -> dict:
+    """가산점을 받은 사람에게 — 대표가 블로그 점수를 매겼다 (2026-08-28).
+
+    **`SCORE` 다.** 결재도 경고도 아니고 점수가 바뀌었다는 알림이다.
+
+    `total` 은 기본 배점까지 더한 **최종 점수**다. 가산분만 적으면
+    `+7` 인데 화면의 기록 줄에는 `10` 이 떠서 두 숫자가 어긋난다.
+    """
+    return {
+        "type": "SCORE",
+        "title": f"{item} 점수가 {total}점이 됐어요",
+        "body": reason,
+        "link": "/work",
+    }
+
+
+def score_reverted(points: int, reason: str | None) -> dict:
+    """깎였던 점수를 대표가 되돌렸다 (2026-08-28).
+
+    **`SCORE` 다.** 깎을 때(`late_penalty`·`task_miss_confirmed`)는 경고 쪽인데
+    되돌리는 것은 좋은 소식이라 같은 종류로 보내면 안 된다.
+    """
+    return {
+        "type": "SCORE",
+        "title": f"깎였던 {abs(points)}점이 돌아왔어요",
+        "body": reason,
+        "link": "/work",
+    }
+
+
+def kindness_praise(member_name: str, comment: str) -> dict:
+    """칭찬을 받은 본인에게 (2026-08-31 대표 요청).
+
+    **`SCORE` 가 아니다.** 같이 붙는 KINDNESS 10점보다 칭찬 자체가 본론이라
+    점수 알림과 섞이면 안 된다.
+    """
+    return {
+        "type": "KINDNESS",
+        "title": "칭찬을 받았어요 🎉",
+        "body": f"{member_name}님 · {short(comment)}",
+        "link": "/work",
+    }
+
+
+def kindness_praise_boss(name: str, comment: str) -> dict:
+    """직원이 칭찬받았다 — 대표·관리자에게."""
+    return {
+        "type": "KINDNESS",
+        "title": f"{name}님이 칭찬받았어요",
+        "body": short(comment),
+        "link": "/work",
+    }
+
+
+def kindness_complaint(improvement: str, branch: str | None) -> dict:
+    """컴플레인이 들어왔다 (2026-08-31 대표 요청).
+
+    [branch] 는 **전 지점을 받는 사람(MASTER·ADMIN)에게만** 채운다. 자기
+    지점 것만 받는 사람에게는 뻔한 말이라 자리만 먹는다.
+    """
+    body = short(improvement)
+    return {
+        "type": "COMPLAINT",
+        "title": "컴플레인이 들어왔어요",
+        "body": f"{branch} · {body}" if branch else body,
+        "link": "/work",
+    }
+
+
+def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> dict:
+    """컴플레인이 해결됐다 — **누가 처리했는지**가 본론이다 (2026-08-31)."""
+    body = f"{resolver}님이 처리했어요 · {short(improvement)}"
+    return {
+        "type": "COMPLAINT",
+        "title": "컴플레인이 해결됐어요",
+        "body": f"{branch} · {body}" if branch else body,
+        "link": "/work",
     }

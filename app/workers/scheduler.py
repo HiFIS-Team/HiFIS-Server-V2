@@ -17,7 +17,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.workers.absence_alerts import absence_alerts
 from app.workers.event_reminders import event_reminders
-from app.workers.payday_reminder import payday_deadline_reminders, payday_reminders
+from app.workers.payday_reminder import payday_reminders
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
 from app.workers.ranking_jobs import (
@@ -29,8 +29,9 @@ from app.workers.anomaly_scan import anomaly_scan
 from app.workers.error_rate_scan import error_rate_scan
 from app.workers.metrics_flush import flush_metrics
 from app.workers.my_task_miss_scan import my_task_miss_scan
+from app.workers.peer_review_miss_scan import peer_review_miss_scan
+from app.workers.peer_review_reminders import peer_review_reminders
 from app.workers.retention import purge_old_access_logs
-from app.workers.scan_terminal_watch import scan_terminal_watch
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +64,11 @@ def _register_jobs() -> None:
     scheduler.add_job(close_previous_month, CronTrigger(day=1, hour=0, minute=30),
                       id="payroll_close", replace_existing=True)
     # 매일 00:05 UTC(=09:05 KST) — 오늘/내일 지급일 급여 신청 알림(예고 포함)
-    scheduler.add_job(payday_reminders, CronTrigger(hour=0, minute=5),
+    # KST 09·12·15·18·21시 (= UTC 00·03·06·09·12) — 지급일 전날 6시간마다,
+    # 당일은 안 낸 사람에게 3시간마다. 새벽은 뺀다 (payday_reminder.py)
+    scheduler.add_job(payday_reminders, CronTrigger(hour="0,3,6,9,12", minute=5),
                       id="payday_reminder", replace_existing=True)
     # 매일 11:00 UTC(=20:00 KST) — 지급일 당일 미신청자 마감 임박 알림
-    scheduler.add_job(payday_deadline_reminders, CronTrigger(hour=11, minute=0),
-                      id="payday_deadline", replace_existing=True)
     # 매시간 정각 UTC — 프로젝트 마감(전 D-N 매일 9시 / 당일 매시간 / 누락 1회)
     scheduler.add_job(project_reminders, CronTrigger(minute=0),
                       id="project_reminder", replace_existing=True)
@@ -93,6 +94,15 @@ def _register_jobs() -> None:
     # 보기 때문이다. 자정 직후가 그 첫 자리다.
     scheduler.add_job(my_task_miss_scan, CronTrigger(hour=15, minute=30),
                       id="my_task_miss_scan", replace_existing=True)
+    # 매시 정각 UTC 00~14 (=KST 09~23) — 동료평가 재촉 푸시.
+    # **잡 안에서 창(말일·1일)인지 다시 본다** — 크론은 시각만 자른다.
+    scheduler.add_job(peer_review_reminders, CronTrigger(hour="0-14", minute=0),
+                      id="peer_review_reminder", replace_existing=True)
+    # 매일 15:30 UTC(=00:30 KST) — 동료평가 미제출 감점.
+    # **창이 닫힌 다음 날(2일)에만** 실제로 돈다 (잡이 어제가 1일인지 본다).
+    # 개인 업무 누락 판정과 같은 시각이다 — 하루가 다 끝난 뒤가 첫 자리다.
+    scheduler.add_job(peer_review_miss_scan, CronTrigger(hour=15, minute=30),
+                      id="peer_review_miss_scan", replace_existing=True)
     # 매일 02:00 UTC — 보존기간(기본 90일) 초과 접속 로그 파기(§3 통신비밀보호법)
     scheduler.add_job(purge_old_access_logs, CronTrigger(hour=2, minute=0),
                       id="access_log_purge", replace_existing=True)
@@ -105,8 +115,6 @@ def _register_jobs() -> None:
     # 15분마다 — 출퇴근 단말 침묵 감지(대표에게).
     # **아침에 잡아야 뜻이 있다** — 저녁 결근 알림이 나가기 전에 고쳐야
     # 그날 나온 사람이 결근으로 안 남는다. 하루 한 번만 알린다(alerted_at).
-    scheduler.add_job(scan_terminal_watch, CronTrigger(minute="*/15"),
-                      id="scan_terminal_watch", replace_existing=True)
     # 검증용 하트비트 — 환경변수로만 켬(운영 기본 꺼짐). 멀티워커 단일실행 확인에 사용.
     if os.getenv("SCHED_HEARTBEAT_TEST"):
         scheduler.add_job(_heartbeat, CronTrigger(second="*/2"),

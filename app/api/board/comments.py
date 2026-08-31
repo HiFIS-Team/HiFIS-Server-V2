@@ -8,6 +8,7 @@
 | 공지 | 전 직원 (공지는 원래 공용이다) |
 | 회의록 | 그 회의록을 볼 수 있는 사람 (`meetings._can_view` 와 **같은 함수**) |
 | 프로젝트 | 그 프로젝트를 볼 수 있는 사람 (`projects._ensure_visible` 와 **같은 함수**) |
+| 전자결재 | 그 결재의 당사자 (`approvals._require_participant` 와 **같은 함수**) |
 
 **고치고 지우는 건 작성자 본인**이고, 관리자(MASTER·ADMIN·MANAGER)는 지우기만
 된다 — 남의 말을 고쳐 쓰면 안 된다 (프로젝트 댓글과 같은 규칙이다).
@@ -19,11 +20,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.board.approvals import _require_participant
 from app.api.projects.meetings import _can_view
 from app.api.projects.projects import _ensure_visible, _get_project_or_404
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.enums import CommentTargetType, Role
+from app.models.board.approval import Approval
 from app.models.board.comment import Comment
 from app.models.board.notice import Notice
 from app.models.projects.meeting import Meeting
@@ -56,6 +59,16 @@ async def _ensure_target_visible(
     if target_type is CommentTargetType.NOTICE:
         if await db.get(Notice, target_id) is None or await is_notice_blocked(db, current):
             raise HTTPException(404, detail={"code": "NOTICE_NOT_FOUND", "message": "공지를 찾을 수 없습니다"})
+        return
+
+    if target_type is CommentTargetType.APPROVAL:
+        approval = await db.get(Approval, target_id)
+        if approval is None:
+            raise HTTPException(
+                404, detail={"code": "APPROVAL_NOT_FOUND", "message": "결재 문서를 찾을 수 없습니다"}
+            )
+        # 신청자·결재선·MASTER·ADMIN — 문서를 볼 수 있는 사람이 곧 댓글을 쓰는 사람이다
+        _require_participant(approval, current)
         return
 
     if target_type is CommentTargetType.PROJECT:

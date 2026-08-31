@@ -4,21 +4,21 @@
 목록은 지점 스코프(MEMBER=본인 지점).
 """
 
+import secrets
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
-    ScanActor,
     branch_filter,
     branch_scope,
     get_current_user,
     require_role,
-    scan_actor,
 )
 from app.core.periods import KST, period_range
+from app.core.ratelimit import client_key
 from app.db.session import get_db
 from app.enums import (
     AttendanceSource,
@@ -51,7 +51,6 @@ from app.services.notifications import (
     master_ids,
     notify,
     notify_bosses,
-    notify_ops,
 )
 from app.services.scoring import accrue_score
 
@@ -84,10 +83,6 @@ OVERNIGHT_GRACE_MIN = 60
 # 이 시각(KST) 전의 첫 스캔은 **어제 퇴근**으로 본다 — 야근이 자정을 넘긴 경우다.
 # 이보다 늦으면 평범한 출근 스캔이라 어제 기록을 건드리지 않는다.
 OVERNIGHT_CHECKOUT_BEFORE_MIN = 5 * 60
-
-# 같은 스캔 실패를 이 시간 안에 또 받으면 알림을 안 보낸다 (2026-08-26).
-# 뭉갠 라벨을 계속 긁으면 초 단위로 같은 실패가 쌓인다 — 대표 폰이 울리는 자리다.
-SCAN_FAIL_DEDUPE_MIN = 10
 
 # 직전 스캔에서 이 시간 안에 또 찍히면 **무시**한다 (2026-08-13 결정, 5분).
 #
@@ -269,6 +264,48 @@ async def _award_offhours(
     await notify(db, employee_id=target.id, **ntext.offhours_award(kind_label, OFFHOURS_POINTS))
 
 
+#: QR 이 담는 글자 — `HIFIS-SCAN:<지점 id>:<시크릿>`
+QR_PREFIX = "HIFIS-SCAN:"
+
+
+async def _branch_of_qr(db: AsyncSession, qr: str) -> Branch:
+    """QR 문자열에서 지점을 꺼낸다 — 모양이 틀리거나 시크릿이 안 맞으면 400.
+
+    **지점 id 만으로는 안 받는다.** id 는 앱 안에 굴러다니는 값이라, 아는
+    사람이 QR 을 지어낼 수 있다. 시크릿이 있어야 "그 종이를 실제로 봤다"는
+    뜻이 된다 (새면 값을 갈고 QR 만 다시 뽑는다).
+    """
+    bad = HTTPException(400, detail={"code": "BAD_QR", "message": "출퇴근 QR 이 아닙니다"})
+    if not qr.startswith(QR_PREFIX):
+        raise bad
+    parts = qr[len(QR_PREFIX) :].split(":")
+    if len(parts) != 2:
+        raise bad
+    branch_id, secret = parts
+    branch = await db.get(Branch, branch_id)
+    # 시크릿 비교는 **길이가 새지 않게** 상수 시간으로 (남는 값이 아니라 습관이다)
+    if branch is None or not branch.scan_secret:
+        raise bad
+    if not secrets.compare_digest(branch.scan_secret, secret):
+        raise bad
+    return branch
+
+
+def _at_branch(request: Request, branch: Branch) -> bool:
+    """이 요청이 **그 지점 인터넷**에서 왔나.
+
+    고정 QR 이라 사진을 찍어 두면 집에서도 찍힌다. 그걸 막는 유일한 값이라
+    **목록이 비어 있으면 아무도 못 찍는다** — 열어 두면 어디서나 찍힌다.
+
+    회선이 동적이면 IP 가 바뀐다. 그때는 대표가 지점에서
+    `POST /branches/{id}/scan-ip` 를 한 번 눌러 다시 등록한다.
+    """
+    allowed = branch.allowed_ips or []
+    if not allowed:
+        return False
+    return client_key(request) in allowed
+
+
 async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
     """지각 차감 — **여태까지 지각한 횟수**가 커질수록 많이 뺀다 ([LATE_PENALTY]).
 
@@ -340,82 +377,42 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
     for eid in await master_ids(db):
         if eid != target.id:
             await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
-
-
-async def _warn_scan_failed(
-    db: AsyncSession, actor: ScanActor, reason: str
-) -> None:
-    """단말이 보낸 스캔이 튕겼다 — **개발자에게** 알린다 (2026-08-26).
-
-    **단말이 보낸 것만 알린다.** 앱에서 사람이 찍다 틀린 것은 그 사람 화면에
-    바로 뜨므로 대표가 받을 일이 아니다. 카운터 스캐너는 다르다 — 튕겨도
-    **부저는 삑 소리를 내서** 찍은 사람은 됐다고 믿고 그냥 간다.
-
-    같은 실패가 몇 초 사이에 여러 번 오면(바코드가 뭉갠 라벨을 계속 긁는 식)
-    한 건만 남긴다. 알림 원장이 곧 '언제 알렸나'라 상태를 따로 안 둔다
-    (`error_rate_scan` 과 같은 방식).
-    """
-    if actor.terminal_id is None:
-        return
-    from app.models.auth.scan_terminal import ScanTerminal
-    from app.models.chat.notification import Notification
-
-    terminal = await db.get(ScanTerminal, actor.terminal_id)
-    name = terminal.name if terminal else "출퇴근 단말"
-    text = ntext.scan_terminal_failed(name, reason)
-
-    since = datetime.now(timezone.utc) - timedelta(minutes=SCAN_FAIL_DEDUPE_MIN)
-    dup = await db.scalar(
-        select(Notification.id)
-        .where(
-            Notification.type == text["type"],
-            Notification.title == text["title"],
-            Notification.body == text["body"],
-            Notification.created_at >= since,
-        )
-        .limit(1)
-    )
-    if dup is not None:
-        return
-    # 고칠 수 있는 사람에게 간다 — 침묵 알림과 같은 기준(직군 DEVELOPER)
-    await notify_ops(db, **text)
-    await db.commit()
-
-
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
-    payload: AttendanceScanRequest | None = Body(default=None),
-    actor: ScanActor = Depends(scan_actor),
+    request: Request,
+    payload: AttendanceScanRequest,
+    current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AttendanceOut:
-    """사람이 부를 수도 있고 **지점 단말**이 부를 수도 있다.
+    """매장 카운터에 붙은 **QR 을 직원 폰이 읽어** 출퇴근을 찍는다.
 
-    단말은 `X-Terminal-Token` 헤더로 온다 (카운터 PC 에서 화면 없이 도는
-    프로그램). 어느 쪽이든 **자기 지점 직원만** 찍을 수 있고, 전 지점은
-    MASTER·ADMIN 뿐이다.
+    **QR 이 반드시 있어야 한다.** 예전에는 사번(`code`)을 읽은 지점 단말과
+    "본문 없이 부르면 본인" 이라는 옛 길이 같이 있었는데, 카운터 PC 를
+    걷어내면서(2026-08-28) 둘 다 없앴다. 특히 뒤엣것을 그냥 두면 **집에서 빈
+    요청 한 번으로 출근이 찍힌다** — 매장에 있었다는 증거가 아무것도 없다.
+
+    **남을 못 찍는다.** 찍히는 사람이 곧 로그인한 사람이라, 남의 바코드 화면을
+    캡처해 대신 찍어 주던 길(옛 스캐너에는 있었다)이 아예 없어졌다.
     """
-    # 사번(emp_no) 스캔이면 그 주인(지점 스캐너 모드), 없으면 로그인 본인(하위호환)
-    if payload is not None and payload.code:
-        normalized = payload.code.strip().replace("-", "")  # 하이픈 유무 모두 허용
-        target = await db.scalar(
-            select(Employee).where(
-                func.replace(Employee.emp_no, "-", "") == normalized,
-                Employee.deleted_at.is_(None),
-            )
+    if not payload.qr:
+        raise HTTPException(
+            400, detail={"code": "QR_REQUIRED", "message": "카운터 QR 을 찍어주세요"}
         )
-        if target is None:
-            # 사번 자체는 안 싣는다 — 활동 로그가 `code` 를 `***` 로 가리는 것과 같은 기준
-            await _warn_scan_failed(db, actor, "등록되지 않은 사번을 읽었어요")
-            raise HTTPException(404, detail={"code": "EMP_NO_NOT_FOUND", "message": "등록되지 않은 사번입니다"})
-        if not actor.all_branches and target.branch_id != actor.branch_id:
-            await _warn_scan_failed(db, actor, f"다른 지점 직원({target.name})이라 안 찍혀요")
-            raise HTTPException(403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 직원은 스캔할 수 없습니다"})
-    elif actor.employee is not None:
-        target = actor.employee
-    else:
-        # 단말에는 '본인'이 없다 — 사번을 안 주면 누구를 찍을지 알 수 없다
-        await _warn_scan_failed(db, actor, "사번 없이 신호만 왔어요 (스캐너 설정 확인)")
-        raise HTTPException(400, detail={"code": "CODE_REQUIRED", "message": "사번이 필요합니다"})
+    qr_branch = await _branch_of_qr(db, payload.qr)
+    # 남의 지점 QR 은 안 받는다 — 자기 지점 근무일·당직 기준으로 판정해야 한다
+    if qr_branch.id != current.branch_id:
+        raise HTTPException(
+            403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 QR 입니다"}
+        )
+    if not _at_branch(request, qr_branch):
+        raise HTTPException(
+            403,
+            detail={
+                "code": "NOT_AT_BRANCH",
+                "message": "매장 와이파이에 연결한 뒤 찍어주세요",
+            },
+        )
+    target = current
 
     now = datetime.now(timezone.utc)
     now_kst = now.astimezone(KST)
@@ -934,11 +931,15 @@ async def leave_balance(
     joined = target.joined_at.astimezone(KST).date()
     granted = annual_leave_granted(joined, as_of)
     year_start = _leave_year_start(joined, as_of)
-    # 사용=승인+대기(신청중) 연차/반차 — 이번 연차연도. 병가·외근·기타는 연차 차감 아님.
+    # 사용=승인+대기(신청중) 월차/반차/휴가 — 이번 연차연도.
+    # 병가·외근·기타는 안 센다. 휴가는 월차와 같은 지갑이라 쓴 날수가 그대로 쌓인다
+    # (2026-08-31).
     used_raw = await db.scalar(
         select(func.coalesce(func.sum(LeaveRequest.days), 0.0)).where(
             LeaveRequest.employee_id == target.id,
-            LeaveRequest.type.in_([LeaveType.ANNUAL, LeaveType.HALF]),
+            LeaveRequest.type.in_(
+                [LeaveType.ANNUAL, LeaveType.HALF, LeaveType.VACATION]
+            ),
             LeaveRequest.status.in_([LeaveStatus.APPROVED, LeaveStatus.PENDING]),
             LeaveRequest.start_date >= year_start,
         )

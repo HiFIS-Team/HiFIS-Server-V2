@@ -23,12 +23,15 @@ from app.schemas.scoring.env import (
     EnvItemCreate,
     EnvItemOut,
     EnvItemUpdate,
+    EnvLogAward,
     EnvLogCreate,
     EnvLogPhotoOut,
     EnvTaskLogOut,
     SupplyOrderCreate,
     SupplyOrderOut,
 )
+from app.services import notification_texts as ntext
+from app.services.notifications import notify
 from app.services.scoring import accrue_score
 
 router = APIRouter(tags=["env"])
@@ -62,13 +65,14 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     ("TM회원관리", 5, False),  # 1 → 5 (2026-08-14 대표 결정)
     # 홍보 — 온라인부터 오프라인
     ("게시물", 3, False),
-    ("스토리", 3, False),
+    ("스토리", 2, False),  # 3 → 2 (2026-08-28 대표 결정)
     ("전단지", 1, False),  # 10 → 1 (2026-08-19 대표 결정)
     ("현수막", 10, False),
     ("족자", 5, False),
-    ("블로그", 10, False),
+    ("블로그", 3, False),  # 10 → 3 + 대표 가산점 (2026-08-28 대표 결정)
     # 기타 — 어쩌다 하는 것들
-    ("클레임해결", 10, False),
+    # 컴플레인 한 건을 끝까지 처리한 값이라 다른 항목보다 높다 (2026-08-31 대표 요청)
+    ("클레임해결", 15, False),
     ("기타", 1, True),  # 1~10 범위 → 지점별 조정 가능
 ]
 
@@ -87,6 +91,19 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
 # (돌리는 것이라 '걸린 자리'가 없다).
 PHOTO_REQUIRED_ITEMS = {"현수막", "족자"}
 
+# 글 주소를 같이 받는 항목 — **블로그뿐이다** (2026-08-28 대표 요청).
+#
+# 배점을 10 → 3 으로 내리는 대신 대표가 글을 보고 가산점을 얹기로 했는데,
+# 링크가 없으면 무엇을 보고 매길지가 없다.
+#
+# **사진과 달리 필수가 아니다.** 주소가 아직 없어도 남길 수는 있어야 한다 —
+# 막으면 글은 썼는데 기록을 못 하는 날이 생긴다.
+LINK_ITEMS = {"블로그"}
+
+# 대표가 가산점을 얹을 수 있는 항목 — 지금은 블로그뿐이다.
+# 늘리려면 여기에 이름만 더한다 (앱의 `_awardableItems` 도 같이).
+AWARDABLE_ITEMS = {"블로그"}
+
 
 def _env_key(name: str) -> str:
     """항목 이름 비교용 — 공백을 떼고 소문자로. 앱의 `_envKey` 와 같은 규칙이다."""
@@ -94,10 +111,16 @@ def _env_key(name: str) -> str:
 
 
 _PHOTO_REQUIRED_KEYS = {_env_key(n) for n in PHOTO_REQUIRED_ITEMS}
+_LINK_KEYS = {_env_key(n) for n in LINK_ITEMS}
+_AWARDABLE_KEYS = {_env_key(n) for n in AWARDABLE_ITEMS}
 
 
 def _needs_photo(item: EnvItem) -> bool:
     return _env_key(item.name) in _PHOTO_REQUIRED_KEYS
+
+
+def _takes_link(item: EnvItem) -> bool:
+    return _env_key(item.name) in _LINK_KEYS
 
 
 async def _ensure_base_items(db: AsyncSession, branch_id: str) -> None:
@@ -216,6 +239,17 @@ async def create_env_log(
                 "message": f"{item.name}은(는) 사진과 위치를 함께 남겨야 합니다",
             },
         )
+    # 블로그 주소 — 안 보내도 되지만, 보냈으면 진짜 주소여야 한다.
+    # 링크를 안 받는 항목에 실려 오면 **조용히 버린다** (엉뚱한 칸이 채워지면
+    # 나중에 그 항목도 링크를 받는 줄 알게 된다).
+    link = (payload.link or "").strip() or None
+    if link is not None and not _takes_link(item):
+        link = None
+    if link is not None and not link.lower().startswith(("http://", "https://")):
+        raise HTTPException(
+            400,
+            detail={"code": "BAD_LINK", "message": "글 주소는 http:// 또는 https:// 로 시작해야 합니다"},
+        )
     # 기타 등 write-in: 적은 내용을 라벨에 접어 "기타(창고정리)" 로 스냅샷(점수 원장·랭킹 사유도 동일). item_name String(100) 보호.
     label = f"{item.name}({payload.note})"[:100] if payload.note else item.name
     log = EnvTaskLog(
@@ -227,6 +261,7 @@ async def create_env_log(
         note=payload.note,
         photo_url=payload.photo_url,
         place=place or None,
+        link=link,
     )
     db.add(log)
     await db.flush()
@@ -270,6 +305,68 @@ async def list_env_logs(
         stmt = stmt.where(EnvTaskLog.created_at >= start, EnvTaskLog.created_at < end)
     result = await db.execute(stmt.order_by(EnvTaskLog.created_at.desc()))
     return list(result.scalars().all())
+
+
+@router.post("/env-logs/{log_id}/award", response_model=EnvTaskLogOut)
+async def award_env_log(
+    log_id: str,
+    payload: EnvLogAward,
+    # **MASTER 만이다.** 프로젝트 점수 부여와 같은 자리다 — 잘했는지를
+    # 판단하는 일이라 한 사람이 한다.
+    current: Employee = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> EnvTaskLog:
+    """블로그 가산점 — 기본 배점 **위에 얹는다** (2026-08-28 대표 요청).
+
+    배점을 10 → 3 으로 내린 대신 대표가 글을 보고 얹는다. 기본 3 + 가산 7 이면
+    최종 10 이다. 다시 부르면 **갈아끼운다** (더해지지 않는다) — 두 번 눌러서
+    점수가 두 배가 되면 되돌릴 방법이 없다.
+
+    `points = 0` 이면 가산점을 걷는다. 음수도 받지만 **최종 점수는 0 아래로
+    안 내려간다** — 환경정비를 해서 점수가 깎이는 일은 없어야 한다.
+
+    점수 원장에는 `기본 + 가산` 을 **한 줄로** 쓴다. 두 줄로 나누면 기록을
+    지울 때(`DELETE /env-logs/{id}`) 한쪽만 걷힐 자리가 생긴다.
+    """
+    log = await db.get(EnvTaskLog, log_id)
+    if log is None:
+        raise HTTPException(404, detail={"code": "ENV_LOG_NOT_FOUND", "message": "수행 기록을 찾을 수 없습니다"})
+
+    # 어떤 항목이었는지는 **`env_item_id` 로** 본다. `item_name` 은 '기타(창고정리)'
+    # 처럼 메모가 접혀 들어갈 수 있어서 이름 비교가 어긋난다.
+    item = await db.get(EnvItem, log.env_item_id)
+    name = item.name if item is not None else log.item_name.split("(")[0]
+    if _env_key(name) not in _AWARDABLE_KEYS:
+        raise HTTPException(
+            400,
+            detail={"code": "NOT_AWARDABLE", "message": f"{name}에는 가산점을 줄 수 없습니다"},
+        )
+
+    log.bonus_points = payload.points
+    log.bonus_reason = payload.comment.strip()
+    log.bonus_by_id = current.id
+    log.bonus_at = datetime.now(KST)
+
+    # 원장 한 줄을 최종 점수로 갈아끼운다 — 0 아래로는 안 내린다
+    total = max(0, log.points + log.bonus_points)
+    event = await db.scalar(
+        select(ScoreEvent).where(
+            ScoreEvent.category == ScoreCategory.ENV,
+            ScoreEvent.source_ref_id == log.id,
+        )
+    )
+    if event is not None:
+        event.points = total
+        event.reason = f"{log.item_name} · {log.bonus_reason}"
+        # `created_by_id` 는 **안 바꾼다** — 그 일을 한 사람이 누구였는지가
+        # 원장의 뜻이다. 누가 매겼는지는 기록(`bonus_by_id`)에 남는다
+
+    # 받은 사람에게 알린다 — 점수가 바뀌었는데 아무 표시가 없으면 모른다
+    await notify(db, employee_id=log.employee_id, **ntext.env_award(name, total, log.bonus_reason))
+
+    await db.commit()
+    await db.refresh(log)
+    return log
 
 
 @router.delete("/env-logs/{log_id}", status_code=204)
