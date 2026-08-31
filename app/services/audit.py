@@ -179,6 +179,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("DELETE", "/rank-policies/{id}"): "직급 급여 기준 삭제",
     # 회원·수업
     ("POST", "/members"): "회원 등록",
+    ("DELETE", "/members/{id}"): "회원 삭제",
     ("PATCH", "/members/{id}"): "회원 정보 수정",
     ("POST", "/members/{id}/consents"): "회원 동의 기록",
     ("POST", "/registrations"): "등록권 발급",
