@@ -172,6 +172,23 @@ class MyTaskDayOut(CamelModel):
     complete: bool
 
 
+class MyTaskHistoryDay(CamelModel):
+    """한 달 내역의 하루 한 줄 — 그날 무엇을 했고 무엇을 빠뜨렸나.
+
+    **근무일만 준다.** 쉬는 날은 할 일이 없어서 빈 줄이 달력만큼 쌓인다.
+    종일 월차라 그날 것이 다음 근무일로 옮겨진 날도 뺀다(`moved_out`).
+    """
+
+    date: date
+    total: int
+    done: int
+    #: 다 했나 — 업무를 하나도 안 정한 근무일은 **누락**이다
+    complete: bool
+    #: 그날 한 것 · 못 한 것 — 이름을 그대로 싣는다 (화면에 찍히는 값이다)
+    done_tasks: list[str] = Field(default_factory=list)
+    left_tasks: list[str] = Field(default_factory=list)
+
+
 class MyTaskRosterRow(CamelModel):
     """대표·관리자가 보는 사람 한 줄 — 오늘 몇 개 중 몇 개를 했나.
 
@@ -185,6 +202,31 @@ class MyTaskRosterRow(CamelModel):
     total: int
     done: int
     complete: bool
+
+
+class MyTaskMissStaffRow(CamelModel):
+    """남이 남기고 퇴근한 것 한 줄 — 모달이 이름으로 그린다."""
+
+    employee_id: str
+    name: str
+    count: int
+
+
+class MyTaskMissAlertOut(CamelModel):
+    """앱을 열 때 띄울 **누락 경고** — 있는지 없는지를 서버가 판정한다.
+
+    앱이 "퇴근을 찍었나 + 남은 것이 있나 + 지난 근무일에도 안 했나" 를 조합하면
+    규칙이 두 곳으로 갈린다. 매시간 푸시와 **같은 함수**(`missing_now`)를 쓴다 —
+    폰은 울리는데 앱을 열면 아무것도 안 뜨는 일이 없어야 한다.
+    """
+
+    date: date
+    #: 본인이 남긴 업무 이름 — **비어 있으면 경고가 없다**
+    mine: list[str] = Field(default_factory=list)
+    #: 오늘이 마지막 기회인가 — 안 하면 내일 확정 -20 (앱이 붉게 그린다)
+    last_chance: bool = False
+    #: 남이 남긴 것 — MASTER·ADMIN 은 전 지점, 점장은 자기 지점, 그 밖은 빈 목록
+    staff: list[MyTaskMissStaffRow] = Field(default_factory=list)
 
 
 class MyTaskExcuseCreate(CamelModel):

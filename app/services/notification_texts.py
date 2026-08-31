@@ -331,6 +331,25 @@ def peer_review_due(period: str, remaining: int, last_day: bool) -> dict:
     }
 
 
+def peer_review_done(name: str, period: str) -> dict:
+    """대표·관리자에게 — 한 사람이 그 달 동료평가를 **다 냈다** (2026-08-31 결정).
+
+    **평가 한 건마다 보내지 않는다.** 한 사람이 여러 명을 평가하므로
+    이틀에 200건이 넘어 알림함이 도배된다. 다 낸 사람을 알려 주면
+    **누가 아직 안 냈는지**가 저절로 보인다 — 그게 챙겨야 할 값이다.
+
+    **누구를 어떻게 평가했는지는 안 싣는다.** 익명이 이 기능의 전제다
+    (`scores.py` 의 `_hides_peer`).
+    """
+    month = int(period.split("-")[1])
+    return {
+        "type": "PEER_REVIEW",
+        "title": f"{name}님이 {month}월 동료평가를 다 냈어요",
+        "body": "제출 현황은 업무 > 동료 평가에서 볼 수 있어요",
+        "link": "/work",
+    }
+
+
 def peer_review_missed(period: str, remaining: int, points: int) -> dict:
     """본인에게 — 창이 닫혔는데 안 낸 사람이 남아 감점됐다.
 

@@ -48,7 +48,8 @@ from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
 from app.services.my_tasks import due_tasks
 from app.services.notifications import (
-    master_ids,
+    boss_ids,
+    branch_manager_ids,
     notify,
     notify_bosses,
 )
@@ -356,10 +357,20 @@ async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
 
 # ---------- 근태 ----------
 async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) -> None:
-    """내 업무를 남기고 퇴근했으면 **본인과 대표에게** 알린다 (2026-08-14).
+    """내 업무를 남기고 퇴근했으면 알린다 (2026-08-14).
 
     공통 업무(환경정비)는 몇 번을 하든 자유라 누락이라는 게 없다. 내 업무는
     그날 다 해야 하는 목록이라, 안 한 채로 나가면 알려 줘야 한다.
+
+    | 받는 사람 | 무엇을 |
+    |---|---|
+    | 본인 | 남긴 업무 이름 — **여기서 한 번, 그 뒤 매시간** (`my_task_miss_reminders`) |
+    | MASTER · ADMIN | 누가 몇 개를 남겼는지 — **여기서 한 번뿐이다** |
+    | 그 사람 지점의 **점장** | 같음 |
+
+    **남의 누락은 한 번만 간다** (2026-08-31 대표 결정). 매시간 보내면 세 명이
+    누락한 날 대표 넷 × 24회 × 세 명이 밤새 울린다. 점장도 **본인이** 빠뜨린
+    날은 본인 자격으로 매시간 받는다.
 
     **업무를 하나도 안 정한 사람은 조용하다** — 할 일을 안 만든 것이지
     안 한 것이 아니다. 대표·관리자는 애초에 이 화면이 없어서 늘 0개다.
@@ -373,10 +384,12 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
     if not left:
         return
     await notify(db, employee_id=target.id, **ntext.my_task_missing(left))
-    # 대표에게만 — 관리자까지 받으면 매일 저녁 알림이 두 배가 된다
-    for eid in await master_ids(db):
-        if eid != target.id:
-            await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
+    # 대표·관리자 + 그 사람 지점의 점장. 겹칠 일은 없지만(점장은 MANAGER 라
+    # boss_ids 에 안 든다) 지점을 옮기는 중이면 같은 사람이 두 번 설 수 있다
+    watchers = set(await boss_ids(db, exclude=target.id))
+    watchers |= set(await branch_manager_ids(db, target.branch_id, exclude=target.id))
+    for eid in watchers:
+        await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
     request: Request,

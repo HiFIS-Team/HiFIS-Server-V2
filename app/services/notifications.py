@@ -97,6 +97,28 @@ async def branch_ids(
     return [eid for eid in rows if eid != exclude]
 
 
+async def branch_manager_ids(
+    db: AsyncSession, branch_id: str | None, *, exclude: str | None = None
+) -> list[str]:
+    """그 지점의 **점장(MANAGER)만** — 자기 지점 사람 일을 알릴 때 쓴다.
+
+    [branch_ids] 와 갈라 둔 이유: 저기는 지점 사람 **전원**(MANAGER·MEMBER)이라
+    동료 누락으로 트레이너까지 다 받는다. 점장은 챙겨야 할 자리지만 옆자리
+    동료는 아니다 (2026-08-31 대표 결정 — 개인 업무 누락).
+    """
+    if branch_id is None:
+        return []
+    rows = await db.scalars(
+        select(Employee.id).where(
+            Employee.branch_id == branch_id,
+            Employee.role == Role.MANAGER,
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    return [eid for eid in rows if eid != exclude]
+
+
 async def developer_ids(db: AsyncSession) -> list[str]:
     """서버 사고를 받는 사람 — **직군이 개발자인 재직자.**
 

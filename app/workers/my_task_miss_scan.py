@@ -17,7 +17,7 @@
     안 하면                → 화요일 이 잡이 **금요일**을 확정으로 남긴다
 ```
 
-## 어떻게 아나 — 이틀치 '안 한 것'을 겹쳐 본다
+## 어떻게 아나 — 이틀치 '안 한 것'을 겹쳐 본다 (`services/my_tasks.carried_over`)
 
 ```
 left(D)  ∩  left(D')  →  D 확정 누락        D' = D 다음 근무일
@@ -31,6 +31,10 @@ left(D)  ∩  left(D')  →  D 확정 누락        D' = D 다음 근무일
 그래서 요일 업무든 매일 업무든 똑같이 다루는 값 하나만 쓴다 — **그날 안 한 것**
 (`DueDay.left`). 그게 이틀 연속 걸리면 첫날이 확정 누락이다.
 
+**셈은 서비스가 한다.** 매시간 재촉(`my_task_miss_reminders`)이 "오늘이 마지막
+기회인가" 를 물을 때 같은 함수를 쓴다 — 여기서 따로 셈하면 재촉이 멎었는데
+점수가 깎이거나, 안 깎이는데 밤새 울린다.
+
 ## 대표·관리자는 대상이 아니다
 
 내 업무 화면이 아예 없어서 늘 0개다. 결근 알림(`absence_alerts`)과 같은
@@ -39,7 +43,6 @@ left(D)  ∩  left(D')  →  D 확정 누락        D' = D 다음 근무일
 """
 
 import logging
-from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -50,7 +53,7 @@ from app.enums import EmployeeStatus, Role, ScoreCategory
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.staff.employee import Employee
 from app.services import notification_texts as ntext
-from app.services.my_tasks import LOOKBACK, due_tasks, is_workday
+from app.services.my_tasks import CARRY_FROM, carried_over
 from app.services.notifications import notify
 from app.services.scoring import accrue_score
 
@@ -66,19 +69,10 @@ TASK_MISS_POINTS = -20
 #:
 #: 규칙이 없던 때의 누락까지 거슬러 깎으면 몰랐던 일로 점수와 급여가 깎인다.
 #: 점장 기본급 차감(`services/payroll.py`)도 같은 날부터 센다.
-STARTS_ON = date(2026, 9, 1)
-
-
-def _prev_workday(person: Employee, day: date) -> date | None:
-    """[day] 바로 앞의 근무일 — 없으면 `None`.
-
-    쉬는 날은 건너뛴다. 기회를 쓰는 날은 근무일뿐이라 그렇다.
-    """
-    for back in range(1, LOOKBACK + 1):
-        d = day - timedelta(days=back)
-        if is_workday(person, d):
-            return d
-    return None
+#:
+#: **밀어 오는 기준(`services/my_tasks.CARRY_FROM`)과 같은 값이다.** 데려오지도
+#: 않는 날을 감점하거나, 데려와 놓고 감점을 안 하면 어긋난다 — 한 자리에서 가져온다.
+STARTS_ON = CARRY_FROM
 
 
 async def my_task_miss_scan(now: datetime | None = None) -> None:
@@ -100,34 +94,15 @@ async def my_task_miss_scan(now: datetime | None = None) -> None:
                 )
             )
         )
-        # 어제가 근무일인 사람만 — 쉬는 날은 기회를 안 쓴 날이다
-        graced = [p for p in people if is_workday(p, yesterday)]
-        if not graced:
-            return
-
-        # 그 앞 근무일이 사람마다 다르다 (근무 요일이 다르므로). 같은 날끼리
-        # 묶어서 질의를 몇 개로 줄인다 — 사람마다 부르면 23명이면 23번이다
-        by_prev: dict[date, list[Employee]] = defaultdict(list)
-        for person in graced:
-            prev = _prev_workday(person, yesterday)
-            if prev is not None and prev >= STARTS_ON:
-                by_prev[prev].append(person)
-        if not by_prev:
-            return
-
-        left_yesterday = {
-            pid: {t.id for t in day.left}
-            for pid, day in (await due_tasks(db, graced, yesterday, today=yesterday)).items()
-        }
-
-        #: (사람, 누락한 날) → 그날 안 한 업무 이름들
-        found: list[tuple[Employee, date, list[str]]] = []
-        for prev, group in by_prev.items():
-            for pid, day in (await due_tasks(db, group, prev, today=prev)).items():
-                still = [t for t in day.left if t.id in left_yesterday.get(pid, set())]
-                if still:
-                    person = next(p for p in group if p.id == pid)
-                    found.append((person, prev, [t.content for t in still]))
+        # **판정은 서비스가 한다** (`services/my_tasks.py`). 매시간 재촉이 같은
+        # 함수를 쓴다 — 여기서 따로 셈하면 재촉이 멎었는데 점수가 깎인다
+        by_id = {p.id: p for p in people}
+        found: list[tuple[Employee, date, list[str]]] = [
+            (by_id[pid], c.since, [t.content for t in c.tasks])
+            for pid, c in (await carried_over(db, people, yesterday)).items()
+            # 규칙이 없던 때의 누락까지 거슬러 깎지 않는다
+            if c.since >= STARTS_ON
+        ]
         if not found:
             return
 

@@ -25,6 +25,8 @@ from app.services.peer_reviews import (
     open_period,
     review_targets,
 )
+from app.services import notification_texts as ntext
+from app.services.notifications import notify_bosses
 from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/peer-reviews", tags=["peer-reviews"])
@@ -132,6 +134,12 @@ async def create_peer_review(
         period=payload.period,
         reason="동료평가",
     )
+    # **다 낸 사람만** 대표·관리자에게 알린다 (2026-08-31 결정).
+    #
+    # 한 건마다 보내면 이틀에 200건이 넘는다 (사람마다 여러 명을 평가한다).
+    # 같은 사람이 두 번 낼 수는 없으므로(위 409) 이 자리는 한 번만 지나간다.
+    if not await missing_targets(db, current, period):
+        await notify_bosses(db, exclude=current.id, **ntext.peer_review_done(current.name, period))
     await db.commit()
     await db.refresh(review)
     return _to_out(review)
