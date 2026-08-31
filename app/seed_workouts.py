@@ -104,8 +104,7 @@ _PERSONAL = [
 def _weights(rows: list[tuple[str, str, str, str]]) -> list[dict]:
     # `l` 은 ruff E741 (1·I 와 헷갈리는 이름) — 무게 칸이라 load 로 쓴다
     return [
-        {"part": part, "name": name, "load": load, "sets": sets}
-        for part, name, load, sets in rows
+        {"part": part, "name": name, "load": load, "sets": sets} for part, name, load, sets in rows
     ]
 
 
