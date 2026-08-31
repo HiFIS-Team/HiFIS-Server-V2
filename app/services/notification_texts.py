@@ -204,15 +204,26 @@ def payslip_paid(year_month: str) -> dict:
 
 
 def payday_today(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "오늘 급여를 신청해 주세요", "body": f"{year_month} 급여 지급일이에요", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "오늘은 급여 신청 날이에요", "body": f"{year_month} 급여 지급일이에요", "link": "/payroll"}
 
 
 def payday_tomorrow(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "내일이 급여 신청일이에요", "body": f"{year_month} 급여를 미리 확인해 두세요", "link": "/payroll"}
+    return {"type": "PAYROLL", "title": "내일은 급여 신청 날이에요", "body": f"{year_month} 급여를 미리 확인해 두세요", "link": "/payroll"}
 
 
-def payday_deadline(year_month: str) -> dict:
-    return {"type": "PAYROLL", "title": "오늘 20시까지 신청해 주세요", "body": f"{year_month} 급여를 아직 안 냈어요", "link": "/payroll"}
+def payslip_submitted(name: str, year_month: str, net: int) -> dict:
+    """직원이 급여를 냈다 — **대표에게** (2026-08-31 대표 요청).
+
+    급여만 신청 알림이 없었다. 월차·전자결재·일정·프로젝트·컴플레인은 다
+    올라오면 알려 주는데 급여는 홈 결재함을 직접 열어야 알 수 있었고,
+    **지급일 당일에만 낼 수 있어서** 그날 못 보면 그날 결재가 통째로 밀린다.
+    """
+    return {
+        "type": "PAYROLL",
+        "title": "급여 신청이 올라왔어요",
+        "body": f"{name} · {year_month} 실수령 {net:,}원",
+        "link": "/payroll",
+    }
 
 
 # ── 일정 ──

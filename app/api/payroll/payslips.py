@@ -25,7 +25,7 @@ from app.schemas.payroll.payslip import (
     PayslipSubmit,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify
+from app.services.notifications import master_ids, notify
 from app.services.payroll import (
     NoScheduleError,
     apply_incentive_override,
@@ -218,6 +218,14 @@ async def submit_my_payslip(
     payslip.reject_reason = None
     payslip.decided_at = None
     payslip.decided_by_id = None
+    # **대표에게 알린다** — 급여만 신청 알림이 없었다 (2026-08-31 대표 요청).
+    # 지급일 당일에만 낼 수 있어서 그날 못 보면 그날 결재가 통째로 밀린다.
+    for eid in await master_ids(db, exclude=current.id):
+        await notify(
+            db,
+            employee_id=eid,
+            **ntext.payslip_submitted(current.name, payload.year_month, payslip.net),
+        )
     await db.commit()
     await db.refresh(payslip)
     return payslip
