@@ -157,12 +157,35 @@ async def create_workout(
 
 
 async def _next_session_no(db: AsyncSession, member_id: str) -> int:
-    used = await db.scalar(
+    """이번에 쓸 PT 일지 회차 — **이미 받은 싸인과 이미 쓴 일지 중 큰 쪽 다음**.
+
+    일지 번호만 보면 **일지가 생기기 전부터 있던 회원이 통째로 막힌다.**
+    14회를 이미 받은 회원은 일지가 0장이라 여기서 1을 주는데, 싸인을 찍을 때는
+    `_require_workout` 이 누적 회차 다음인 **15회차** 일지를 찾는다. 그래서
+    일지를 써도 싸인이 안 열리고, 2·3회차를 더 써도 영영 안 맞는다
+    (2026-08-31 대표가 짚었다 — 운영 회원 전부가 이 상태다).
+
+    | | 누적 싸인 | 일지 최대 | 이번 회차 |
+    |---|---|---|---|
+    | 옛 회원 (일지 없음) | 14 | 0 | **15** |
+    | 평소 (싸인까지 끝남) | 7 | 7 | 8 |
+    | 미리 써 둔 경우 | 6 | 7 | 8 |
+
+    **재등록은 안 가른다.** 싸인은 등록권마다 1 부터 다시 세지만(남은 회차를
+    세는 값이라 그게 맞다) 일지는 회원 평생 번호라 이어진다. 그 사이는
+    `_require_workout` 이 옮겨 담는다.
+    """
+    signed = await db.scalar(
+        select(func.coalesce(func.sum(Registration.used_sessions), 0)).where(
+            Registration.member_id == member_id
+        )
+    )
+    written = await db.scalar(
         select(func.coalesce(func.max(WorkoutLog.session_no), 0)).where(
             WorkoutLog.member_id == member_id, WorkoutLog.kind == WorkoutKind.PT
         )
     )
-    return int(used or 0) + 1
+    return max(int(signed or 0), int(written or 0)) + 1
 
 
 @router.get("/{workout_id}", response_model=WorkoutLogOut)
