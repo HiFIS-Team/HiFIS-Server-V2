@@ -25,17 +25,28 @@ from app.models.staff.employee import Employee
 #: 하루만 걸리고 다음 달 이벤트가 곧바로 시작된다.
 DRAW_DAY = 1
 
+#: 첫 이벤트가 열린 달 — [GAME_ROTATION] 을 여기서부터 센다
+FIRST_PERIOD = "2026-09"
+
 #: 그 달에 트는 게임 — **달마다 돌아가며 바뀐다** (2026-09-01 대표 요청).
 #:
-#: 첫 달(2026-09)이 핀볼이다. 새 게임을 만들면 [DrawGame] 에 한 줄 더하고
-#: 여기 차례에 끼워 넣는다. 클라이언트가 이 값으로 장면을 고른다.
-GAME_ROTATION = (DrawGame.PINBALL, DrawGame.LADDER, DrawGame.ROULETTE)
+#: **화면이 있는 것만 넣는다.** 여기 값이 곧 클라이언트가 고르는 장면이라,
+#: 안 만든 게임을 넣어 두면 그 달에 TV 가 빈 화면이 된다.
+#: `DrawGame.LADDER`·`ROULETTE` 는 아직 화면이 없어서 빠져 있다.
+GAME_ROTATION = (DrawGame.RACE, DrawGame.PINBALL)
 
 
 def game_of(period: str) -> DrawGame:
-    """그 달에 트는 게임 — 달이 지날수록 [GAME_ROTATION] 을 한 칸씩 돈다."""
+    """그 달에 트는 게임 — [FIRST_PERIOD] 부터 한 달에 한 칸씩 돈다.
+
+    **기준 달을 두는 이유** — `연*12+월` 을 그냥 나누면 첫 달에 뭐가 걸릴지를
+    사람이 계산해 봐야 안다. 여기서부터 세면 `GAME_ROTATION` 의 차례가 곧
+    9월·10월·11월 순서다.
+    """
+    y0, m0 = int(FIRST_PERIOD[:4]), int(FIRST_PERIOD[5:7])
     year, month = int(period[:4]), int(period[5:7])
-    return GAME_ROTATION[(year * 12 + month) % len(GAME_ROTATION)]
+    gap = (year - y0) * 12 + (month - m0)
+    return GAME_ROTATION[gap % len(GAME_ROTATION)]
 
 
 def source_period(period: str) -> str:

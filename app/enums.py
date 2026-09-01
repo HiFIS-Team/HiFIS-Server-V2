@@ -207,9 +207,10 @@ class DrawGame(StrEnum):
     만들면 여기에 한 줄 더하고 클라이언트에 장면을 하나 얹으면 된다.
     """
 
-    PINBALL = "PINBALL"    # 핀볼 — 공이 굴러 당첨 칸에 떨어진다
-    LADDER = "LADDER"      # 사다리 타기
-    ROULETTE = "ROULETTE"  # 룰렛
+    RACE = "RACE"          # 구슬 레이스 — 참가자 수만큼 달리고 1등이 당첨
+    PINBALL = "PINBALL"    # 핀볼 — 공 하나가 굴러 당첨 칸에 떨어진다
+    LADDER = "LADDER"      # 사다리 타기 — **아직 화면이 없다**
+    ROULETTE = "ROULETTE"  # 룰렛 — **아직 화면이 없다**
 
 
 class ComplaintStatus(StrEnum):

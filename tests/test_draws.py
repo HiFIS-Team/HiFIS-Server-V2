@@ -5,7 +5,7 @@
     | 대상 | **전달**에 친절도 설문을 낸 회원 (8월 설문 → 9월 추첨) |
     | 뽑는 날 | 매월 1일, 잡이 자동으로 |
     | 이름 | 가운데를 가린다 (`김은후` → `김○후`) |
-    | 첫 게임 | 핀볼 |
+    | 첫 게임 | 구슬 레이스 |
 
 깨지면 고치기 전에 의도한 변경인지 먼저 확인한다. 이 값들이 매장 벽에
 걸리는 화면을 정한다.
@@ -19,6 +19,7 @@ from app.core.periods import KST
 from app.enums import DrawGame
 from app.services.draws import (
     DRAW_DAY,
+    GAME_ROTATION,
     draw_period,
     game_of,
     mask_name,
@@ -64,16 +65,24 @@ class Test이름가리기:
 
 
 class Test게임차례:
-    def test_첫_달은_핀볼이다(self):
+    def test_첫_달은_구슬_레이스다(self):
         # 2026-09 가 첫 이벤트다 (2026-09-01 대표 결정)
-        assert game_of("2026-09") is DrawGame.PINBALL
+        assert game_of("2026-09") is DrawGame.RACE
 
     def test_달마다_바뀐다(self):
-        games = [game_of(f"2026-{m:02d}") for m in (9, 10, 11)]
-        assert len(set(games)) == 3
+        assert game_of("2026-10") is not game_of("2026-09")
 
     def test_한_바퀴_돌면_되돌아온다(self):
-        assert game_of("2026-09") is game_of("2026-12")
+        n = len(GAME_ROTATION)
+        assert game_of("2026-09") is game_of(f"2026-{9 + n:02d}")
+
+    def test_해를_넘겨도_차례가_안_끊긴다(self):
+        assert game_of("2027-01") is GAME_ROTATION[4 % len(GAME_ROTATION)]
+
+    def test_화면이_있는_게임만_돈다(self):
+        """안 만든 게임을 넣어 두면 그 달에 TV 가 빈 화면이 된다."""
+        assert DrawGame.LADDER not in GAME_ROTATION
+        assert DrawGame.ROULETTE not in GAME_ROTATION
 
 
 class Test추첨달판정:
