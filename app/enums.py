@@ -247,12 +247,17 @@ class ContribType(StrEnum):
 class VisitPath(StrEnum):
     """회원이 어떻게 알고 왔나 — 회원 등록 때 받는다 (§3.1).
 
-    **뒤 셋만 점수를 준다** (`VISIT_PATH_SCORE`). 워크인·지인소개는 직원이
-    끌어온 것이 아니라서 뺀다.
+    **점수는 블로그·인스타·OT→PT 셋만 준다** (`VISIT_PATH_SCORE`).
+    워크인·지인소개는 직원이 끌어온 것이 아니라서 뺀다 — **개인영업도 아직
+    안 준다** (점수를 줄지는 정해진 바가 없다. 요율만 재등록으로 간다).
     """
 
     WALK_IN = "WALK_IN"      # 워크인 — 점수 없음
-    REFERRAL = "REFERRAL"    # 지인소개 — 점수 없음
+    REFERRAL = "REFERRAL"    # 지인소개 (회원이 데려옴) — 점수 없음
+    #: 개인영업 — **트레이너가 직접 딴 것** (2026-09-01 대표 요청).
+    #: 지인소개와 다르다: 저쪽은 기존 회원이 데려온 것이라 소개자가 있고,
+    #: 이쪽은 트레이너의 영업이라 소개자가 없다. 요율은 둘 다 재등록(50%)이다.
+    SALES = "SALES"          # 개인영업
     BLOG = "BLOG"            # 블로그
     INSTAGRAM = "INSTAGRAM"  # 인스타
     OT_TO_PT = "OT_TO_PT"    # OT → PT 전환

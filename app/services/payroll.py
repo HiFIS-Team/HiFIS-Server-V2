@@ -65,11 +65,10 @@ RENEWAL_RATE_THRESHOLD = 3_000_000
 
 #: 명세서 근거 줄에 적을 유입 이름 — 앱의 `VisitPath.label` 과 같은 글자다
 #:
-#: **`REFERRAL` 을 `개인영업` 으로 적는다** (2026-09-01 대표 표현). 앱 고르개는
-#: 아직 `지인소개` 라 글자가 갈리는데, 화면 문구를 바꾸는 것은 따로 여쭐 일이다.
 VISIT_PATH_LABEL: dict[VisitPath, str] = {
     VisitPath.WALK_IN: "워크인",
-    VisitPath.REFERRAL: "개인영업",
+    VisitPath.REFERRAL: "지인소개",
+    VisitPath.SALES: "개인영업",
     VisitPath.BLOG: "블로그",
     VisitPath.INSTAGRAM: "인스타",
     VisitPath.OT_TO_PT: "OT→PT",
