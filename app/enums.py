@@ -200,6 +200,18 @@ class HalfPeriod(StrEnum):
     PM = "PM"  # 오후 반차
 
 
+class DrawGame(StrEnum):
+    """매장 TV 추첨을 굴려 보여주는 게임 (2026-09-01 대표 결정).
+
+    **달마다 하나씩 바꾼다.** 값이 곧 화면이 고르는 장면 이름이라, 새 게임을
+    만들면 여기에 한 줄 더하고 클라이언트에 장면을 하나 얹으면 된다.
+    """
+
+    PINBALL = "PINBALL"    # 핀볼 — 공이 굴러 당첨 칸에 떨어진다
+    LADDER = "LADDER"      # 사다리 타기
+    ROULETTE = "ROULETTE"  # 룰렛
+
+
 class ComplaintStatus(StrEnum):
     """친절 설문의 '개선했으면 하는 부분' 처리 단계 (§4.5).
 

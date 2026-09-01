@@ -23,11 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
+from app.core.periods import now_kst
 from app.enums import ComplaintStatus
+from app.models.platform.draw import Draw
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.base import CamelModel
+from app.services.draws import draw_period, mask_name, mask_phone
 
 router = APIRouter(tags=["tv"])
 
@@ -52,6 +55,36 @@ class TvOut(CamelModel):
     resolved: list[ResolvedOut]
 
 
+class EntryOut(CamelModel):
+    """추첨 참가자 한 명 — **가린 이름만** 나간다.
+
+    화면이 칸마다 이름을 적어야 해서 참가자를 다 내보낸다. 그래서 원문 이름과
+    전화번호는 절대 실지 않는다 — 벽에 걸린 주소를 아는 사람이 그 달 설문을
+    낸 회원 명단을 통째로 보게 된다.
+
+    같은 이름이 둘일 때를 위해 번호 뒤 네 자리를 붙여 준다 (`···1234`).
+    """
+
+    name: str
+    phone: str
+
+
+class DrawOut(CamelModel):
+    """그 달 추첨 — 매장 TV 가 게임으로 굴린다.
+
+    **당첨자는 이미 정해져 있다** (`winnerIndex`). 화면은 공이 그 칸에
+    떨어지도록 연출할 뿐이고, `seed` 는 굴러가는 모양만 정한다. 그래서
+    TV 를 껐다 켜도 같은 공이 같은 길로 굴러 같은 사람에게 떨어진다.
+    """
+
+    period: str
+    game: str
+    seed: str
+    entries: list[EntryOut]
+    #: 참가자가 없으면 null — 그 달 설문이 한 건도 없던 지점이다
+    winner_index: int | None = None
+
+
 async def _branch_of(token: str, db: AsyncSession) -> Branch:
     branch = await db.scalar(select(Branch).where(Branch.tv_token == token))
     if branch is None:
@@ -70,6 +103,37 @@ async def tv_page(token: str) -> RedirectResponse:
     """
     base = settings.public_base_url.rstrip("/")
     return RedirectResponse(f"{base}/tv/{token}", status_code=308)
+
+
+@router.get("/tv/{token}/draw", response_model=DrawOut)
+async def tv_draw(token: str, db: AsyncSession = Depends(get_db)) -> DrawOut:
+    """그 달 추첨 결과 — **읽기만 한다. 여기서 뽑지 않는다.**
+
+    뽑는 것은 매월 1일에 도는 잡이다 (`workers/monthly_draw.py`). 화면이 열릴
+    때 뽑게 두면 **TV 를 새로고침할 때마다 당첨자가 바뀐다.**
+
+    아직 안 뽑힌 달이면 404 다 — 화면은 그때 게임을 안 틀고 컴플레인만
+    보여주면 된다.
+    """
+    branch = await _branch_of(token, db)
+    period = draw_period(now_kst())
+    draw = await db.scalar(
+        select(Draw).where(Draw.branch_id == branch.id, Draw.period == period)
+    )
+    if draw is None:
+        raise HTTPException(
+            404, detail={"code": "DRAW_NOT_FOUND", "message": "이번 달 추첨이 아직 없습니다"}
+        )
+    return DrawOut(
+        period=draw.period,
+        game=str(draw.game),
+        seed=draw.seed,
+        entries=[
+            EntryOut(name=mask_name(e.get("name", "")), phone=mask_phone(e.get("phone", "")))
+            for e in draw.entries
+        ],
+        winner_index=draw.winner_index,
+    )
 
 
 @router.get("/tv/{token}/resolved", response_model=TvOut)
