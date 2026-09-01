@@ -23,6 +23,7 @@ from app.enums import (
     Rank,
     RegistrationType,
     Role,
+    VisitPath,
 )
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.staff.employee import Employee
@@ -61,6 +62,18 @@ LONGTERM_CARE_RATE = 0.1295  # 장기요양 = 건강보험료 × 12.95%
 #: 달이 바뀌면 저절로 리셋된다. [build_payslip_data] 가 주기마다 그 주기
 #: 싸인만 다시 세기 때문에 따로 지울 상태가 없다.
 RENEWAL_RATE_THRESHOLD = 3_000_000
+
+#: 명세서 근거 줄에 적을 유입 이름 — 앱의 `VisitPath.label` 과 같은 글자다
+#:
+#: **`REFERRAL` 을 `개인영업` 으로 적는다** (2026-09-01 대표 표현). 앱 고르개는
+#: 아직 `지인소개` 라 글자가 갈리는데, 화면 문구를 바꾸는 것은 따로 여쭐 일이다.
+VISIT_PATH_LABEL: dict[VisitPath, str] = {
+    VisitPath.WALK_IN: "워크인",
+    VisitPath.REFERRAL: "개인영업",
+    VisitPath.BLOG: "블로그",
+    VisitPath.INSTAGRAM: "인스타",
+    VisitPath.OT_TO_PT: "OT→PT",
+}
 
 _POLICY_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 BASE_RANK_POLICIES: dict[Rank, tuple[int, float, float]] = {
@@ -452,8 +465,19 @@ async def build_payslip_data(
     # 달력 월이 아니라 **그 사람의 급여 주기**로 센다 (익월 10일이면 전월10~당월9)
     start, end = payroll_window(year_month, payday)
     # PT 커미션 = 이 트레이너가 **수행한 세션 싸인마다** (한 회 단가 × 요율).
-    # 한 회 단가 = 등록 결제액 ÷ 총 회차. 지인소개(회원 소개자 있음)면 무조건 재등록요율(50%),
-    # 아니면 워크인(NEW)=신규요율(40%) / 재등록(RENEWAL)=재등록요율(50%).
+    # 한 회 단가 = 등록 결제액 ÷ 총 회차.
+    #
+    # **워크인만 신규 요율(40%)이다** (2026-09-01 대표 결정). 나머지는 다
+    # 재등록 요율(50%) — 직원이 끌어온 유입이라 워크인과 값이 다르다.
+    #
+    # | 무엇 | 요율 |
+    # |---|---|
+    # | 워크인 (또는 방문 경로를 안 적은 옛 회원) | 신규 40% |
+    # | 개인영업(지인소개) · 블로그 · 인스타 · OT→PT | 재등록 50% |
+    # | 재등록 | 재등록 50% |
+    #
+    # 소개자(`referrer_member_id`)가 있으면 방문 경로와 무관하게 50% 다 —
+    # 예전부터 그랬고, 여기서 빼면 이미 그렇게 받던 사람의 몫이 준다.
     signs = (
         await db.execute(
             select(SessionSign)
@@ -483,21 +507,28 @@ async def build_payslip_data(
         member = mem_cache[reg.member_id]
         per_session = round(reg.price_paid / reg.total_sessions)
         referral = member is not None and member.referrer_member_id is not None
-        if referral:
-            kind = "지인소개"
-        elif reg.type == RegistrationType.NEW:
-            kind = "워크인"
-        else:
+        path = member.visit_path if member is not None else None
+        renewal = reg.type == RegistrationType.RENEWAL
+        # 방문 경로가 워크인이 **아니면** 직원이 끌어온 것이다.
+        # 안 적힌 옛 회원(None)은 워크인으로 본다 — 그때는 이 칸이 없었다
+        earned = path is not None and path is not VisitPath.WALK_IN
+        if renewal:
             kind = "재등록"
+        elif earned:
+            kind = VISIT_PATH_LABEL[path]
+        elif referral:
+            kind = "지인소개"
+        else:
+            kind = "워크인"
         item = {
             "member_name": member.name if member else "?",
             "pkg": f"{sign.session_no}회차 · {kind}",
             "amount": per_session,
         }
-        if referral or reg.type == RegistrationType.RENEWAL:
+        if renewal or earned or referral:
             renewal_items.append(item)
             renewal_base += per_session
-        else:  # 워크인 (NEW · 소개 없음)
+        else:  # 워크인 — 방문 경로가 워크인이거나 안 적혔고 소개자도 없다
             new_items.append(item)
             new_base += per_session
 
