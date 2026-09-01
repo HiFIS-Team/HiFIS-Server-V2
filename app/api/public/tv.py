@@ -72,17 +72,18 @@ class EntryOut(CamelModel):
 class DrawOut(CamelModel):
     """그 달 추첨 — 매장 TV 가 게임으로 굴린다.
 
-    **당첨자는 이미 정해져 있다** (`winnerIndex`). 화면은 공이 그 칸에
-    떨어지도록 연출할 뿐이고, `seed` 는 굴러가는 모양만 정한다. 그래서
-    TV 를 껐다 켜도 같은 공이 같은 길로 굴러 같은 사람에게 떨어진다.
+    **당첨자는 이미 정해져 있다** (`winnerIndexes`, 세 명). 화면은 그 셋이
+    1·2·3등이 되도록 이름을 붙일 뿐이고, `seed` 는 굴러가는 모양만 정한다.
+    그래서 TV 를 껐다 켜도 같은 공이 같은 길로 굴러 같은 사람에게 떨어진다.
     """
 
     period: str
     game: str
     seed: str
     entries: list[EntryOut]
-    #: 참가자가 없으면 null — 그 달 설문이 한 건도 없던 지점이다
-    winner_index: int | None = None
+    #: 참가자가 없으면 빈 배열 — 그 달 설문이 한 건도 없던 지점이다.
+    #: 셋보다 적게 냈으면 그만큼만 들어 있다.
+    winner_indexes: list[int] = []
 
 
 async def _branch_of(token: str, db: AsyncSession) -> Branch:
@@ -132,7 +133,7 @@ async def tv_draw(token: str, db: AsyncSession = Depends(get_db)) -> DrawOut:
             EntryOut(name=mask_name(e.get("name", "")), phone=mask_phone(e.get("phone", "")))
             for e in draw.entries
         ],
-        winner_index=draw.winner_index,
+        winner_indexes=list(draw.winner_indexes or []),
     )
 
 

@@ -39,7 +39,7 @@ async def draw_for(db: AsyncSession, branch: Branch, period: str) -> Draw | None
         game=game_of(period),
         seed=new_seed(),
         entries=entries,
-        winner_index=pick(entries),
+        winner_indexes=pick(entries),
     )
     db.add(draw)
     return draw
@@ -55,11 +55,12 @@ async def monthly_draw() -> None:
             draw = await draw_for(db, branch, period)
             if draw is not None:
                 log.info(
-                    "추첨 %s %s — 참가 %d명, 당첨 %s",
+                    "추첨 %s %s — 참가 %d명, 당첨 %d명 %s",
                     branch.name,
                     period,
                     len(draw.entries),
-                    draw.winner_index,
+                    len(draw.winner_indexes or []),
+                    draw.winner_indexes,
                 )
         await db.commit()
 

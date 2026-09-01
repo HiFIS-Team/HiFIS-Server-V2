@@ -133,14 +133,24 @@ async def pool(db: AsyncSession, branch_id: str, period: str) -> list[dict]:
     return entries
 
 
-def pick(entries: list[dict]) -> int | None:
-    """당첨자를 고른다 — **`secrets` 로 뽑는다.**
+#: 한 달에 몇 명을 뽑나 (2026-09-01 대표 결정)
+WINNERS = 3
+
+
+def pick(entries: list[dict], count: int = WINNERS) -> list[int]:
+    """당첨자를 고른다 — **`secrets` 로 [WINNERS] 명을 겹치지 않게.**
 
     시드로 뽑지 않는다. 시드는 화면이 굴러가는 모양만 정하고, 당첨은 여기서
     안전하게 정해 행에 박는다. 둘을 섞으면 "화면을 다시 틀면 다른 사람이
     당첨" 이 되거나 "시드를 아는 사람이 결과를 미리 안다" 가 된다.
+
+    **참가자가 모자라면 있는 만큼만** 뽑는다 — 두 명이 냈으면 두 명이다.
     """
-    return secrets.randbelow(len(entries)) if entries else None
+    left = list(range(len(entries)))
+    out: list[int] = []
+    for _ in range(min(count, len(left))):
+        out.append(left.pop(secrets.randbelow(len(left))))
+    return out
 
 
 def new_seed() -> str:

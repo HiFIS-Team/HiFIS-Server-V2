@@ -18,6 +18,7 @@ import pytest
 from app.core.periods import KST
 from app.enums import DrawGame
 from app.services.draws import (
+    WINNERS,
     DRAW_DAY,
     GAME_ROTATION,
     draw_period,
@@ -108,18 +109,34 @@ class Test추첨달판정:
 
 class Test당첨자뽑기:
     def test_참가자가_없으면_안_뽑는다(self):
-        assert pick([]) is None
+        assert pick([]) == []
 
-    def test_한_명이면_그_사람이다(self):
-        assert pick([{"name": "김은후"}]) == 0
+    def test_한_명이면_그_사람만(self):
+        """셋을 뽑으랬다고 없는 사람을 만들지 않는다."""
+        assert pick([{"name": "김은후"}]) == [0]
 
-    def test_늘_명단_안에서_나온다(self):
+    def test_세_명을_뽑는다(self):
         people = [{"name": str(i)} for i in range(7)]
         for _ in range(200):
-            assert 0 <= pick(people) < 7
+            got = pick(people)
+            assert len(got) == WINNERS
+            assert all(0 <= i < 7 for i in got)
+
+    def test_같은_사람을_두_번_안_뽑는다(self):
+        """세 자리에 같은 사람이 들어가면 그 사람이 1등이자 2등이 된다."""
+        people = [{"name": str(i)} for i in range(4)]
+        for _ in range(300):
+            got = pick(people)
+            assert len(set(got)) == len(got)
 
     def test_한_사람에게_몰리지_않는다(self):
-        """`secrets` 로 뽑는다 — 200번에 한 사람만 나오면 뽑는 게 아니다."""
+        """`secrets` 로 뽑는다 — 200번에 늘 같은 사람이면 뽑는 게 아니다."""
         people = [{"name": str(i)} for i in range(5)]
-        got = {pick(people) for _ in range(200)}
+        got = {i for _ in range(200) for i in pick(people)}
         assert len(got) == 5
+
+    def test_1등_자리도_고루_돈다(self):
+        """차례가 곧 1·2·3등이라 첫 칸이 굳으면 안 된다."""
+        people = [{"name": str(i)} for i in range(5)]
+        first = {pick(people)[0] for _ in range(200)}
+        assert len(first) == 5

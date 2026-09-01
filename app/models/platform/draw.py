@@ -55,5 +55,8 @@ class Draw(UUIDMixin, TimestampMixin, Base):
     #: 같은 사람이 여러 번 냈어도 **한 줄이다** (이름·전화로 묶는다).
     entries: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
 
-    #: 당첨자가 [entries] 의 몇 번째인가 — 참가자가 없으면 null
-    winner_index: Mapped[int | None] = mapped_column(nullable=True)
+    #: 당첨자들이 [entries] 의 몇 번째인가 — **세 명이다** (2026-09-01 대표 결정).
+    #:
+    #: 참가자가 셋보다 적으면 그만큼만 들어가고, 한 명도 없으면 빈 배열이다.
+    #: 순서가 곧 게임의 1·2·3등 자리다 — 화면이 그 차례로 붙인다.
+    winner_indexes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
