@@ -42,6 +42,7 @@ GAME_ROTATION = (
     DrawGame.HOOPS,    # 2026-10
     DrawGame.SOCCER,   # 2026-11
     DrawGame.PINBALL,  # 2026-12
+    DrawGame.CLAW,     # 2027-01
 )
 
 
