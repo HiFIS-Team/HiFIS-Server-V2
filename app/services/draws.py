@@ -43,6 +43,7 @@ GAME_ROTATION = (
     DrawGame.SOCCER,   # 2026-11
     DrawGame.PINBALL,  # 2026-12
     DrawGame.CLAW,     # 2027-01
+    DrawGame.SUMO,     # 2027-02
 )
 
 

@@ -212,7 +212,8 @@ class DrawGame(StrEnum):
     SOCCER = "SOCCER"      # 축구 슛 — 골키퍼 장갑 둘을 뚫고 3골을 먼저 넣으면 당첨
     PINBALL = "PINBALL"    # 핀볼 — 공 하나가 굴러 당첨 칸에 떨어진다
     CLAW = "CLAW"          # 뽑기 기계 — 집게가 몇 번 놓치다 문 캡슐이 당첨
-    LADDER = "LADDER"      # 사다리 타기 — **아직 화면이 없다**
+    SUMO = "SUMO"          # 밀어내기 — 판 밖으로 밀려나고 마지막까지 남으면 당첨
+    LADDER = "LADDER"      # 사다리 타기 — **안 만들기로 했다** (선을 긋는 순간 결과가 정해진다)
     ROULETTE = "ROULETTE"  # 룰렛 — **아직 화면이 없다**
 
 
