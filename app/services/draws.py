@@ -33,7 +33,7 @@ FIRST_PERIOD = "2026-09"
 #: **화면이 있는 것만 넣는다.** 여기 값이 곧 클라이언트가 고르는 장면이라,
 #: 안 만든 게임을 넣어 두면 그 달에 TV 가 빈 화면이 된다.
 #: `DrawGame.LADDER`·`ROULETTE` 는 아직 화면이 없어서 빠져 있다.
-GAME_ROTATION = (DrawGame.RACE, DrawGame.PINBALL)
+GAME_ROTATION = (DrawGame.RACE, DrawGame.HOOPS, DrawGame.PINBALL)
 
 
 def game_of(period: str) -> DrawGame:

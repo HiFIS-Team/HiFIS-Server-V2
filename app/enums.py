@@ -208,6 +208,7 @@ class DrawGame(StrEnum):
     """
 
     RACE = "RACE"          # 구슬 레이스 — 참가자 수만큼 달리고 1등이 당첨
+    HOOPS = "HOOPS"        # 농구 슛 — 한꺼번에 던져 3골을 먼저 넣으면 당첨
     PINBALL = "PINBALL"    # 핀볼 — 공 하나가 굴러 당첨 칸에 떨어진다
     LADDER = "LADDER"      # 사다리 타기 — **아직 화면이 없다**
     ROULETTE = "ROULETTE"  # 룰렛 — **아직 화면이 없다**
