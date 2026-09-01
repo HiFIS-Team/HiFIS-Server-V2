@@ -210,7 +210,8 @@ class DrawGame(StrEnum):
     RACE = "RACE"          # 구슬 레이스 — 참가자 수만큼 달리고 1등이 당첨
     HOOPS = "HOOPS"        # 농구 슛 — 한꺼번에 던져 3골을 먼저 넣으면 당첨
     SOCCER = "SOCCER"      # 축구 슛 — 골키퍼 장갑 둘을 뚫고 3골을 먼저 넣으면 당첨
-    PINBALL = "PINBALL"    # 핀볼 — 공 하나가 굴러 당첨 칸에 떨어진다
+    CURLING = "CURLING"    # 컬링 — 한 명씩 던져 버튼에 제일 가까운 돌이 당첨
+    PINBALL = "PINBALL"    # 핀볼 — **차례에서 뺐다** (공 하나뿐이라 뒤집힘이 없다)
     CLAW = "CLAW"          # 뽑기 기계 — 집게가 몇 번 놓치다 문 캡슐이 당첨
     SUMO = "SUMO"          # 밀어내기 — 판 밖으로 밀려나고 마지막까지 남으면 당첨
     LADDER = "LADDER"      # 사다리 타기 — **안 만들기로 했다** (선을 긋는 순간 결과가 정해진다)

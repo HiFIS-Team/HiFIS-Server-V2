@@ -32,7 +32,9 @@ FIRST_PERIOD = "2026-09"
 #:
 #: **화면이 있는 것만 넣는다.** 여기 값이 곧 클라이언트가 고르는 장면이라,
 #: 안 만든 게임을 넣어 두면 그 달에 TV 가 빈 화면이 된다.
-#: `DrawGame.LADDER`·`ROULETTE` 는 아직 화면이 없어서 빠져 있다.
+#: `DrawGame.LADDER`·`ROULETTE` 는 화면이 없어서, `PINBALL` 은 **화면은 있는데
+#: 재미가 없어서** 빠져 있다 — 공이 하나뿐이라 참가자끼리 겨루는 것이 없고
+#: 1등이 한 번도 안 바뀐다 (나머지는 네다섯 번 바뀐다).
 #:
 #: **차례를 바꾸면 이미 뽑은 달의 게임도 바뀐다.** 뒤에 붙이는 것은 안전하고,
 #: 가운데에 끼우면 그달 TV 에 다른 게임이 뜬다 (당첨자는 안 바뀐다 — 시드와
@@ -41,7 +43,7 @@ GAME_ROTATION = (
     DrawGame.RACE,     # 2026-09
     DrawGame.HOOPS,    # 2026-10
     DrawGame.SOCCER,   # 2026-11
-    DrawGame.PINBALL,  # 2026-12
+    DrawGame.CURLING,  # 2026-12
     DrawGame.CLAW,     # 2027-01
     DrawGame.SUMO,     # 2027-02
 )
