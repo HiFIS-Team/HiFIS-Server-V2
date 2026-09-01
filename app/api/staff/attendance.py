@@ -261,6 +261,10 @@ async def _award_offhours(
         points=OFFHOURS_POINTS,
         reason=f"{kind_label} (자동)",
         source_ref_id=ref,
+        # **어느 달 몫인지는 근무일이 정한다** — 지금 이 순간이 아니다.
+        # 자정을 넘겨 퇴근하면 `day_key` 가 어제라, 안 넘기면 8/31 야근 점수가
+        # 9월 원장에 들어간다 (2026-09-01 에 실제로 다섯 건 났다).
+        period=day_key[:7],
     )
     await notify(db, employee_id=target.id, **ntext.offhours_award(kind_label, OFFHOURS_POINTS))
 
@@ -349,6 +353,8 @@ async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
         points=points,
         reason=f"지각 {nth}회 (자동)",
         source_ref_id=ref,
+        # 근무외출근 점수와 같다 — 감점도 **그 근무일 몫**이다
+        period=day.strftime("%Y-%m"),
     )
     # 안 쌓였으면(대표·관리자) 알림도 안 보낸다 — 안 깎였는데 깎였다고 알리면 안 된다
     if event is not None:
