@@ -25,6 +25,7 @@ from app.api.platform import (
     chat_audit,
     dashboard,
     documents,
+    draws,
     files,
     search,
 )
@@ -128,6 +129,7 @@ app.include_router(my_tasks.router)
 app.include_router(peer_reviews.router)
 app.include_router(contributions.router)
 app.include_router(kindness.router)
+app.include_router(draws.router)  # 달마다 도는 추첨 — 당첨자·릴스 영상
 # payroll — 급여
 app.include_router(rank_policies.router)
 app.include_router(payslips.router)

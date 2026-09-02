@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # 매장 벽에 붙고 회원에게 문자로 가는 주소라 `localhost` 가 들어가면 아무도 못 연다.
     public_base_url: str = "https://hifis.app"
 
+    # ── 추첨 게임 영상 (2026-09-01) — 인스타 릴스에 올리려고 만든다
+    #
+    # 매월 1일 잡(`workers/draw_videos.py`)이 이 일꾼을 불러 mp4 를 받아 온다.
+    # 일꾼은 도커 내부망에만 있어서 밖에서는 안 닿는다 (`tools/reels/`).
+    # 비어 있으면 **조용히 넘어간다** — APNs·FCM 과 같은 규칙이라, 일꾼을
+    # 안 띄운 개발 서버에서 잡이 매일 에러를 뱉지 않는다.
+    reels_url: str = ""
+    #: 일꾼이 요구하는 열쇠 — `tools/reels/server.mjs` 의 `RENDER_TOKEN` 과 같은 값
+    render_token: str = ""
+
     # ── 브로제이(BroJ) — 회원 출입 관리 웹 (2026-08-26)
     #
     # **화순점만 쓴다.** 첨단·동광주는 브로제이를 안 써서 붙일 것이 없다.

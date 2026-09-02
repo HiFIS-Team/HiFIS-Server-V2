@@ -222,3 +222,19 @@ def save_signature(signature_base64: str) -> str:
     with open(rel_path, "wb") as f:
         f.write(raw)
     return f"/{rel_path}"
+
+
+def save_draw_video(data: bytes) -> str:
+    """추첨 게임 영상(mp4)을 저장하고 서빙 경로를 돌려준다 (2026-09-01).
+
+    올려받는 것이 아니라 **서버가 만든 것**이라 `UploadFile` 을 안 탄다
+    (`workers/draw_videos.py` 가 영상 일꾼에게서 바이트로 받아 온다).
+    확장자 검증도 없다 — 우리가 구운 mp4 말고는 여기로 안 들어온다.
+    """
+    now = datetime.now(timezone.utc)
+    rel_dir = f"{UPLOAD_ROOT}/draws/{now:%Y}/{now:%m}"
+    os.makedirs(rel_dir, exist_ok=True)
+    rel_path = f"{rel_dir}/{uuid.uuid4().hex}.mp4"
+    with open(rel_path, "wb") as out:
+        out.write(data)
+    return f"/{rel_path}"

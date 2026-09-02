@@ -20,7 +20,15 @@
 "왜 저 사람이냐"에 답할 근거도 안 남는다.
 """
 
-from sqlalchemy import Enum as SAEnum, ForeignKey, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import (
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,3 +68,13 @@ class Draw(UUIDMixin, TimestampMixin, Base):
     #: 참가자가 셋보다 적으면 그만큼만 들어가고, 한 명도 없으면 빈 배열이다.
     #: 순서가 곧 게임의 1·2·3등 자리다 — 화면이 그 차례로 붙인다.
     winner_indexes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+
+    #: 찍어 둔 게임 영상 — `/uploads/draws/..` (없으면 아직 안 구웠다)
+    #:
+    #: 인스타 릴스에 올리려고 만든다 (2026-09-01 대표 요청). 매월 1일 잡이
+    #: 헤드리스 크롬으로 `/tv/{token}/reels` 를 열어 찍는다
+    #: (`workers/draw_videos.py` · `tools/reels/`).
+    video_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    #: 영상을 구운 때 — 앱이 '준비됐다' 를 이걸로 가른다
+    video_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

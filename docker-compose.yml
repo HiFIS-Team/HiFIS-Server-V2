@@ -62,6 +62,21 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
+  # 영상 일꾼 — 평소에는 안 뜬다 (`docker compose --profile reels up -d reels`).
+  # 크롬이 든 2GB 이미지라 개발할 때마다 굽고 있을 것이 아니다.
+  # 맥에서는 `tools/reels` 에서 `node render.mjs --token .. --out x.mp4` 로
+  # 바로 재는 게 빠르다 (ffmpeg 은 `ffmpeg-static` 이 들고 있다).
+  reels:
+    build: ./tools/reels
+    profiles: ["reels"]
+    shm_size: 1gb
+    environment:
+      CLIENT_BASE_URL: ${REELS_CLIENT_URL:-http://host.docker.internal:3000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:3010:3000"
+
 volumes:
   pgdata:
   caddy_data:

@@ -68,6 +68,47 @@ services:
       retries: 3
       start_period: 30s
 
+  # 추첨 게임 영상 일꾼 — 매월 1일에 세 번 부른다 (`workers/draw_videos.py`)
+  #
+  # **호스트에 포트를 안 연다.** api 만 내부망으로 부른다.
+  #
+  # 클라이언트는 **다른 compose 스택**(`hifis-client`)이라 그 네트워크에 같이
+  # 붙어서 `http://app:3002` 로 부른다.
+  #
+  # ⚠️ **`host.docker.internal` 로는 못 간다.** 클라이언트가 호스트에
+  # `127.0.0.1:3002` 로만 열려 있어서(루프백), 게이트웨이 주소로 두드리면
+  # 연결이 거절된다. 공개 주소(`https://hifis.app`)로 돌 수도 있지만 그러면
+  # 같은 서버 안의 일을 클라우드플레어까지 한 바퀴 돌린다.
+  reels:
+    build: ./tools/reels
+    restart: unless-stopped
+    env_file: .env
+    # 크롬이 /dev/shm 을 쓴다 — 기본 64MB 로는 1080×1920 에서 탭이 죽는다
+    shm_size: 1gb
+    mem_limit: 2g
+    cpus: 2.0
+    environment:
+      CLIENT_BASE_URL: ${REELS_CLIENT_URL:-http://app:3002}
+    networks:
+      # api 가 부르는 길
+      - default
+      # 클라이언트 페이지를 여는 길
+      - client
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+# 클라이언트는 따로 돌아가는 스택이다 — 여기서 만들지 않고 **붙기만** 한다.
+# 이름이 바뀌면(`docker network ls`) 아래 `name` 도 같이 고친다.
+networks:
+  default:
+  client:
+    external: true
+    name: hifis-client_default
+
 volumes:
   pgdata:
   redisdata:
