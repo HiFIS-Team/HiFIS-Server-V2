@@ -5,13 +5,15 @@
 
 **로그인이 없다는 게 이 파일의 전부다.** 그래서 넷을 지킨다.
 
-1. 내주는 것은 **이름·운동을 하는 이유·일지**뿐이다. 전화번호·결제액·남은
-   회차·내부 id 는 안 나간다 (`TrainingLogOut` 에 그 칸 자체가 없다)
+1. 내주는 것은 **이름·운동을 하는 이유·일지·영양제**뿐이다. 전화번호·결제액·
+   남은 회차·내부 id 는 안 나간다 (`TrainingLogOut` 에 그 칸 자체가 없다)
 2. **PT 일지는 읽기만.** 회차 기록은 트레이너가 쓰는 것이라, 여기서 고치면
    결제한 회차와 어긋난다
 3. 개인 운동은 쓰고 고칠 수 있되 **자기가 쓴 것만**이다. 트레이너가 대신
    적어 준 개인 운동을 회원이 덮어쓰면 원본이 사라진다
 4. 트레이너 피드백은 **받는 자리 자체가 없다** (`PersonalLogIn`)
+5. **영양제도 읽기만.** 몸에 넣는 것을 권하는 자리라 회원이 고치면 트레이너가
+   권한 것과 달라진다 — 쓰는 길(`POST`)을 아예 안 뚫었다
 
 앱(트레이너)이 쓰는 길은 `app/api/members/workouts.py` 다. 여기는 회원 쪽
 길이라 권한 규칙이 정반대라서 라우터를 나눠 뒀다 — 한 파일에 두면 `if` 로
@@ -27,9 +29,15 @@ from app.core.storage import save_workout_media
 from app.db.session import get_db
 from app.enums import WorkoutKind
 from app.models.members.member import Member
+from app.models.members.supplement import Supplement
 from app.models.members.workout import WorkoutLog
 from app.models.staff.employee import Employee
-from app.schemas.members.training import PersonalLogIn, TrainingLogOut, TrainingPageOut
+from app.schemas.members.training import (
+    PersonalLogIn,
+    TrainingLogOut,
+    TrainingPageOut,
+    TrainingSupplementOut,
+)
 from app.schemas.members.workout import WorkoutMediaOut
 
 router = APIRouter(tags=["training"])
@@ -102,12 +110,22 @@ async def training_page(
     )
     personal = [log for log in logs if log.kind is WorkoutKind.PERSONAL]
 
+    # 영양제 — 트레이너가 세운 차례 그대로 (먹는 순서로 옮겨 둔다)
+    pills = await db.execute(
+        select(Supplement)
+        .where(Supplement.member_id == member.id)
+        .order_by(Supplement.sort_order, Supplement.created_at)
+    )
+
     return TrainingPageOut(
         member_name=member.name,
         trainer_name=trainer.name if trainer else "",
         goals=list(member.goals or []),
         pt=[_to_out(log) for log in pt],
         personal=[_to_out(log) for log in personal],
+        supplements=[
+            TrainingSupplementOut.model_validate(row) for row in pills.scalars().all()
+        ],
     )
 
 

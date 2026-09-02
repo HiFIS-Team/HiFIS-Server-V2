@@ -14,7 +14,14 @@ from app.api.auth import auth, invite_keys
 from app.api.board import approvals, comments, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.legal import consents
-from app.api.members import members, pt_surveys, registrations, session_signs, workouts
+from app.api.members import (
+    members,
+    pt_surveys,
+    registrations,
+    session_signs,
+    supplements,
+    workouts,
+)
 from app.api.payroll import payslips, rank_policies
 from app.api.platform import (
     access_logs,
@@ -120,6 +127,7 @@ app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
 app.include_router(workouts.router)  # 운동일지 — PT 회차 기록·개인 운동(§3.4)
+app.include_router(supplements.router)  # 영양제 — 회원에게 권한 영양제
 app.include_router(pt_surveys.router)
 app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회원 개인정보(§13)
 # scoring — 점수
