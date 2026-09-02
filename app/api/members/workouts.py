@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import branch_scope, get_current_user
 from app.core.storage import save_workout_media
 from app.db.session import get_db
-from app.enums import Role, WorkoutKind
+from app.enums import WorkoutKind
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.members.workout import WorkoutLog
@@ -40,8 +40,21 @@ async def _visible_member(db: AsyncSession, member_id: str, scope: str | None) -
 
 
 def _ensure_can_write(member: Member, current: Employee) -> None:
-    if current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER):
-        return
+    """일지를 쓸 수 있는가 — **담당 트레이너 본인뿐이다** (2026-09-02 대표 결정).
+
+    예전에는 MASTER·ADMIN·MANAGER 를 권한만 보고 통과시켰다. 둘을 고쳤다.
+
+    | | 전 | 후 |
+    |---|---|---|
+    | MASTER·ADMIN | 아무 회원이나 | **못 쓴다** — 수업을 안 하니 남길 것이 없다 |
+    | MANAGER | 아무 회원이나 | 본인 담당만 — **직원과 같다** |
+
+    일지는 **수업한 사람이 적은 기록**이라 남이 손대면 누가 쓴 것인지가
+    흐려진다. 점장도 수업을 하지만 그건 본인 담당 회원일 때뿐이다.
+
+    **읽기는 그대로 열려 있다** — 목록·상세는 지점 범위만 보므로 대표·관리자가
+    남의 일지를 확인하는 데는 지장이 없다.
+    """
     if member.owner_trainer_id == current.id:
         return
     raise HTTPException(
