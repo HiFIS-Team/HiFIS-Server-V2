@@ -63,10 +63,13 @@ class MonthDrawOut(CamelModel):
     entry_count: int
     #: 찍어 둔 게임 영상 — **아직 안 구웠으면 null**
     #:
-    #: 매월 1일 새벽에 잡이 굽는다 (`workers/draw_videos.py`). 그 사이거나
+    #: 매월 1일 아침(09:20 KST)에 잡이 굽는다 (`workers/draw_videos.py`). 그 사이거나
     #: 굽다 실패했으면 비어 있다 — 앱은 그때 '준비 중' 으로 그린다.
     video_url: SignedUrlOptional = None
     video_at: datetime | None = None
+
+    #: 영상 **마지막 프레임** — 앱 화면 히어로에 쓴다 (영상과 같이 구워진다)
+    poster_url: SignedUrlOptional = None
 
 
 @router.get("", response_model=list[MonthDrawOut])
@@ -116,6 +119,7 @@ async def list_draws(
                 entry_count=len(entries),
                 video_url=draw.video_path,
                 video_at=draw.video_at,
+                poster_url=draw.poster_path,
             )
         )
     return out

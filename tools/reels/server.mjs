@@ -49,26 +49,34 @@ const server = createServer(async (req, res) => {
   if (!token || !/^[A-Za-z0-9_-]{4,64}$/.test(token)) return json(res, 400, { code: 'BAD_TOKEN' });
 
   busy = true;
-  const out = path.join(process.env.TMPDIR || '/tmp', `reels-${Date.now()}.mp4`);
+  const stem = path.join(process.env.TMPDIR || '/tmp', `reels-${Date.now()}`);
+  const out = `${stem}.mp4`;
+  const poster = `${stem}.jpg`;
   const t0 = Date.now();
   try {
     await render({
       url: `${CLIENT}/tv/${encodeURIComponent(token)}/reels`,
       out,
+      poster,
       onLog: (m) => console.log(`[${token}] ${m}`),
     });
-    const buf = await readFile(out);
+    const [pic, vid] = await Promise.all([readFile(poster), readFile(out)]);
+    // **둘을 이어 붙여 한 번에 보낸다.** 나누는 자리는 헤더가 알려 준다 —
+    // 멀티파트를 쓰면 받는 쪽(파이썬)에 파서를 하나 더 달아야 하고,
+    // base64 로 싸면 9.5MB 가 12.7MB 가 된다
     res.writeHead(200, {
-      'content-type': 'video/mp4',
-      'content-length': buf.length,
+      'content-type': 'application/octet-stream',
+      'content-length': pic.length + vid.length,
+      'x-poster-bytes': pic.length,
+      'x-video-bytes': vid.length,
       'x-render-seconds': ((Date.now() - t0) / 1000).toFixed(1),
     });
-    res.end(buf);
+    res.end(Buffer.concat([pic, vid]));
   } catch (e) {
     console.error(`[${token}] 실패`, e);
     json(res, 500, { code: 'RENDER_FAILED', message: String(e && e.message ? e.message : e) });
   } finally {
-    await rm(out, { force: true });
+    await Promise.all([rm(out, { force: true }), rm(poster, { force: true })]);
     busy = false;
   }
 });

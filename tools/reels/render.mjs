@@ -21,7 +21,7 @@
  *   node render.mjs --token bj8wqdub --frames /tmp/f   (프레임만, ffmpeg 없이)
  */
 import { spawn } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 
@@ -161,12 +161,24 @@ function run(cmd, argv) {
   });
 }
 
-/** 페이지를 열어 mp4 까지 한 번에 */
-export async function render({ url, out, work, onLog = () => {} }) {
+/**
+ * 페이지를 열어 mp4 와 **포스터 한 장**까지 한 번에.
+ *
+ * 포스터는 **마지막 프레임**이다 — 거기가 폭죽이 다 걷힌 시상대라 한 장으로
+ * 그달을 말해 준다. 찍어 둔 프레임을 그냥 복사하므로 **다시 인코딩하지
+ * 않는다** (ffmpeg 을 한 번 더 돌리면 1분이 더 든다).
+ *
+ * 앱이 이걸 화면 히어로로 쓴다 — 영상은 눌렀을 때 튼다.
+ */
+export async function render({ url, out, poster, work, onLog = () => {} }) {
   const dir = work || path.join(process.env.TMPDIR || '/tmp', `reels-${Date.now()}`);
   try {
     const shot = await capture({ url, dir, onLog });
     await encode({ ...shot, out });
+    if (poster) {
+      const last = `f${String(shot.count - 1).padStart(6, '0')}.jpg`;
+      await copyFile(path.join(dir, last), poster);
+    }
     onLog(`구웠다 → ${out}`);
     return out;
   } finally {
@@ -184,6 +196,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       writeFile(path.join(a.frames, 'stamps.json'), JSON.stringify(r.stamps)),
     );
   } else {
-    await render({ url, out: a.out || 'reels.mp4', work: a.work, onLog: log });
+    const out = a.out || 'reels.mp4';
+    await render({ url, out, poster: a.poster || out.replace(/\.mp4$/, '.jpg'),
+                   work: a.work, onLog: log });
   }
 }

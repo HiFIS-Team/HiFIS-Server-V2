@@ -7,7 +7,7 @@
 ## 왜 미리 만들어 두나
 
 앱에서 버튼을 누른 뒤에 만들면 **1분을 기다려야 한다.** 추첨이 끝나는 매월
-1일 새벽에 미리 구워 두면, 앱에서는 확인하고 공유만 한다.
+1일 아침에 미리 구워 두면, 앱에서는 확인하고 공유만 한다.
 
 ## 왜 매일 도나
 
@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.periods import now_kst
-from app.core.storage import save_draw_video
+from app.core.storage import save_draw_poster, save_draw_video
 from app.db.session import SessionLocal
 from app.models.platform.draw import Draw
 from app.models.staff.branch import Branch
@@ -66,20 +66,30 @@ async def _make(client: httpx.AsyncClient, db: AsyncSession, draw: Draw, token: 
     if res.status_code != 200:
         log.warning("영상 실패 %s %s — %s %s", draw.period, token, res.status_code, res.text[:200])
         return False
-    draw.video_path = save_draw_video(res.content)
+
+    # 포스터와 영상이 **이어 붙어** 온다 — 나누는 자리는 헤더가 알려 준다
+    cut = int(res.headers.get("x-poster-bytes", 0))
+    body = res.content
+    if cut > 0:
+        draw.poster_path = save_draw_poster(body[:cut])
+    draw.video_path = save_draw_video(body[cut:])
     draw.video_at = now_kst()
     log.info(
-        "영상 %s %s — %.1fMB (%s초)",
+        "영상 %s %s — %.1fMB + 포스터 %.0fKB (%s초)",
         draw.period,
         draw.video_path,
-        len(res.content) / 1024 / 1024,
+        (len(body) - cut) / 1024 / 1024,
+        cut / 1024,
         res.headers.get("x-render-seconds", "?"),
     )
     return True
 
 
 async def draw_videos() -> None:
-    """아직 영상이 없는 추첨을 찾아 굽는다 — 매일 새벽에 돈다."""
+    """아직 영상이 없는 추첨을 찾아 굽는다 — 매일 09:20 KST 에 돈다.
+
+    추첨 잡(09:00 KST)보다 20분 뒤다. 뽑기 전에 돌면 찍을 게임이 없다.
+    """
     if not settings.reels_url:
         return
 
