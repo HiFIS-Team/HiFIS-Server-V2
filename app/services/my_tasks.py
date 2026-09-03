@@ -268,8 +268,11 @@ async def due_tasks(
                 if last is None or last < CARRY_FROM:
                     continue
                 seen = book.last_check.get(t.id)
-                if seen is not None and seen >= last:
-                    continue  # 그 차례를 했거나, 밀려 온 날 했다
+                # **오늘 누른 것은 남긴다.** 빼 버리면 누르는 순간 줄이 통째로
+                # 사라져서 한 티가 안 나고(✓ 도 안 뜬다) `3/5` 에도 안 잡힌다.
+                # 다음 날부터는 `seen != day` 가 거짓이라 그대로 안 밀린다
+                if seen is not None and seen >= last and seen != day:
+                    continue  # 그 차례를 했거나, 밀려 온 뒤 다른 날 했다
                 due.append(DueTask(t, carried_from=last))
 
         # **밀려 온 것도 같이 센다.** 안 세면 대표 판은 `3/3 완료` 인데
