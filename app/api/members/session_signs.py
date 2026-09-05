@@ -7,6 +7,7 @@ POST [MEMBER]: 서명 저장 → usedSessions +1 → 만료 판정 → CLASS 점
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
@@ -70,13 +71,20 @@ async def _open_pt_survey(
 
 
 def _sign_out(
-    sign: SessionSign, member_name: str | None, total_sessions: int | None, reg_type
+    sign: SessionSign,
+    member_name: str | None,
+    total_sessions: int | None,
+    reg_type,
+    skipped_by_name: str | None = None,
 ) -> SessionSignOut:
-    """SessionSignOut + 앱 기록 표시용 조인값(회원명·총 회차·신규/재등록)."""
+    """SessionSignOut + 앱 기록 표시용 조인값(회원명·총 회차·신규/재등록·생략한 사람)."""
     out = SessionSignOut.model_validate(sign)
     out.member_name = member_name
     out.total_sessions = total_sessions
     out.registration_type = reg_type
+    # 모델에는 이름이 없다 — id 가 차 있으면 생략이다
+    out.signature_skipped = sign.signature_skipped_by_id is not None
+    out.signature_skipped_by_name = skipped_by_name
     return out
 
 
@@ -134,18 +142,29 @@ async def create_session_sign(
         raise HTTPException(400, detail={"code": "NO_SESSIONS_LEFT", "message": "남은 세션이 없습니다"})
     await _require_workout(db, registration)
 
+    # 싸인을 생략하려면 **그렇다고 말해야 한다** (2026-09-05 요청).
+    # 그냥 빈 서명을 받아 주면 앱이 이미지를 못 만든 버그와 갈리지 않는다.
+    if not payload.skip_signature and not (payload.signature_base64 or "").strip():
+        raise HTTPException(
+            400, detail={"code": "SIGNATURE_REQUIRED", "message": "싸인을 받아 주세요"}
+        )
+
     performer_id = payload.performed_by_trainer_id or current.id
     performer = current if performer_id == current.id else await db.get(Employee, performer_id)
     if performer is None:
         raise HTTPException(400, detail={"code": "TRAINER_NOT_FOUND", "message": "수행 트레이너가 존재하지 않습니다"})
 
-    signature_url = save_signature(payload.signature_base64)
+    # 생략이면 이미지가 아예 없다 — 대신 **누가 올렸는지**를 남긴다.
+    # 수행 트레이너가 아니라 버튼을 누른 사람이다 (대타를 지정해도 책임은 누른 쪽이다)
+    skipped = payload.skip_signature
+    signature_url = None if skipped else save_signature(payload.signature_base64)
     sign = SessionSign(
         registration_id=registration.id,
         member_id=registration.member_id,
         performed_by_trainer_id=performer_id,
         session_no=registration.used_sessions + 1,
         signature_url=signature_url,
+        signature_skipped_by_id=current.id if skipped else None,
     )
     db.add(sign)
     await db.flush()  # sign.id 확보 (원천 기록 id)
@@ -171,7 +190,13 @@ async def create_session_sign(
     await db.refresh(registration)
     member = await db.get(Member, registration.member_id)
     return SessionSignResult(
-        sign=_sign_out(sign, member.name if member else None, registration.total_sessions, registration.type),
+        sign=_sign_out(
+            sign,
+            member.name if member else None,
+            registration.total_sessions,
+            registration.type,
+            current.name if skipped else None,
+        ),
         registration=RegistrationOut.model_validate(registration),
     )
 
@@ -185,10 +210,21 @@ async def list_session_signs(
     period: str | None = Query(None),
 ) -> list[SessionSignOut]:
     # 회원명·총 회차·신규/재등록을 함께 조인 → 앱이 별도 요청 없이 기록 한 줄을 그린다.
+    # 싸인을 생략한 사람은 **별칭으로** 붙인다 — 아래 지점 거르기가 수행 트레이너로
+    # `Employee` 를 이미 쓰고 있어서, 같은 표를 두 번 쉽게 쓰려면 이름을 나눠야 한다.
+    # 생략이 아닌 줄이 훨씬 많으므로 **outer** 조인이다.
+    skipper = aliased(Employee)
     stmt = (
-        select(SessionSign, Member.name, Registration.total_sessions, Registration.type)
+        select(
+            SessionSign,
+            Member.name,
+            Registration.total_sessions,
+            Registration.type,
+            skipper.name,
+        )
         .join(Member, Member.id == SessionSign.member_id)
         .join(Registration, Registration.id == SessionSign.registration_id)
+        .outerjoin(skipper, skipper.id == SessionSign.signature_skipped_by_id)
     )
     if scope:
         stmt = stmt.join(Employee, Employee.id == SessionSign.performed_by_trainer_id).where(
@@ -202,4 +238,7 @@ async def list_session_signs(
         start, end = period_range(period)
         stmt = stmt.where(SessionSign.signed_at >= start, SessionSign.signed_at < end)
     rows = (await db.execute(stmt.order_by(SessionSign.signed_at.desc()))).all()
-    return [_sign_out(sign, name, total, rtype) for sign, name, total, rtype in rows]
+    return [
+        _sign_out(sign, name, total, rtype, skipped_by)
+        for sign, name, total, rtype, skipped_by in rows
+    ]
