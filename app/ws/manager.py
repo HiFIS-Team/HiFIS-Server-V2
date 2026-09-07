@@ -177,9 +177,14 @@ class ConnectionManager:
     async def stop(self) -> None:
         if self._reader_task is not None:
             self._reader_task.cancel()
+            # **`CancelledError` 를 따로 적어야 한다** — `Exception` 이 아니라
+            # `BaseException` 을 상속해서 `except Exception` 으로는 안 잡힌다.
+            # `_reader_loop` 가 일부러 `raise` 로 올려 보내므로(위 148행) 여기서
+            # 안 받으면 lifespan 밖으로 새어 나가 **재시작마다** ERROR
+            # 트레이스백이 찍힌다 (2026-09-07 점검에서 잡았다).
             try:
                 await self._reader_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
             self._reader_task = None
         if self._pubsub is not None:

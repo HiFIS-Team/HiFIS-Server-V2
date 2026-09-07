@@ -14,7 +14,14 @@ from app.api.auth import auth, invite_keys
 from app.api.board import approvals, comments, events, notices, reactions
 from app.api.chat import chat, notifications
 from app.api.legal import consents
-from app.api.members import members, pt_surveys, registrations, session_signs, workouts
+from app.api.members import (
+    members,
+    pt_surveys,
+    registrations,
+    session_signs,
+    supplements,
+    workouts,
+)
 from app.api.payroll import payslips, rank_policies
 from app.api.platform import (
     access_logs,
@@ -25,6 +32,7 @@ from app.api.platform import (
     chat_audit,
     dashboard,
     documents,
+    draws,
     files,
     search,
 )
@@ -66,7 +74,7 @@ _DOCS_OPEN = settings.environment != "production"
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.28.0",
+    version="0.29.0",
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_OPEN else None,
     redoc_url="/redoc" if _DOCS_OPEN else None,
@@ -119,6 +127,7 @@ app.include_router(members.router)
 app.include_router(registrations.router)
 app.include_router(session_signs.router)
 app.include_router(workouts.router)  # 운동일지 — PT 회차 기록·개인 운동(§3.4)
+app.include_router(supplements.router)  # 영양제 — 회원에게 권한 영양제
 app.include_router(pt_surveys.router)
 app.include_router(consents.router)  # 법·동의 — 직원 약관(§12)·회원 개인정보(§13)
 # scoring — 점수
@@ -128,6 +137,7 @@ app.include_router(my_tasks.router)
 app.include_router(peer_reviews.router)
 app.include_router(contributions.router)
 app.include_router(kindness.router)
+app.include_router(draws.router)  # 달마다 도는 추첨 — 당첨자·릴스 영상
 # payroll — 급여
 app.include_router(rank_policies.router)
 app.include_router(payslips.router)

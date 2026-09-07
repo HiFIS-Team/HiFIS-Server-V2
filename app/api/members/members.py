@@ -23,6 +23,7 @@ from app.models.members.member import Member
 from app.models.members.pt_survey import PtSurvey
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
+from app.models.members.supplement import Supplement
 from app.models.members.workout import WorkoutLog
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut, MemberUpdate
@@ -259,7 +260,7 @@ async def delete_member(
 
     | 걷는 것 | 왜 |
     |---|---|
-    | 등록권 · 세션 싸인 · 운동일지 · PT 만족도 · 동의 | 그 회원만의 기록이다 |
+    | 등록권 · 세션 싸인 · 운동일지 · 영양제 · PT 만족도 · 동의 | 그 회원만의 기록이다 |
     | 점수 원장 — 매출 · 수업 · 회원 등록 유입 | 안 걷으면 랭킹에 점수만 남는다 |
     | 서명 이미지 · 운동 사진 | 행만 지우면 개인정보가 디스크에 남는다 |
     | 이 사람을 소개자로 적은 회원 | 그 칸만 비운다 (그 회원은 그대로다) |
@@ -302,6 +303,7 @@ async def delete_member(
 
     await db.execute(delete(PtSurvey).where(PtSurvey.member_id == member_id))
     await db.execute(delete(MemberConsent).where(MemberConsent.member_id == member_id))
+    await db.execute(delete(Supplement).where(Supplement.member_id == member_id))
     await db.execute(delete(WorkoutLog).where(WorkoutLog.member_id == member_id))
     await db.execute(delete(SessionSign).where(SessionSign.member_id == member_id))
     await db.execute(delete(Registration).where(Registration.member_id == member_id))

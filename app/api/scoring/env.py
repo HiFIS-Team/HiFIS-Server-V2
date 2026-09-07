@@ -87,9 +87,12 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
 # 그 칩이 앱에서는 사진을 안 받고 눌렀는데 서버가 400 으로 되돌려 보낸다.
 #
 # **족자도 받는다 (2026-08-21 요청).** 현수막과 같은 종류다 — 걸어 두는 것이라
-# 눌렀다고 실제로 걸렸는지 확인할 길이 사진뿐이다. 전단지는 그대로 둔다
-# (돌리는 것이라 '걸린 자리'가 없다).
-PHOTO_REQUIRED_ITEMS = {"현수막", "족자"}
+# 눌렀다고 실제로 걸렸는지 확인할 길이 사진뿐이다.
+#
+# **전단지도 받는다 (2026-09-02 대표 요청).** 예전에는 "돌리는 것이라 걸린
+# 자리가 없다" 고 뺐는데, 확인할 길이 없는 건 마찬가지라 셋을 같은 모양으로
+# 맞췄다.
+PHOTO_REQUIRED_ITEMS = {"현수막", "족자", "전단지"}
 
 # 글 주소를 같이 받는 항목 — **블로그뿐이다** (2026-08-28 대표 요청).
 #
@@ -104,6 +107,14 @@ LINK_ITEMS = {"블로그"}
 # 늘리려면 여기에 이름만 더한다 (앱의 `_awardableItems` 도 같이).
 AWARDABLE_ITEMS = {"블로그"}
 
+# 무슨 일이었는지를 **반드시** 적어야 하는 항목 (2026-09-06 요청).
+#
+# 클레임해결은 한 건이 15점이라 제일 큰데, 지금까지는 그냥 칩만 누르면 돼서
+# **무슨 클레임을 처리했는지가 어디에도 안 남았다.** 설문으로 들어온 것은
+# 서버가 대신 찍으면서 보완점 글을 `note` 에 넣어 두는데, 손으로 누르는 쪽만
+# 빈 칸이면 목록이 반쪽만 차 보인다.
+NOTE_REQUIRED_ITEMS = {"클레임해결"}
+
 
 def _env_key(name: str) -> str:
     """항목 이름 비교용 — 공백을 떼고 소문자로. 앱의 `_envKey` 와 같은 규칙이다."""
@@ -113,10 +124,15 @@ def _env_key(name: str) -> str:
 _PHOTO_REQUIRED_KEYS = {_env_key(n) for n in PHOTO_REQUIRED_ITEMS}
 _LINK_KEYS = {_env_key(n) for n in LINK_ITEMS}
 _AWARDABLE_KEYS = {_env_key(n) for n in AWARDABLE_ITEMS}
+_NOTE_REQUIRED_KEYS = {_env_key(n) for n in NOTE_REQUIRED_ITEMS}
 
 
 def _needs_photo(item: EnvItem) -> bool:
     return _env_key(item.name) in _PHOTO_REQUIRED_KEYS
+
+
+def _needs_note(item: EnvItem) -> bool:
+    return _env_key(item.name) in _NOTE_REQUIRED_KEYS
 
 
 def _takes_link(item: EnvItem) -> bool:
@@ -250,15 +266,28 @@ async def create_env_log(
             400,
             detail={"code": "BAD_LINK", "message": "글 주소는 http:// 또는 https:// 로 시작해야 합니다"},
         )
+    note = (payload.note or "").strip() or None
+    if _needs_note(item) and note is None:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "NOTE_REQUIRED",
+                "message": f"{item.name}은(는) 무슨 일이었는지 함께 적어야 합니다",
+            },
+        )
     # 기타 등 write-in: 적은 내용을 라벨에 접어 "기타(창고정리)" 로 스냅샷(점수 원장·랭킹 사유도 동일). item_name String(100) 보호.
-    label = f"{item.name}({payload.note})"[:100] if payload.note else item.name
+    #
+    # **적어야 하는 항목은 안 접는다.** 접으면 이름이 `클레임해결(에어컨 소음)` 이 돼서
+    # 항목별로 세거나 걸러 볼 때 한 줄씩 다 다른 항목이 된다. 설문에서 자동으로
+    # 들어오는 기록도 이름을 안 접으므로(`_award_claim_resolved`) 모양이 갈린다.
+    label = item.name if _needs_note(item) or not note else f"{item.name}({note})"[:100]
     log = EnvTaskLog(
         employee_id=current.id,
         branch_id=item.branch_id,
         env_item_id=item.id,
         item_name=label,
         points=item.points,
-        note=payload.note,
+        note=note,
         photo_url=payload.photo_url,
         place=place or None,
         link=link,

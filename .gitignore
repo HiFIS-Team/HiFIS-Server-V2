@@ -222,3 +222,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 영상 일꾼 (tools/reels) 의 의존성
+node_modules/

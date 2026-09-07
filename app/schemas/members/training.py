@@ -42,6 +42,21 @@ class TrainingLogOut(CamelModel):
     mine: bool = False
 
 
+class TrainingSupplementOut(CamelModel):
+    """영양제 한 줄 — `SupplementOut` 에서 회원 id·작성자 id·차례를 뻐다.
+
+    회원은 **읽기만 한다.** 넣는 것을 권하는 자리라 회원이 고치면 트레이너가
+    권한 것과 달라진다 — 개인 운동과 달리 `mine` 이 없는 이유다.
+    """
+
+    id: str
+    name: str
+    dose: str = ""
+    timing: str = ""
+    reason: str = ""
+    note: str = ""
+
+
 class TrainingPageOut(CamelModel):
     member_name: str
     trainer_name: str
@@ -49,6 +64,8 @@ class TrainingPageOut(CamelModel):
     goals: list[str] = Field(default_factory=list)
     pt: list[TrainingLogOut] = Field(default_factory=list)
     personal: list[TrainingLogOut] = Field(default_factory=list)
+    #: 트레이너가 권한 영양제 — 읽기 전용
+    supplements: list[TrainingSupplementOut] = Field(default_factory=list)
 
 
 class PersonalLogIn(CamelModel):

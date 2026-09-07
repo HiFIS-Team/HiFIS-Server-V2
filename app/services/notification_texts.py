@@ -603,6 +603,22 @@ def kindness_complaint(improvement: str, branch: str | None) -> dict:
     }
 
 
+# ── PT 만족도 폼 ──
+def pt_survey_submitted(member_name: str, session_no: int) -> dict:
+    """PT 만족도 폼에 답이 왔다 — 결과를 볼 수 있는 대표·관리자·점장에게.
+
+    담당 트레이너 본인은 못 보므로 이 알림도 안 받는다
+    (`app/api/members/pt_surveys.py` 와 같은 기준).
+    """
+    return {
+        "type": "PT_SURVEY",
+        "title": "PT 만족도 폼에 답이 왔어요",
+        "body": f"{member_name}님 · {session_no}회차",
+        # 업무 탭까지만 보내면 첫 칸(환경정비)이 열려 볼 자리를 다시 찾아야 한다
+        "link": "/work/pt-surveys",
+    }
+
+
 def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> dict:
     """컴플레인이 해결됐다 — **누가 처리했는지**가 본론이다 (2026-08-31)."""
     body = f"{resolver}님이 처리했어요 · {short(improvement)}"

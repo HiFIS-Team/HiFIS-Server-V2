@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.periods import period_range
+from app.core.periods import KST, period_range
 from app.enums import (
     DeductionMethod,
     EmployeeStatus,
@@ -65,11 +65,10 @@ RENEWAL_RATE_THRESHOLD = 3_000_000
 
 #: 명세서 근거 줄에 적을 유입 이름 — 앱의 `VisitPath.label` 과 같은 글자다
 #:
-#: **`REFERRAL` 을 `개인영업` 으로 적는다** (2026-09-01 대표 표현). 앱 고르개는
-#: 아직 `지인소개` 라 글자가 갈리는데, 화면 문구를 바꾸는 것은 따로 여쭐 일이다.
 VISIT_PATH_LABEL: dict[VisitPath, str] = {
     VisitPath.WALK_IN: "워크인",
-    VisitPath.REFERRAL: "개인영업",
+    VisitPath.REFERRAL: "지인소개",
+    VisitPath.SALES: "개인영업",
     VisitPath.BLOG: "블로그",
     VisitPath.INSTAGRAM: "인스타",
     VisitPath.OT_TO_PT: "OT→PT",
@@ -162,8 +161,10 @@ def payroll_window(year_month: str, policy: PaydayPolicy | None = None) -> tuple
     if policy is not None and policy.next_month and policy.day:
         day = policy.day
         prev_y, prev_m = (y - 1, 12) if m == 1 else (y, m - 1)
-        start = datetime(prev_y, prev_m, min(day, _last_day(prev_y, prev_m)), tzinfo=timezone.utc)
-        end = datetime(y, m, min(day, _last_day(y, m)), tzinfo=timezone.utc)
+        # **KST 로 자른다** — `period_range` 와 같은 이유다. UTC 로 두면 주기가
+        # `D일 09:00 ~ D일 09:00 KST` 가 되어 지급일 새벽 실적이 옆 달로 샌다.
+        start = datetime(prev_y, prev_m, min(day, _last_day(prev_y, prev_m)), tzinfo=KST)
+        end = datetime(y, m, min(day, _last_day(y, m)), tzinfo=KST)
         return start, end
     return period_range(year_month)
 

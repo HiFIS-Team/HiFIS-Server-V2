@@ -200,6 +200,24 @@ class HalfPeriod(StrEnum):
     PM = "PM"  # 오후 반차
 
 
+class DrawGame(StrEnum):
+    """매장 TV 추첨을 굴려 보여주는 게임 (2026-09-01 대표 결정).
+
+    **달마다 하나씩 바꾼다.** 값이 곧 화면이 고르는 장면 이름이라, 새 게임을
+    만들면 여기에 한 줄 더하고 클라이언트에 장면을 하나 얹으면 된다.
+    """
+
+    RACE = "RACE"          # 구슬 레이스 — 참가자 수만큼 달리고 1등이 당첨
+    HOOPS = "HOOPS"        # 농구 슛 — 한꺼번에 던져 3골을 먼저 넣으면 당첨
+    SOCCER = "SOCCER"      # 축구 슛 — 골키퍼 장갑 둘을 뚫고 3골을 먼저 넣으면 당첨
+    CURLING = "CURLING"    # 컬링 — 한 명씩 던져 버튼에 제일 가까운 돌이 당첨
+    PINBALL = "PINBALL"    # 핀볼 — **차례에서 뺐다** (공 하나뿐이라 뒤집힘이 없다)
+    CLAW = "CLAW"          # 뽑기 기계 — 집게가 몇 번 놓치다 문 캡슐이 당첨
+    SUMO = "SUMO"          # 밀어내기 — 판 밖으로 밀려나고 마지막까지 남으면 당첨
+    LADDER = "LADDER"      # 사다리 타기 — **안 만들기로 했다** (선을 긋는 순간 결과가 정해진다)
+    ROULETTE = "ROULETTE"  # 룰렛 — **아직 화면이 없다**
+
+
 class ComplaintStatus(StrEnum):
     """친절 설문의 '개선했으면 하는 부분' 처리 단계 (§4.5).
 
@@ -247,12 +265,17 @@ class ContribType(StrEnum):
 class VisitPath(StrEnum):
     """회원이 어떻게 알고 왔나 — 회원 등록 때 받는다 (§3.1).
 
-    **뒤 셋만 점수를 준다** (`VISIT_PATH_SCORE`). 워크인·지인소개는 직원이
-    끌어온 것이 아니라서 뺀다.
+    **점수는 블로그·인스타·OT→PT 셋만 준다** (`VISIT_PATH_SCORE`).
+    워크인·지인소개는 직원이 끌어온 것이 아니라서 뺀다 — **개인영업도 아직
+    안 준다** (점수를 줄지는 정해진 바가 없다. 요율만 재등록으로 간다).
     """
 
     WALK_IN = "WALK_IN"      # 워크인 — 점수 없음
-    REFERRAL = "REFERRAL"    # 지인소개 — 점수 없음
+    REFERRAL = "REFERRAL"    # 지인소개 (회원이 데려옴) — 점수 없음
+    #: 개인영업 — **트레이너가 직접 딴 것** (2026-09-01 대표 요청).
+    #: 지인소개와 다르다: 저쪽은 기존 회원이 데려온 것이라 소개자가 있고,
+    #: 이쪽은 트레이너의 영업이라 소개자가 없다. 요율은 둘 다 재등록(50%)이다.
+    SALES = "SALES"          # 개인영업
     BLOG = "BLOG"            # 블로그
     INSTAGRAM = "INSTAGRAM"  # 인스타
     OT_TO_PT = "OT_TO_PT"    # OT → PT 전환

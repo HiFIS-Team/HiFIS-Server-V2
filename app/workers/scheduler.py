@@ -18,6 +18,8 @@ from apscheduler.triggers.cron import CronTrigger
 from app.workers.absence_alerts import absence_alerts
 from app.workers.event_reminders import event_reminders
 from app.workers.payday_reminder import payday_reminders
+from app.workers.draw_videos import draw_videos
+from app.workers.monthly_draw import monthly_draw
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
 from app.workers.ranking_jobs import (
@@ -64,6 +66,17 @@ def _register_jobs() -> None:
     # 매월 1일 00:30 UTC — 전월 급여 마감
     scheduler.add_job(close_previous_month, CronTrigger(day=1, hour=0, minute=30),
                       id="payroll_close", replace_existing=True)
+    # 매월 1일 00:00 UTC(=09:00 KST) — 매장 TV 추첨 (전달 설문 참여자 중 한 명)
+    # **급여 마감보다 앞에 둔다** — 서로 상관없지만 아침에 TV 가 먼저 살아난다
+    scheduler.add_job(monthly_draw, CronTrigger(day=1, hour=0, minute=0),
+                      id="monthly_draw", replace_existing=True)
+    # 매일 00:20 UTC(=09:20 KST) — 추첨 게임 영상 굽기 (인스타 릴스용)
+    #
+    # **추첨(00:00)보다 20분 뒤**다. 뽑기 전에 돌면 찍을 게임이 없다.
+    # **매일 도는 이유** — 한 번만 돌면 그때 일꾼이 안 떠 있거나 클라이언트가
+    # 재배포 중일 때 그 달 영상이 영영 없다. 이미 구운 것은 건너뛴다.
+    scheduler.add_job(draw_videos, CronTrigger(hour=0, minute=20),
+                      id="draw_videos", replace_existing=True)
     # 매일 00:05 UTC(=09:05 KST) — 오늘/내일 지급일 급여 신청 알림(예고 포함)
     # KST 09·12·15·18·21시 (= UTC 00·03·06·09·12) — 지급일 전날 6시간마다,
     # 당일은 안 낸 사람에게 3시간마다. 새벽은 뺀다 (payday_reminder.py)
@@ -208,9 +221,14 @@ async def stop_scheduler() -> None:
             logger.warning("scheduler: 종료 시 응답 지표 기록 실패", exc_info=True)
     if _campaign_task is not None:
         _campaign_task.cancel()
+        # **`CancelledError` 를 따로 적어야 한다.** 파이썬 3.8 부터 이건
+        # `Exception` 이 아니라 `BaseException` 을 상속해서 `except Exception`
+        # 으로는 안 잡히고 lifespan 밖으로 새어 나간다 — 그러면 **재시작·배포
+        # 때마다** starlette 이 ERROR 트레이스백을 찍는다. 기능은 멀쩡한데
+        # 로그만 더러워져 진짜 오류를 묻는다 (2026-09-07 점검에서 잡았다).
         try:
             await _campaign_task
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             pass
         _campaign_task = None
     if scheduler.running:
