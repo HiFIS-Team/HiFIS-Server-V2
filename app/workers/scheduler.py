@@ -221,9 +221,14 @@ async def stop_scheduler() -> None:
             logger.warning("scheduler: 종료 시 응답 지표 기록 실패", exc_info=True)
     if _campaign_task is not None:
         _campaign_task.cancel()
+        # **`CancelledError` 를 따로 적어야 한다.** 파이썬 3.8 부터 이건
+        # `Exception` 이 아니라 `BaseException` 을 상속해서 `except Exception`
+        # 으로는 안 잡히고 lifespan 밖으로 새어 나간다 — 그러면 **재시작·배포
+        # 때마다** starlette 이 ERROR 트레이스백을 찍는다. 기능은 멀쩡한데
+        # 로그만 더러워져 진짜 오류를 묻는다 (2026-09-07 점검에서 잡았다).
         try:
             await _campaign_task
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             pass
         _campaign_task = None
     if scheduler.running:
