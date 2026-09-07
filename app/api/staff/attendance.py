@@ -7,7 +7,7 @@
 import secrets
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,6 @@ from app.core.deps import (
     require_role,
 )
 from app.core.periods import KST, period_range
-from app.core.ratelimit import client_key
 from app.db.session import get_db
 from app.enums import (
     AttendanceSource,
@@ -296,21 +295,20 @@ async def _branch_of_qr(db: AsyncSession, qr: str) -> Branch:
     return branch
 
 
-def _at_branch(request: Request, branch: Branch) -> bool:
-    """이 요청이 **그 지점 인터넷**에서 왔나.
-
-    고정 QR 이라 사진을 찍어 두면 집에서도 찍힌다. 그걸 막는 유일한 값이라
-    **목록이 비어 있으면 아무도 못 찍는다** — 열어 두면 어디서나 찍힌다.
-
-    회선이 동적이면 IP 가 바뀐다. 그때는 대표가 지점에서
-    `POST /branches/{id}/scan-ip` 를 한 번 눌러 다시 등록한다.
-    """
-    allowed = branch.allowed_ips or []
-    if not allowed:
-        return False
-    return client_key(request) in allowed
-
-
+#: **IP 검사는 걷어냈다 (2026-09-07 대표 결정).**
+#:
+#: 예전에는 `branches.allowed_ips` 로 "그 지점 인터넷에서 왔나"를 봤다.
+#: 고정 QR 이라 사진을 찍어 두면 집에서도 찍히는 것을 막으려던 값인데,
+#: **실제로는 직원이 매장에서 찍는 것을 막고 있었다** — 폰이 wifi 가 아니라
+#: LTE 로 붙으면 IP 가 안 맞아 403 이다. 한 사람이 10분에 57번 튕긴 날도 있다
+#: (이상징후 `FORBIDDEN_BURST`, 2026-09-01). 그래서 그동안 출퇴근을 손으로 넣었다.
+#:
+#: 지금 남은 방어는 **QR 시크릿**(그 종이를 실제로 봤다는 증거)과
+#: **지점 일치**(남의 지점 QR 은 안 받는다) 둘이다.
+#: 사진을 찍어 두면 어디서든 찍힌다는 것은 **알고 받아들인 값이다.**
+#:
+#: `allowed_ips` 컬럼과 `POST·DELETE /branches/{id}/scan-ip` 는 남겨 뒀다 —
+#: 되살릴 일이 생기면 그대로 쓰면 된다. 지금은 아무도 안 읽는다.
 async def _deduct_late(db: AsyncSession, target: Employee, day: date) -> None:
     """지각 차감 — **여태까지 지각한 횟수**가 커질수록 많이 뺀다 ([LATE_PENALTY]).
 
@@ -398,7 +396,6 @@ async def _notify_task_missing(db: AsyncSession, target: Employee, day: date) ->
         await notify(db, employee_id=eid, **ntext.staff_task_missing(target.name, len(left)))
 @router.post("/attendance/scan", response_model=AttendanceOut)
 async def scan_attendance(
-    request: Request,
     payload: AttendanceScanRequest,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -422,14 +419,6 @@ async def scan_attendance(
     if qr_branch.id != current.branch_id:
         raise HTTPException(
             403, detail={"code": "OTHER_BRANCH", "message": "다른 지점 QR 입니다"}
-        )
-    if not _at_branch(request, qr_branch):
-        raise HTTPException(
-            403,
-            detail={
-                "code": "NOT_AT_BRANCH",
-                "message": "매장 와이파이에 연결한 뒤 찍어주세요",
-            },
         )
     target = current
 
