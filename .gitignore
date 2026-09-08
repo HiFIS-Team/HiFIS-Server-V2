@@ -155,6 +155,7 @@ uploads/
 
 # Environments
 .env
+.env.*
 .envrc
 .venv
 env/

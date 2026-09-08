@@ -76,3 +76,16 @@ class Branch(UUIDMixin, TimestampMixin, Base):
     #: **지점마다 값이 다르다.** 채워져 있으면 그 지점은 다짐에서 출석을 받고,
     #: 비어 있으면 브로제이 쪽을 본다 (브로제이는 그룹이 하나라 설정에 있다).
     dajim_gym_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    #: 이 지점이 회원에게 문자를 보낼 때 쓰는 **발신번호** (2026-09-08 대표 결정).
+    #:
+    #: 컴플레인이 해결되면 의견을 남긴 회원에게 문자가 간다. 회원이 그 번호로
+    #: 되걸면 **그 매장에 닿아야** 해서 지점마다 따로 둔다 — 본사 번호로
+    #: 보내면 화순 회원이 첨단 일로 전화하는 셈이 된다.
+    #:
+    #: **비어 있으면 그 지점은 문자를 안 보낸다.** 기본 번호
+    #: (`settings.solapi_sender`)로 대신 보내지 않는다 — 엉뚱한 곳으로
+    #: 되걸게 만드느니 안 보내는 것이 낫다.
+    #:
+    #: 솔라피 콘솔에 **사전등록·인증이 끝난 번호**여야 한다 (전기통신사업법).
+    sms_sender: Mapped[str | None] = mapped_column(String(20), nullable=True)

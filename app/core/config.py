@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     solapi_api_secret: str = ""
     solapi_sender: str = ""
 
+    # 컴플레인 한 줄 요약 — Claude Messages API (2026-09-08 대표 요청).
+    #
+    # 매장 TV 는 줄을 **두 줄까지만** 보여주고 자른다(`tv.css` 의 line-clamp).
+    # 길게 적은 의견이 `...` 로 끊겨서, 해결될 때 한 줄로 줄여 박아 둔다.
+    #
+    # **비어 있으면 조용히 넘어간다** — 요약이 없으면 TV 가 원문을 그대로 쓴다.
+    # 솔라피·APNs 와 같은 규칙이다.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+
     #: **대표만 쓸 수 있게 잠근다** — 사고 대응용 임시 스위치 (2026-08-18)
     #:
     #: 켜면 MASTER 가 아닌 사람은 로그인도, 이미 받아 둔 토큰으로 부르는 것도

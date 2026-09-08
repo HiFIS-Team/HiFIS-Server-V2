@@ -3,6 +3,7 @@
 POST /webhooks/kindness-survey: 앱 UI 작성 없음, 외부 폼 전용. 시크릿 검증 후 KINDNESS +10.
 """
 
+import asyncio
 import hmac
 import logging
 from datetime import datetime, timezone
@@ -27,7 +28,9 @@ from app.schemas.scoring.kindness import (
 )
 from app.services import notification_texts as ntext
 from app.services.notifications import boss_ids, branch_ids, master_ids, notify
+from app.services import sms
 from app.services.scoring import accrue_score
+from app.services.summarize import summarize_complaint
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +132,101 @@ async def _notify_survey(
         await notify(db, employee_id=eid, **ntext.kindness_complaint(improvement, branch))
     for eid in await branch_ids(db, praised.branch_id):
         await notify(db, employee_id=eid, **ntext.kindness_complaint(improvement, None))
+
+
+async def _make_summary(survey: KindnessSurvey) -> None:
+    """해결된 컴플레인을 **한 줄로 줄여 박아 둔다** (2026-09-08 대표 요청).
+
+    완료가 찍히는 자리가 둘이라(대표가 직접 · 대표가 승인) **여기 하나로 모은다** —
+    한쪽만 걸면 대표가 직접 처리한 건에는 요약이 안 붙는다.
+
+    **못 만들어도 그냥 넘어간다.** 요약은 곁가지고, 없으면 TV 가 원문을 쓴다.
+    여기서 막으면 바깥 API 가 죽었을 때 컴플레인을 해결 처리할 수 없게 된다.
+    """
+    if survey.summary:
+        return  # 이미 있다 — 다시 부르면 벽에 걸린 문장이 저 혼자 바뀐다
+    survey.summary = await summarize_complaint(survey.improvement or "")
+
+
+#: 회원에게 가는 문자 (2026-09-08 대표 결정).
+#:
+#: **정보성 문자다** — 광고가 아니라 본인이 남긴 의견에 대한 응대라,
+#: `(광고)` 표기도 야간 발송 제한(21~08시)도 해당이 없다. 설문 동의의
+#: 이용 목적이 「설문 내용 확인 및 응대」라 동의 범위 안이기도 하다.
+#:
+#: **무슨 의견이 반영됐는지를 반드시 싣는다.** 몇 주 전에 적은 것이라
+#: 그게 없으면 받는 사람이 무슨 문자인지 모른다. 그래서 90바이트를 넘겨
+#: LMS 로 나가는데, 그건 알고 그렇게 두는 것이다.
+_SMS_SUBJECT = "불편사항 개선 안내"
+
+_SMS_TEMPLATE = """[피트니스스타 {branch}]
+
+말씀해 주신 불편사항이 개선되었습니다.
+
+「{opinion}」
+
+바쁘신 중에도 시간 내어 의견 남겨 주셔서 진심으로 감사드립니다.
+회원님의 한마디가 저희가 놓치고 있던 것을 알려 주었습니다.
+
+앞으로도 불편하신 점이 있으면 언제든 편하게 말씀해 주세요.
+더 나은 공간으로 보답하겠습니다."""
+
+#: 문자에 실을 의견 길이 상한 — 넘으면 뒤를 자른다.
+#:
+#: 요약(`summary`)이 있으면 35자 안쪽이라 안 걸린다. 요약을 못 만들었거나
+#: 짧아서 안 줄인 것이 원문으로 오는데, 그때도 문자가 무한정 길어지면 안 된다.
+_SMS_OPINION_MAX = 80
+
+
+def _branch_label(name: str) -> str:
+    """`화순` → `화순점`. 이미 `점` 으로 끝나면 그대로 둔다."""
+    clean = (name or "").strip()
+    return clean if clean.endswith("점") else f"{clean}점"
+
+
+async def _sms_resolved(db: AsyncSession, survey: KindnessSurvey) -> None:
+    """의견을 남긴 **회원에게** 해결됐다고 문자를 보낸다 (2026-09-08 대표 요청).
+
+    **발신번호는 그 지점 번호다** (`branches.sms_sender`). 회원이 되걸면 그
+    매장에 닿아야 한다 — 번호가 안 적혀 있으면 **안 보낸다.** 기본 번호로
+    대신 보내면 화순 회원이 첨단으로 전화하는 셈이 된다.
+
+    **실패해도 그냥 넘어간다.** 문자는 곁가지고, 여기서 막으면 솔라피가
+    죽었을 때 컴플레인을 해결 처리할 수 없게 된다 (요약과 같은 규칙).
+
+    두 번 보내지 않도록 `sms_sent_at` 을 본다 — 완료가 찍히는 자리가 둘이다.
+    """
+    if survey.sms_sent_at:
+        return
+    to = (survey.member_phone or "").strip()
+    if not to:
+        return
+
+    praised = await db.get(Employee, survey.praised_employee_id)
+    branch = await db.get(Branch, praised.branch_id) if praised else None
+    sender = (branch.sms_sender or "").strip() if branch else ""
+    if not sender or not sms.ready(sender):
+        logger.info(
+            "[complaint-sms] 발신번호가 없어 건너뜀 branch=%s", branch.name if branch else "?"
+        )
+        return
+
+    # TV 에 걸리는 것과 **같은 줄**을 보낸다 — 벽에 걸린 말과 문자가 다르면
+    # 회원이 받았을 때 자기 것인지 헷갈린다
+    opinion = ((survey.summary or "").strip() or (survey.improvement or "").strip())
+    if len(opinion) > _SMS_OPINION_MAX:
+        opinion = opinion[: _SMS_OPINION_MAX - 1].rstrip() + "…"
+
+    text = _SMS_TEMPLATE.format(branch=_branch_label(branch.name), opinion=opinion)
+    try:
+        await asyncio.to_thread(
+            sms.send_sync, to, text,
+            sender=sender, subject=_SMS_SUBJECT, tag="complaint-sms",
+        )
+    except Exception:
+        logger.warning("[complaint-sms] 발송 실패 — 해결 처리는 그대로 둔다", exc_info=True)
+        return
+    survey.sms_sent_at = datetime.now(timezone.utc)
 
 
 async def _notify_resolved(
@@ -234,6 +332,8 @@ async def set_complaint_status(
         survey.resolved_at = now
         survey.resolved_by_id = current.id
         await _award_claim_resolved(db, current, survey)
+        await _make_summary(survey)
+        await _sms_resolved(db, survey)
         await _notify_resolved(db, survey, current)
         await db.commit()
         await db.refresh(survey)
@@ -276,6 +376,8 @@ async def approve_complaint_done(
     survey.resolved_at = datetime.now(timezone.utc)
     survey.resolved_by_id = requester.id
     await _award_claim_resolved(db, requester, survey)
+    await _make_summary(survey)
+    await _sms_resolved(db, survey)
     await notify(
         db,
         employee_id=requester.id,

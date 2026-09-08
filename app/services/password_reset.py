@@ -11,13 +11,13 @@ import json
 import logging
 import re
 import secrets
-import time
 
 from fastapi import HTTPException
 
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.security import create_reset_token, decode_token
+from app.services import sms
 
 logger = logging.getLogger("app.password_reset")
 
@@ -71,61 +71,23 @@ def _send_email_sync(to: str, subject: str, body: str) -> None:
         s.send_message(msg)
 
 
-SMS_RETRIES = 3         # 솔라피 일시 오류 재시도 (v1 과 같은 횟수)
-SMS_RETRY_WAIT_S = 1
-
-
-def _mask_phone(phone: str) -> str:
-    """로그에 남길 번호 — 가운데를 가린다 (`01012345678` → `010****5678`).
-
-    발송 성공·실패는 남겨야 되짚을 수 있는데, 번호를 그대로 적으면 로그가
-    개인정보 덩어리가 된다 (개인정보처리방침 §8-1 과 같은 맥락).
-    """
-    return f"{phone[:3]}****{phone[-4:]}" if len(phone) >= 7 else "***"
+# 실제 발송은 **공용 서비스가 한다** (`app/services/sms.py`).
+#
+# 컴플레인 해결 알림(2026-09-08)이 같은 길로 나가면서 옮겼다. 여기 한 벌,
+# 저기 한 벌 두면 재시도 횟수나 로그 형식이 갈리고, **발신번호를 지점별로
+# 가르는 규칙도 두 군데를 고쳐야 한다.**
+#
+# 이쪽은 **로그인 전**이라 그 사람이 어느 지점인지 몰라서 기본 번호로 보낸다.
+_mask_phone = sms.mask_phone
 
 
 def _sms_ready() -> bool:
     """셋이 다 있어야 보낸다 — 하나라도 비면 솔라피가 인증부터 실패한다."""
-    return bool(
-        settings.solapi_api_key and settings.solapi_api_secret and settings.solapi_sender
-    )
+    return sms.ready()
 
 
 def _send_sms_sync(to: str, text: str) -> None:
-    """솔라피 발송(블로킹) — asyncio.to_thread 로 감싸 이벤트 루프 비차단.
-
-    HiFIS v1(`app/services/messaging/solapi.py`)이 쓰던 공식 SDK 그대로다.
-    같은 계정·같은 발신번호라 v1 에서 되던 것이 여기서도 된다.
-
-    **본문을 짧게 유지한다.** 90바이트를 넘으면 SMS 가 아니라 LMS 로 나가서
-    건당 요금이 두 배 이상이 된다. 인증번호 한 줄이면 40바이트 남짓이다.
-    """
-    from solapi import SolapiMessageService
-    from solapi.model import RequestMessage
-
-    client = SolapiMessageService(
-        api_key=settings.solapi_api_key,
-        api_secret=settings.solapi_api_secret,
-    )
-    message = RequestMessage(from_=settings.solapi_sender, to=to, text=text)
-
-    last: Exception | None = None
-    for attempt in range(1, SMS_RETRIES + 1):
-        try:
-            client.send(message)
-            logger.info(
-                "[password-reset] 문자 발송 완료 to=%s attempt=%d", _mask_phone(to), attempt
-            )
-            return
-        except Exception as error:  # noqa: BLE001 — 마지막 시도까지 모아 두고 올린다
-            last = error
-            logger.warning(
-                "[password-reset] 문자 발송 실패 to=%s attempt=%d error=%s",
-                _mask_phone(to), attempt, error,
-            )
-            if attempt < SMS_RETRIES:
-                time.sleep(SMS_RETRY_WAIT_S)
-    raise last if last else RuntimeError("문자 발송 실패")
+    sms.send_sync(to, text, tag="password-reset")
 
 
 async def send_reset_code(method: str, contact: str, code: str) -> None:

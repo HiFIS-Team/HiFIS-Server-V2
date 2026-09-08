@@ -50,3 +50,20 @@ class KindnessSurvey(UUIDMixin, TimestampMixin, Base):
     resolved_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=True
     )
+
+    #: 매장 TV 에 걸 **한 줄 요약** — 해결 완료로 넘어갈 때 한 번 만든다.
+    #:
+    #: TV 는 줄을 두 줄까지만 그리고 자르는데(`tv.css` 의 line-clamp), 길게 적은
+    #: 의견이 `...` 로 끊겨서 넣었다 (2026-09-08 대표 요청).
+    #:
+    #: **비어 있으면 TV 가 원문(`improvement`)을 쓴다.** 요약을 못 만들었거나
+    #: (키 없음·API 실패) 짧아서 안 줄인 것이라, 비어 있는 것이 정상 상태다.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: 회원에게 해결 문자를 보낸 때 — **두 번 보내는 것을 막는다** (2026-09-08).
+    #:
+    #: 완료가 찍히는 자리가 둘이라(대표가 직접 · 대표가 승인) 안 막으면
+    #: 같은 회원에게 문자가 두 통 간다. 요약(`summary`)과 같은 사정이다.
+    sms_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
