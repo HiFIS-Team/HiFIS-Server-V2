@@ -5,8 +5,10 @@
 
 **회원이 보는 자리다.** 그래서 두 가지를 지킨다.
 
-1. **회원 이름·연락처를 아예 안 내보낸다.** 컴플레인에 사람 이름이 붙으면
-   누가 무슨 불만을 냈는지가 매장에 걸리는 셈이다
+1. **회원 이름·연락처를 가려서 내보낸다** — `김○후` · `···1234`
+   (2026-09-08 대표 요청. 그 전에는 아예 안 보냈다).
+   추첨 참가자를 거는 것과 **같은 방식**이라 한 화면에서 규칙이 안 갈린다.
+   원문 이름·전화번호는 여전히 안 나간다
 2. **해결 완료된 것만** 내보낸다. 아직 처리 중인 불만이 벽에 걸리면 안 된다
 
 컴플레인 자체는 `kindness_surveys.improvement` 다 — 설문에서 개선 의견을
@@ -48,6 +50,13 @@ class ResolvedOut(CamelModel):
     id: str
     text: str
     resolved_at: str
+    #: 의견을 남긴 회원 — **가린 것만** 나간다 (`김○후` · `···1234`).
+    #:
+    #: 해결 날짜 옆에 세워서 **사람이 한 말**이라는 것이 보이게 한다
+    #: (2026-09-08 대표 요청). 가리는 법은 추첨 참가자와 같은 함수다 —
+    #: 같은 화면에 둘이 같이 서는데 규칙이 갈리면 안 된다.
+    name: str
+    phone: str
 
 
 class TvOut(CamelModel):
@@ -165,8 +174,16 @@ async def tv_resolved(token: str, db: AsyncSession = Depends(get_db)) -> TvOut:
         resolved=[
             ResolvedOut(
                 id=r.id,
-                text=(r.improvement or "").strip(),
+                # **요약이 있으면 그걸 쓴다** (2026-09-08 대표 요청). 화면이 줄을
+                # 두 줄까지만 그려서 길게 적은 의견이 `...` 로 끊겼다. 요약은
+                # 해결 완료로 넘어갈 때 한 번 만들어 박아 두므로(`_make_summary`)
+                # 여기서 부를 것이 없다 — 화면이 다시 받아도 같은 문장이다.
+                #
+                # 비어 있으면 원문이다 — 짧아서 안 줄인 것이거나 요약을 못 만든 것.
+                text=((r.summary or "").strip() or (r.improvement or "").strip()),
                 resolved_at=r.resolved_at.isoformat(),
+                name=mask_name(r.member_name or ""),
+                phone=mask_phone(r.member_phone or ""),
             )
             for r in rows
             if len((r.improvement or "").strip()) >= _MIN_TEXT
