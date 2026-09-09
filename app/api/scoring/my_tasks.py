@@ -201,16 +201,19 @@ async def list_my_tasks(
     db: AsyncSession = Depends(get_db),
     # 지난 날짜를 볼 때만 준다. 안 주면 오늘 (화면이 늘 오늘이다)
     date: str | None = Query(None),
-    # 남의 것 — **MASTER·ADMIN 만.** 그 밖에는 넣어도 본인 것이 온다
+    # 남의 것 — **MASTER·ADMIN·MANAGER.** 그 밖에는 넣어도 본인 것이 온다
     employee_id: str | None = Query(None, alias="employeeId"),
 ) -> MyTaskDayOut:
     """내 업무 목록 + **그날 체크 여부**를 한 번에 준다.
 
     목록과 체크를 따로 받으면 요청이 두 배고, 앱이 id 로 맞춰야 한다.
 
-    대표·관리자는 `employeeId` 로 **남의 것을 본다** (읽기만 — 체크·수정은
+    대표·관리자·점장은 `employeeId` 로 **남의 것을 본다** (읽기만 — 체크·수정은
     본인만 한다). 그 밖에는 403 이 아니라 **조용히 본인 것**으로 고정한다
     (`/attendance` 와 같은 규칙 — backend-gap 60).
+
+    **적어 넣은 값(`values`)도 같이 간다.** 점장이 주마다 올리는 신규·재등록
+    수처럼, 체크와 함께 받은 값을 보는 것이 대표 판의 목적이다.
     """
     target_id = current.id
     if employee_id and current.role in (Role.MASTER, Role.ADMIN, Role.MANAGER):
