@@ -86,17 +86,27 @@ def _sms_ready() -> bool:
     return sms.ready()
 
 
-def _send_sms_sync(to: str, text: str) -> None:
-    sms.send_sync(to, text, tag="password-reset")
+def _send_sms_sync(to: str, text: str, sender: str | None = None) -> None:
+    sms.send_sync(to, text, sender=sender, tag="password-reset")
 
 
-async def send_reset_code(method: str, contact: str, code: str) -> None:
+async def send_reset_code(
+    method: str, contact: str, code: str, sender: str | None = None
+) -> None:
     """인증번호 발송 — EMAIL 은 SMTP, PHONE 은 솔라피 SMS. 미설정·실패는 로그 폴백.
 
     폴백이 있는 이유는 **개발 중에 계정 없이도 흐름을 태울 수 있어야** 해서다
     (`docker compose logs api | grep password-reset` 로 코드를 꺼내 쓴다).
     운영에서 설정이 비어 있으면 사용자는 인증번호를 영영 못 받으므로,
     폴백으로 떨어질 때는 WARNING 을 남겨 눈에 띄게 한다.
+
+    [sender] 는 **그 직원이 속한 지점 번호**다 (2026-09-09 대표 요청) —
+    첨단 직원에게는 첨단 번호로, 화순 직원에게는 화순 번호로 간다.
+
+    **없으면 기본 번호로라도 보낸다.** 회원에게 가는 문자(컴플레인 해결·PT
+    설문)는 지점 번호가 없으면 아예 안 보내는데, 거기는 회원이 되걸었을 때
+    엉뚱한 매장에 닿는 것이 문제다. 여기는 다르다 — 못 받으면 그 직원이
+    **로그인을 아예 못 한다.** 본사(HQ) 소속 대표·관리자가 그 자리다.
     """
     if method == "EMAIL" and settings.smtp_host:
         try:
@@ -114,7 +124,10 @@ async def send_reset_code(method: str, contact: str, code: str) -> None:
     if method == "PHONE" and _sms_ready():
         try:
             await asyncio.to_thread(
-                _send_sms_sync, contact, f"[HiFIS] 인증번호 {code} (3분 내 입력)"
+                _send_sms_sync,
+                contact,
+                f"[HiFIS] 인증번호 {code} (3분 내 입력)",
+                sender,
             )
             return
         except Exception:
@@ -124,8 +137,11 @@ async def send_reset_code(method: str, contact: str, code: str) -> None:
     logger.warning("[password-reset] 발송 스텁(실제 발송 아님) method=%s contact=%s code=%s", method, contact, code)
 
 
-async def issue_code(contact: str, employee_id: str) -> None:
-    """인증번호 생성·저장·발송. 쿨다운 중이면 조용히 스킵(응답은 동일하게 성공)."""
+async def issue_code(contact: str, employee_id: str, sender: str | None = None) -> None:
+    """인증번호 생성·저장·발송. 쿨다운 중이면 조용히 스킵(응답은 동일하게 성공).
+
+    [sender] 는 그 직원의 지점 번호 — 라우터가 찾아서 넘긴다.
+    """
     method, norm = normalize_contact(contact)
     r = get_redis()
     if await r.get(_cooldown_key(norm)):  # 최근 발송됨 → 재발송 억제
@@ -137,7 +153,7 @@ async def issue_code(contact: str, employee_id: str) -> None:
         ex=CODE_TTL_S,
     )
     await r.set(_cooldown_key(norm), "1", ex=SEND_COOLDOWN_S)
-    await send_reset_code(method, norm, code)
+    await send_reset_code(method, norm, code, sender)
 
 
 async def verify_code(contact: str, code: str) -> str | None:
