@@ -4,17 +4,23 @@ POST [MEMBER]: 서명 저장 → usedSessions +1 → 만료 판정 → CLASS 점
 반환 { sign, registration }.
 """
 
+import asyncio
+import logging
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.config import settings
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
 from app.core.tokens import public_token
 from app.core.storage import save_signature
 from app.enums import RegistrationStatus, RegistrationType, Role, ScoreCategory, WorkoutKind
 from app.db.session import get_db
+from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.pt_survey import PtSurvey
@@ -23,6 +29,7 @@ from app.models.members.session_sign import SessionSign
 from app.models.members.workout import WorkoutLog
 from app.schemas.members.registration import RegistrationOut
 from app.schemas.members.session_sign import SessionSignCreate, SessionSignOut, SessionSignResult
+from app.services import sms
 from app.services.scoring import accrue_score
 
 CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
@@ -33,41 +40,130 @@ CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
 #: 마지막 회차에 물으면 이미 마음을 정한 뒤다.
 PT_SURVEY_AT = 7
 
+logger = logging.getLogger("app.pt_survey")
+
+#: LMS 제목 — 문자 목록에서 **본문 첫 줄 대신** 이게 보인다.
+#: 안 주면 `[피트니스스타 화순점]` 이 잘려서 무슨 문자인지 모른다.
+_SMS_SUBJECT = "수업 만족도 여쭙습니다"
+
+#: 회원에게 나가는 본문
+#:
+#: **연장 이야기를 안 꺼낸다.** 7회차에 "연장하실래요" 로 시작하면 영업
+#: 문자로 읽힌다 — 설문 안에 그 문항이 있으니 들어가서 답하면 된다.
+#:
+#: **"트레이너에게 그대로 전해지지 않는다" 를 넣는다.** 솔직하게 쓰게 만드는
+#: 문장이라 링크를 누르기 **전에** 읽혀야 한다 (설문 화면에도 같은 말이 있다).
+_SMS_TEMPLATE = """[피트니스스타 {branch}]
+
+{member}, 안녕하세요.
+{trainer} 트레이너와의 수업이 {session}회차를 지났습니다.
+
+수업이 잘 맞으셨는지, 바라시는 점은 없는지 여쭙고 싶습니다.
+남겨 주신 답변은 트레이너에게 그대로 전해지지 않으니 편하게 적어 주세요.
+
+{url}
+
+더 잘 맞는 수업으로 보답하겠습니다."""
+
+
+def _member_label(name: str | None) -> str:
+    """`장예진님` · `정훈` 이 섞여 있다 — 붙은 `님` 을 떼고 하나로 맞춘다.
+
+    안 맞추면 `장예진님 회원님` 처럼 두 번 붙는다.
+    """
+    clean = (name or "").strip()
+    while clean.endswith("님"):
+        clean = clean[:-1].rstrip()
+    return f"{clean} 회원님" if clean else "회원님"
+
 router = APIRouter(prefix="/session-signs", tags=["session-signs"])
 
 
 async def _open_pt_survey(
     db: AsyncSession, registration: Registration, sign: SessionSign, trainer_id: str
-) -> None:
+) -> PtSurvey | None:
     """신규 등록권의 7회차면 **만족도 폼을 하나 연다** (2026-08-20 요청).
 
     **신규만이다.** 재등록한 사람은 이미 겪어 보고 다시 온 것이라
     7회차에 "연장하실래요" 를 다시 묻는 것이 어색하다.
 
-    **줄만 만들고 문자는 아직 안 보낸다.** 발신번호가 안 정해져서다
-    (고민해볼꺼 21번) — 그때까지는 `GET /pt-surveys` 의 `url` 을 트레이너가
-    복사해 직접 보낸다.
+    **만든 줄을 돌려준다** — 문자는 커밋한 **뒤에** 보낸다 ([_sms_pt_survey]).
+    커밋 전에 보내면 싸인이 되돌려졌을 때 없는 설문 주소가 회원에게 가 있다.
 
     받는 트레이너는 **그날 실제로 수업한 사람**이다. 등록권의 담당으로 하면
     대타로 들어간 날 물어본 것이 엉뚱한 사람에게 붙는다.
     """
     if registration.type != RegistrationType.NEW or sign.session_no != PT_SURVEY_AT:
-        return
+        return None
     # 되돌렸다 다시 찍는 일이 있어도 두 줄이 안 생긴다 (등록권당 하나다)
     exists = await db.scalar(
         select(PtSurvey.id).where(PtSurvey.registration_id == registration.id)
     )
     if exists is not None:
-        return
-    db.add(
-        PtSurvey(
-            registration_id=registration.id,
-            member_id=registration.member_id,
-            trainer_id=trainer_id,
-            token=public_token(),
-            session_no=sign.session_no,
-        )
+        return None
+    survey = PtSurvey(
+        registration_id=registration.id,
+        member_id=registration.member_id,
+        trainer_id=trainer_id,
+        token=public_token(),
+        session_no=sign.session_no,
     )
+    db.add(survey)
+    return survey
+
+
+async def _sms_pt_survey(db: AsyncSession, survey: PtSurvey) -> None:
+    """7회차 설문 주소를 **회원에게** 문자로 보낸다 (2026-09-09 대표 요청).
+
+    예전에는 줄만 만들고 트레이너가 `GET /pt-surveys` 의 주소를 복사해 직접
+    보냈다. 발신번호가 지점마다 정해지면서(`branches.sms_sender`) 자동으로
+    나갈 수 있게 됐다 — 컴플레인 해결 문자와 **같은 부품**을 쓴다.
+
+    **커밋 뒤에 부른다.** 싸인이 되돌려졌는데 문자가 나가 있으면 회원에게
+    없는 설문 주소를 보낸 셈이 된다.
+
+    **발신번호는 그 트레이너의 지점 번호다.** 회원이 되걸면 그 매장에 닿아야
+    한다 — 번호가 없으면 **안 보낸다.** 기본 번호로 대신 보내면 화순 회원이
+    첨단으로 전화하는 셈이다 (컴플레인 문자와 같은 규칙).
+
+    **실패해도 그냥 넘어간다.** 문자는 곁가지고, 여기서 막으면 솔라피가
+    죽었을 때 세션 싸인 자체가 안 된다. 안 나갔으면 `sent_at` 이 비어 있어서
+    앱의 `주소 복사` 로 손으로 넘길 수 있다.
+    """
+    if survey.sent_at:
+        return
+    member = await db.get(Member, survey.member_id)
+    to = (member.phone or "").strip() if member else ""
+    if not to:
+        return
+
+    trainer = await db.get(Employee, survey.trainer_id)
+    branch = await db.get(Branch, trainer.branch_id) if trainer and trainer.branch_id else None
+    sender = (branch.sms_sender or "").strip() if branch else ""
+    if not sender or not sms.ready(sender):
+        logger.info(
+            "[pt-survey-sms] 발신번호가 없어 건너뜀 branch=%s", branch.name if branch else "?"
+        )
+        return
+
+    base = settings.public_base_url.rstrip("/")
+    text = _SMS_TEMPLATE.format(
+        branch=sms.branch_label(branch.name),
+        member=_member_label(member.name),
+        trainer=(trainer.name if trainer else "담당"),
+        session=survey.session_no,
+        url=f"{base}/pt/{survey.token}",
+    )
+    try:
+        await asyncio.to_thread(
+            sms.send_sync, to, text,
+            sender=sender, subject=_SMS_SUBJECT, tag="pt-survey-sms",
+        )
+    except Exception:
+        logger.warning("[pt-survey-sms] 발송 실패 — 싸인은 그대로 둔다", exc_info=True)
+        return
+    survey.sent_at = datetime.now(timezone.utc)
+    await db.commit()
 
 
 def _sign_out(
@@ -183,9 +279,12 @@ async def create_session_sign(
         source_ref_id=sign.id,
         reason="세션 수행",
     )
-    await _open_pt_survey(db, registration, sign, performer_id)
+    survey = await _open_pt_survey(db, registration, sign, performer_id)
 
     await db.commit()
+    # **커밋한 뒤에** 보낸다 — 위 트랜잭션이 되돌려지면 없는 설문 주소가 간다
+    if survey is not None:
+        await _sms_pt_survey(db, survey)
     await db.refresh(sign)
     await db.refresh(registration)
     member = await db.get(Member, registration.member_id)

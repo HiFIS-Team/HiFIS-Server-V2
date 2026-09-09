@@ -178,12 +178,6 @@ _SMS_TEMPLATE = """[피트니스스타 {branch}]
 _SMS_OPINION_MAX = 80
 
 
-def _branch_label(name: str) -> str:
-    """`화순` → `화순점`. 이미 `점` 으로 끝나면 그대로 둔다."""
-    clean = (name or "").strip()
-    return clean if clean.endswith("점") else f"{clean}점"
-
-
 async def _sms_resolved(db: AsyncSession, survey: KindnessSurvey) -> None:
     """의견을 남긴 **회원에게** 해결됐다고 문자를 보낸다 (2026-09-08 대표 요청).
 
@@ -217,7 +211,7 @@ async def _sms_resolved(db: AsyncSession, survey: KindnessSurvey) -> None:
     if len(opinion) > _SMS_OPINION_MAX:
         opinion = opinion[: _SMS_OPINION_MAX - 1].rstrip() + "…"
 
-    text = _SMS_TEMPLATE.format(branch=_branch_label(branch.name), opinion=opinion)
+    text = _SMS_TEMPLATE.format(branch=sms.branch_label(branch.name), opinion=opinion)
     try:
         await asyncio.to_thread(
             sms.send_sync, to, text,

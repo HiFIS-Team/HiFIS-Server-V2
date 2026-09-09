@@ -41,6 +41,16 @@ def mask_phone(phone: str) -> str:
     return f"{digits[:3]}****{digits[-4:]}" if len(digits) >= 7 else "***"
 
 
+def branch_label(name: str | None) -> str:
+    """`화순` → `화순점`. 이미 `점` 으로 끝나면 그대로 둔다.
+
+    회원에게 나가는 문자가 둘이라(컴플레인 해결·PT 설문) **한 곳에 둔다** —
+    갈리면 같은 지점이 문자마다 다른 이름으로 불린다.
+    """
+    clean = (name or "").strip()
+    return clean if clean.endswith("점") else f"{clean}점"
+
+
 def ready(sender: str | None = None) -> bool:
     """보낼 수 있나 — 열쇠 둘과 **발신번호**가 다 있어야 한다.
 
