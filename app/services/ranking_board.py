@@ -21,7 +21,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import KST, period_range
-from app.enums import RegistrationType, Role, ScoreCategory, VisitPath
+from app.enums import ProjectRequestStatus, RegistrationType, Role, ScoreCategory, VisitPath
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
