@@ -99,6 +99,15 @@ class EnvTaskLog(UUIDMixin, TimestampMixin, Base):
     )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 매장 TV 에 걸 한 줄 — **승인될 때 한 번 만들어 박아 둔다** (2026-09-09).
+    #:
+    #: 직원이 적는 [note] 는 `바벨 중앙 표시목 부착` 처럼 짧고 안쪽 말이라
+    #: 벽에 그대로 걸 글이 아니다. 승인되는 순간 회원이 읽을 문장으로 다듬는다
+    #: (`polish_env_note`). 컴플레인 요약(`kindness_surveys.summary`)과 같은 자리다.
+    #:
+    #: **비어 있으면 TV 에 안 건다** — 컴플레인은 못 줄이면 원문으로 떨어지지만
+    #: 여기는 원문이 벽에 걸 글이 아니라 아예 안 거는 쪽이 맞다.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def awaiting(self) -> bool:

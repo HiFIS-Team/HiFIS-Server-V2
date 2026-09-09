@@ -33,6 +33,7 @@ from app.schemas.scoring.env import (
 from app.services import notification_texts as ntext
 from app.services.notifications import master_ids, notify
 from app.services.scoring import accrue_score
+from app.services.summarize import polish_env_note
 
 router = APIRouter(tags=["env"])
 
@@ -353,6 +354,11 @@ async def approve_env_log(
     log.approval_status = ProjectRequestStatus.APPROVED
     log.decided_by_id = current.id
     log.decided_at = datetime.now(timezone.utc)
+    # **여기서 한 번 만들어 박는다** (2026-09-09 요청). 직원이 적은 글은
+    # `바벨 중앙 표시목 부착` 처럼 짧고 안쪽 말이라 벽에 그대로 걸 수 없다.
+    # 화면이 부를 때마다 만들면 새로고침마다 문장이 저 혼자 바뀐다
+    # (컴플레인 요약과 같은 이유).
+    log.summary = await polish_env_note(log.note or "")
     await accrue_score(
         db,
         employee_id=log.employee_id,

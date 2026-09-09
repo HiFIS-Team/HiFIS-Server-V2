@@ -37,6 +37,8 @@ def upgrade() -> None:
         "env_task_logs", sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True)
     )
     op.add_column("env_task_logs", sa.Column("reject_reason", sa.Text(), nullable=True))
+    # 매장 TV 에 걸 한 줄 — 승인될 때 만들어 박는다 (`polish_env_note`)
+    op.add_column("env_task_logs", sa.Column("summary", sa.Text(), nullable=True))
     op.create_foreign_key(
         "fk_env_task_logs_decided_by", "env_task_logs", "employees", ["decided_by_id"], ["id"]
     )
@@ -52,5 +54,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_env_task_logs_pending", table_name="env_task_logs")
     op.drop_constraint("fk_env_task_logs_decided_by", "env_task_logs", type_="foreignkey")
-    for col in ("reject_reason", "decided_at", "decided_by_id", "approval_status"):
+    for col in ("summary", "reject_reason", "decided_at", "decided_by_id", "approval_status"):
         op.drop_column("env_task_logs", col)

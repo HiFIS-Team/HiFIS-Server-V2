@@ -26,8 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.core.periods import now_kst
-from app.enums import ComplaintStatus
+from app.enums import ComplaintStatus, ProjectRequestStatus
 from app.models.platform.draw import Draw
+from app.models.scoring.env import EnvTaskLog
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
@@ -43,6 +44,9 @@ router = APIRouter(tags=["tv"])
 #: **길이만 본다** — 내용을 보고 판단하기 시작하면 진짜 의견까지 걸러진다.
 _MIN_TEXT = 4
 
+#: 환경정비에서 TV 로 올라오는 항목 — `kindness.py` 의 같은 이름과 맞춰야 한다
+_CLAIM_ITEM = "클레임해결"
+
 
 class ResolvedOut(CamelModel):
     """해결된 컴플레인 한 건 — **화면에 그릴 것만** 담는다."""
@@ -55,6 +59,9 @@ class ResolvedOut(CamelModel):
     #: 해결 날짜 옆에 세워서 **사람이 한 말**이라는 것이 보이게 한다
     #: (2026-09-08 대표 요청). 가리는 법은 추첨 참가자와 같은 함수다 —
     #: 같은 화면에 둘이 같이 서는데 규칙이 갈리면 안 된다.
+    #:
+    #: **환경정비에서 온 줄은 빈 값이다** (2026-09-09) — 직원이 손으로 남긴
+    #: 것이라 누가 말했는지를 모른다. 화면은 이름이 비면 그 칸을 안 그린다.
     name: str
     phone: str
 
@@ -169,9 +176,28 @@ async def tv_resolved(token: str, db: AsyncSession = Depends(get_db)) -> TvOut:
         )
     ).all()
 
-    return TvOut(
-        branch_name=branch.name,
-        resolved=[
+    # 환경정비에서 온 것 — 직원이 칩으로 올리고 **대표가 승인한** 클레임해결
+    # (2026-09-09 요청). 회원 설문을 안 거친 컴플레인(말로 들은 것)이 여기 온다.
+    #
+    # **요약이 있는 것만 건다.** 직원이 적은 원문은 `바벨 중앙 표시목 부착`
+    # 처럼 안쪽 말이라 벽에 걸 글이 아니다 — 승인될 때 다듬어 둔 줄을 쓴다.
+    env_rows = (
+        await db.scalars(
+            select(EnvTaskLog)
+            .where(
+                EnvTaskLog.branch_id == branch.id,
+                EnvTaskLog.item_name == _CLAIM_ITEM,
+                EnvTaskLog.approval_status == ProjectRequestStatus.APPROVED,
+                EnvTaskLog.summary.is_not(None),
+                EnvTaskLog.decided_at.is_not(None),
+            )
+            .order_by(EnvTaskLog.decided_at.desc())
+            .limit(30)
+        )
+    ).all()
+
+    resolved = [
+        *(
             ResolvedOut(
                 id=r.id,
                 # **요약이 있으면 그걸 쓴다** (2026-09-08 대표 요청). 화면이 줄을
@@ -187,5 +213,22 @@ async def tv_resolved(token: str, db: AsyncSession = Depends(get_db)) -> TvOut:
             )
             for r in rows
             if len((r.improvement or "").strip()) >= _MIN_TEXT
-        ],
-    )
+        ),
+        *(
+            ResolvedOut(
+                id=log.id,
+                text=(log.summary or "").strip(),
+                resolved_at=log.decided_at.isoformat(),
+                # **이름·번호를 안 싣는다** — 직원이 손으로 남긴 것이라
+                # 누가 말한 컴플레인인지를 모른다. 화면은 빈 값이면 그 칸을
+                # 통째로 안 그린다 (`TvBoard.tsx` 의 `{r.name && …}`).
+                name="",
+                phone="",
+            )
+            for log in env_rows
+        ),
+    ]
+    # 두 갈래를 **한 줄기로 세운다** — 화면에는 `해결 완료` 한 목록이라
+    # 어디서 왔는지가 아니라 언제 끝났는지로 서야 한다
+    resolved.sort(key=lambda r: r.resolved_at, reverse=True)
+    return TvOut(branch_name=branch.name, resolved=resolved[:30])

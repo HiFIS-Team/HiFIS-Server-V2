@@ -81,6 +81,8 @@ class EnvTaskLogOut(CamelModel):
     #: `REJECTED` 는 목록에 아예 안 온다.
     approval_status: ProjectRequestStatus | None = None
     reject_reason: str | None = None
+    #: 매장 TV 에 걸 한 줄 — 승인될 때 만들어진다 (없으면 TV 에 안 걸린다)
+    summary: str | None = None
     created_at: datetime
 
     @computed_field
