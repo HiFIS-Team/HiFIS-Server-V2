@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, computed_field
 
+from app.enums import ProjectRequestStatus
 from app.schemas.base import CamelModel, SignedUrlOptional
 
 
@@ -72,6 +73,14 @@ class EnvTaskLogOut(CamelModel):
     bonus_reason: str | None = None
     bonus_by_id: str | None = None
     bonus_at: datetime | None = None
+    #: 대표 결재 상태 — **`클레임해결` 만 채워진다** (2026-09-09).
+    #:
+    #: `None` 이면 결재가 필요 없는 항목이라 누르는 즉시 점수가 붙는다.
+    #: `PENDING` 이면 **점수가 아직 없다** — 화면이 그렇게 알려줘야 올린 사람이
+    #: 안 들어간 줄 알고 한 번 더 누르지 않는다 (실제로 그래서 중복이 났다).
+    #: `REJECTED` 는 목록에 아예 안 온다.
+    approval_status: ProjectRequestStatus | None = None
+    reject_reason: str | None = None
     created_at: datetime
 
     @computed_field

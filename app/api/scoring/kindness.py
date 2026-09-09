@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.ratelimit import limiter
 from app.db.session import get_db
-from app.enums import ComplaintStatus, Role, ScoreCategory
+from app.enums import ComplaintStatus, ProjectRequestStatus, Role, ScoreCategory
 from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog
 from app.models.scoring.kindness import KindnessSurvey
@@ -518,6 +518,11 @@ async def _award_claim_resolved(
         item_name=item.name,
         points=item.points,
         note=(survey.improvement or "")[:200],
+        # **바로 승인이다** — 칩으로 누른 것은 대표 결재를 기다리지만(2026-09-09),
+        # 이 길은 대표가 컴플레인을 승인해서 온 것이라 이미 본 셈이다.
+        # 대기로 두면 같은 일을 두 번 승인하게 된다.
+        approval_status=ProjectRequestStatus.APPROVED,
+        decided_at=datetime.now(timezone.utc),
     )
     db.add(log)
     await db.flush()

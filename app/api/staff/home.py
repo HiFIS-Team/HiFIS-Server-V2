@@ -43,6 +43,7 @@ from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
 from app.models.scoring.kindness import KindnessSurvey
+from app.models.scoring.env import EnvTaskLog
 from app.models.scoring.my_task import MyTask, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
@@ -399,6 +400,29 @@ async def my_inbox(
                     # 쪽이 사유를 못 읽고 있었다 (2026-09-09 대표 지적)
                     reason=(miss.excuse_reason or "").strip() or None,
                     created_at=miss.created_at,
+                ),
+            )
+        )
+
+    # 환경정비 `클레임해결` — 칩을 눌러 올린 것 (2026-09-09).
+    # **결재를 타는 항목만** `approval_status` 가 차 있어서 그것만 걸린다.
+    for log in (
+        await db.scalars(
+            select(EnvTaskLog).where(EnvTaskLog.approval_status.in_(_MY_TASK_IN[status]))
+        )
+    ).all():
+        rows.append(
+            (
+                log.created_at if pending else (log.decided_at or log.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.ENV_CLAIM,
+                    id=log.id,
+                    employee_id=log.employee_id,
+                    title=log.item_name,
+                    detail=f"{log.points}점",
+                    # 무엇을 해결했는지 — 결재하는 쪽이 봐야 하는 값이다
+                    reason=_written(log.note),
+                    created_at=log.created_at,
                 ),
             )
         )

@@ -3,9 +3,11 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.enums import ProjectRequestStatus
 
 
 class EnvItem(UUIDMixin, TimestampMixin, Base):
@@ -74,6 +76,38 @@ class EnvTaskLog(UUIDMixin, TimestampMixin, Base):
         String(36), ForeignKey("employees.id"), nullable=True
     )
     bonus_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ── 대표 승인이 필요한 기록 (2026-09-09 대표 요청) ──
+    #
+    # **`클레임해결` 만 해당한다.** 15점짜리라 누르기만 하면 가져갈 수 있어서,
+    # 컴플레인 해결 완료와 **같은 규칙**으로 맞췄다 (거기는 원래 승인을 받는다).
+    #
+    # | 값 | 뜻 |
+    # |---|---|
+    # | `None` | 승인이 필요 없는 항목 — 세탁·청소 등 **나머지 전부** |
+    # | `PENDING` | 올렸고 대표가 아직 안 봤다 — **점수가 아직 없다** |
+    # | `APPROVED` | 승인됨 — 이때 점수가 붙는다 |
+    # | `REJECTED` | 반려 — 조회에서 빼고 점수도 없다 |
+    #
+    # **컴플레인 승인에서 저절로 생기는 기록은 `APPROVED` 로 만든다**
+    # (`_award_claim_resolved`) — 그건 대표가 이미 승인한 것이다.
+    approval_status: Mapped[ProjectRequestStatus | None] = mapped_column(
+        SAEnum(ProjectRequestStatus, native_enum=False, length=20), nullable=True
+    )
+    decided_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def awaiting(self) -> bool:
+        """대표가 아직 안 본 기록 — 점수도 아직 없다."""
+        return self.approval_status == ProjectRequestStatus.PENDING
+
+    @property
+    def rejected(self) -> bool:
+        return self.approval_status == ProjectRequestStatus.REJECTED
 
 
 class SupplyOrder(UUIDMixin, TimestampMixin, Base):
