@@ -312,6 +312,9 @@ async def create_env_log(
     # 컴플레인 해결 완료와 같은 규칙이다 (`set_complaint_status`).
     if _needs_approval(item):
         log.approval_status = ProjectRequestStatus.PENDING
+        # **신청할 때 미리 다듬는다** (2026-09-09 요청) — 대표가 결재하면서
+        # 벽에 어떻게 걸릴지를 보고 누를 수 있어야 한다
+        log.summary = await polish_env_note(note or "")
     db.add(log)
     await db.flush()
     if not _needs_approval(item):
@@ -358,7 +361,9 @@ async def approve_env_log(
     # `바벨 중앙 표시목 부착` 처럼 짧고 안쪽 말이라 벽에 그대로 걸 수 없다.
     # 화면이 부를 때마다 만들면 새로고침마다 문장이 저 혼자 바뀐다
     # (컴플레인 요약과 같은 이유).
-    log.summary = await polish_env_note(log.note or "")
+    # 신청할 때 이미 만들어 뒀다 — 그때 못 만든 것만 한 번 더 해 본다
+    if not log.summary:
+        log.summary = await polish_env_note(log.note or "")
     await accrue_score(
         db,
         employee_id=log.employee_id,

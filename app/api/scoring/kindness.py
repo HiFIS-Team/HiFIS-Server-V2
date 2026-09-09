@@ -336,6 +336,13 @@ async def set_complaint_status(
     survey.improvement_status = ComplaintStatus.DONE_REQUESTED
     survey.done_requested_by_id = current.id
     survey.done_requested_at = now
+    # **여기서 미리 만든다** (2026-09-09 요청). 대표가 결재하면서 벽에 어떻게
+    # 걸릴지를 보고 누를 수 있어야 한다 — 예전에는 승인 뒤에 만들어져서
+    # 이상하게 다듬어져도 손쓸 방법이 지우는 것뿐이었다.
+    #
+    # 반려돼도 만든 값은 남는다. 다시 올릴 때 또 안 부르므로 손해가 아니다
+    # (`_make_summary` 가 이미 있으면 건너뛴다).
+    await _make_summary(survey)
     for eid in await master_ids(db, exclude=current.id):
         await notify(
             db,

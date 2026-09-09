@@ -422,6 +422,7 @@ async def my_inbox(
                     detail=f"{log.points}점",
                     # 무엇을 해결했는지 — 결재하는 쪽이 봐야 하는 값이다
                     reason=_written(log.note),
+                    preview=_written(log.summary),
                     created_at=log.created_at,
                 ),
             )
@@ -489,6 +490,7 @@ async def my_inbox(
                         employee_id=who,
                         title="컴플레인 해결",
                         detail=(survey.improvement or "").strip(),
+                        preview=_written(survey.summary),
                         created_at=survey.done_requested_at or survey.submitted_at,
                     ),
                 )
