@@ -72,6 +72,7 @@ def _to_out(
     done_count: int = 0,
     reactions: list[ReactionAgg] | None = None,
     comment_count: int = 0,
+    awarded_points: int | None = None,
 ) -> ProjectOut:
     return ProjectOut(
         id=project.id,
@@ -92,6 +93,7 @@ def _to_out(
         completed_at=project.completed_at,
         reactions=reactions or [],
         comment_count=comment_count,
+        awarded_points=awarded_points,
         created_by_id=project.created_by_id,
         created_at=project.created_at,
     )
@@ -115,11 +117,34 @@ async def _todo_counts(db: AsyncSession, project_ids: list[str]) -> dict[str, tu
     return {pid: (total, done) for pid, total, done in rows}
 
 
+async def _awarded(db: AsyncSession, project_ids: list[str]) -> dict[str, int]:
+    """프로젝트별 **대표가 매긴 점수** — 목록 N+1 없이 한 번에 (2026-09-09 요청).
+
+    완료 자동 점수(`created_by_id` 가 null)는 뺀다 — 사람이 판단한 값만 셈한다.
+    참여자 전원이 같은 값이라 프로젝트당 한 줄만 있으면 된다.
+    """
+    if not project_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(ScoreEvent.source_ref_id, func.max(ScoreEvent.points))
+            .where(
+                ScoreEvent.category == ScoreCategory.PROJECT,
+                ScoreEvent.source_ref_id.in_(project_ids),
+                ScoreEvent.created_by_id.is_not(None),
+            )
+            .group_by(ScoreEvent.source_ref_id)
+        )
+    ).all()
+    return {pid: points for pid, points in rows}
+
+
 async def _single_out(db: AsyncSession, project: Project) -> ProjectOut:
     total, done = (await _todo_counts(db, [project.id])).get(project.id, (0, 0))
     social = await _social(db, [project.id])
     hearts, comments = social[project.id]
-    return _to_out(project, total, done, hearts, comments)
+    awarded = await _awarded(db, [project.id])
+    return _to_out(project, total, done, hearts, comments, awarded.get(project.id))
 
 
 async def _social(
@@ -584,8 +609,10 @@ async def list_projects(
     ids = [p.id for p in projects]
     counts = await _todo_counts(db, ids)
     social = await _social(db, ids)
+    awarded = await _awarded(db, ids)
     out = [
-        _to_out(p, *counts.get(p.id, (0, 0)), *social[p.id]) for p in projects
+        _to_out(p, *counts.get(p.id, (0, 0)), *social[p.id], awarded.get(p.id))
+        for p in projects
     ]
     if status:  # 파생 상태 필터는 계산 후
         out = [o for o in out if o.status == status]

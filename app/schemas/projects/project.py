@@ -64,6 +64,14 @@ class ProjectOut(CamelModel):
     #: 공지·회의록과 같은 모양이라 같은 이름으로 싣는다
     reactions: list[ReactionAgg] = Field(default_factory=list)
     comment_count: int = 0
+    #: **대표가 매긴 점수** — null 이면 아직 안 매겼다 (2026-09-09 요청).
+    #:
+    #: 완료하면 서버가 담당자 10점·참여자 5점을 자동으로 붙이는데, 그건
+    #: 여기 안 담는다. 이 칸이 차 있으면 **대표가 보고 판단한 값**이라는 뜻이다
+    #: (`ScoreEvent.created_by_id` 가 있는 줄).
+    #:
+    #: 참여자 전원이 같은 값을 받으므로 프로젝트당 한 값이다.
+    awarded_points: int | None = None
     created_by_id: str
     created_at: datetime
 
