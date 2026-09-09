@@ -381,6 +381,9 @@ async def my_inbox(
                     employee_id=miss.employee_id,
                     title="업무 누락 사유",
                     detail=f"{day.month}월 {day.day}일 · {miss.task_count}개",
+                    # **적어 낸 글을 같이 보낸다** — 이걸 안 보내서 결재하는
+                    # 쪽이 사유를 못 읽고 있었다 (2026-09-09 대표 지적)
+                    reason=(miss.excuse_reason or "").strip() or None,
                     created_at=miss.created_at,
                 ),
             )
