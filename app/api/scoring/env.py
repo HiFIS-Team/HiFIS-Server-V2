@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, branch_pick, branch_scope, get_current_user, require_role
+from app.core.korean import josa
 from app.core.periods import KST, period_range
 from app.core.storage import save_env_photo
 from app.db.session import get_db
@@ -378,7 +379,7 @@ async def approve_env_log(
         db,
         employee_id=log.employee_id,
         type="ENV",
-        title=f"{log.item_name} 이(가) 승인됐어요",
+        title=f"{josa(log.item_name, '이')} 승인됐어요",
         body=f"{log.points}점이 들어갔어요",
         link="/work",
     )
@@ -408,7 +409,7 @@ async def reject_env_log(
         db,
         employee_id=log.employee_id,
         type="ENV",
-        title=f"{log.item_name} 이(가) 반려됐어요",
+        title=f"{josa(log.item_name, '이')} 반려됐어요",
         body=log.reject_reason or "",
         link="/work",
     )

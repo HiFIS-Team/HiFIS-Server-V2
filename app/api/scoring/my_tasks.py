@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_pick, get_current_user, require_role
+from app.core.korean import josa
 from app.core.periods import KST
 from app.db.session import get_db
 from app.enums import EmployeeStatus, MyTaskFieldKind, MyTaskRequestType, ProjectRequestStatus, Role
@@ -562,7 +563,7 @@ def _check_values(task: MyTask, raw: dict[str, str]) -> dict:
         if not text:
             raise HTTPException(
                 400,
-                detail={"code": "VALUE_REQUIRED", "message": f"{name}을(를) 적어 주세요"},
+                detail={"code": "VALUE_REQUIRED", "message": f"{josa(name, '을')} 적어 주세요"},
             )
         if f.get("kind") == MyTaskFieldKind.NUMBER.value:
             try:
