@@ -43,12 +43,12 @@ from app.models.payroll.payslip import Payslip
 from app.models.projects.project import Project
 from app.models.projects.project_request import ProjectRequest
 from app.models.scoring.kindness import KindnessSurvey
+from app.models.scoring.env import EnvTaskLog
 from app.models.scoring.my_task import MyTask, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 from app.schemas.staff.home import HomeAttendanceOut, HomeSummaryOut, InboxItemOut
-from app.services.notice_visibility import is_notice_blocked
 
 router = APIRouter(tags=["home"])
 
@@ -137,17 +137,15 @@ async def my_home(
     )
 
     # ── 안 읽은 공지 수 = 내 NoticeRead 가 없는 공지 (읽음 상태 기준, §6.4) ──
-    unread = 0
-    if not await is_notice_blocked(db, current):
-        unread = await db.scalar(
-            select(func.count())
-            .select_from(Notice)
-            .where(
-                ~select(NoticeRead.id)
-                .where(NoticeRead.notice_id == Notice.id, NoticeRead.employee_id == current.id)
-                .exists()
-            )
+    unread = await db.scalar(
+        select(func.count())
+        .select_from(Notice)
+        .where(
+            ~select(NoticeRead.id)
+            .where(NoticeRead.notice_id == Notice.id, NoticeRead.employee_id == current.id)
+            .exists()
         )
+    )
 
     # ── 이번 달 내 점수 합 ──
     month_score = await db.scalar(
@@ -238,6 +236,11 @@ async def my_inbox(
     **일정 반려는 목록에 없다** — 반려하면 행을 지우기 때문이다(`EventStatus`).
     승인된 일정도 **결재를 거친 것만** 센다 (`Event.decided_at`).
     """
+    # 사람이 적어 낸 글 — 빈 문자열은 **없는 것과 같게** 다룬다.
+    # 안 다듬으면 화면에 빈 줄 자리만 생긴다 (`if item.reason case final r?`).
+    def _written(value: str | None) -> str | None:
+        return (value or "").strip() or None
+
     # (정렬 키, 줄) — 종류마다 처리 시각을 들고 있는 칸이 달라서 따로 모은다
     rows: list[tuple[datetime, InboxItemOut]] = []
     pending = status is InboxStatus.PENDING
@@ -255,6 +258,8 @@ async def my_inbox(
                     employee_id=slip.employee_id,
                     title=f"{year}년 {int(month)}월 급여",
                     detail=f"실수령 {slip.net:,}원",
+                    # 신청서의 특이사항 — 지각 사유·추가 근무 설명이 여기 온다
+                    reason=_written(slip.note),
                     created_at=slip.updated_at,  # 제출한 시각(마지막 상태 변경)
                 ),
             )
@@ -281,6 +286,7 @@ async def my_inbox(
                     employee_id=leave.employee_id,
                     title=_LEAVE_LABEL.get(leave.type, "월차"),
                     detail=f"{span} · {days}일",
+                    reason=_written(leave.reason),
                     created_at=leave.created_at,
                 ),
             )
@@ -298,6 +304,9 @@ async def my_inbox(
                     employee_id=doc.requester_id,
                     title=doc.kind,
                     detail=doc.title,
+                    # `detail` 은 제목이고 이건 **본문**이다 — 무엇을 왜
+                    # 올렸는지는 본문에 있다
+                    reason=_written(doc.content),
                     created_at=doc.created_at,
                 ),
             )
@@ -337,6 +346,8 @@ async def my_inbox(
                     employee_id=event.owner_id,
                     title=event.title,
                     detail=f"{span} · {event.category}",
+                    # 일정에 적어 둔 메모 — 왜 이 날인지가 여기 있다
+                    reason=_written(event.memo),
                     created_at=event.created_at,
                 ),
             )
@@ -362,6 +373,7 @@ async def my_inbox(
                     employee_id=req.requested_by_id,
                     title=f"내 업무 {'수정' if req.type == MyTaskRequestType.EDIT else '삭제'}",
                     detail=detail,
+                    reason=_written(req.reason),
                     created_at=req.created_at,
                 ),
             )
@@ -384,7 +396,34 @@ async def my_inbox(
                     employee_id=miss.employee_id,
                     title="업무 누락 사유",
                     detail=f"{day.month}월 {day.day}일 · {miss.task_count}개",
+                    # **적어 낸 글을 같이 보낸다** — 이걸 안 보내서 결재하는
+                    # 쪽이 사유를 못 읽고 있었다 (2026-09-09 대표 지적)
+                    reason=(miss.excuse_reason or "").strip() or None,
                     created_at=miss.created_at,
+                ),
+            )
+        )
+
+    # 환경정비 `클레임해결` — 칩을 눌러 올린 것 (2026-09-09).
+    # **결재를 타는 항목만** `approval_status` 가 차 있어서 그것만 걸린다.
+    for log in (
+        await db.scalars(
+            select(EnvTaskLog).where(EnvTaskLog.approval_status.in_(_MY_TASK_IN[status]))
+        )
+    ).all():
+        rows.append(
+            (
+                log.created_at if pending else (log.decided_at or log.updated_at),
+                InboxItemOut(
+                    kind=InboxKind.ENV_CLAIM,
+                    id=log.id,
+                    employee_id=log.employee_id,
+                    title=log.item_name,
+                    detail=f"{log.points}점",
+                    # 무엇을 해결했는지 — 결재하는 쪽이 봐야 하는 값이다
+                    reason=_written(log.note),
+                    preview=_written(log.summary),
+                    created_at=log.created_at,
                 ),
             )
         )
@@ -411,6 +450,7 @@ async def my_inbox(
                     employee_id=req.requested_by_id,
                     title=_PROJECT_LABEL.get(req.type, "프로젝트"),
                     detail=detail,
+                    reason=_written(req.reason),
                     created_at=req.created_at,
                 ),
             )
@@ -450,6 +490,7 @@ async def my_inbox(
                         employee_id=who,
                         title="컴플레인 해결",
                         detail=(survey.improvement or "").strip(),
+                        preview=_written(survey.summary),
                         created_at=survey.done_requested_at or survey.submitted_at,
                     ),
                 )

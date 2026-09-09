@@ -4,17 +4,18 @@
 - 수행 → ENV 점수 적립, 취소(DELETE) → 연결 점수 회수.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_filter, branch_pick, branch_scope, get_current_user, require_role
+from app.core.korean import josa
 from app.core.periods import KST, period_range
 from app.core.storage import save_env_photo
 from app.db.session import get_db
-from app.enums import Role, ScoreCategory
+from app.enums import ProjectRequestStatus, Role, ScoreCategory
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.models.scoring.env import EnvItem, EnvTaskLog, SupplyOrder
@@ -31,8 +32,9 @@ from app.schemas.scoring.env import (
     SupplyOrderOut,
 )
 from app.services import notification_texts as ntext
-from app.services.notifications import notify
+from app.services.notifications import master_ids, notify
 from app.services.scoring import accrue_score
+from app.services.summarize import polish_env_note
 
 router = APIRouter(tags=["env"])
 
@@ -208,6 +210,21 @@ async def update_env_item(
     return item
 
 
+#: **대표 승인을 받아야 점수가 붙는 항목** (2026-09-09 대표 요청)
+#:
+#: 15점짜리라 칩을 누르기만 하면 가져갈 수 있었다. 컴플레인 해결 완료는 원래
+#: 승인을 받는데(`kindness_surveys`), 같은 일을 이 칩으로 누르면 그냥 들어가서
+#: **한 컴플레인에 여러 사람이 15점씩** 가져갈 수 있었다.
+#:
+#: **이름으로 가른다.** 항목은 지점마다 행이 따로라 id 로는 못 묶고,
+#: `_award_claim_resolved` 도 같은 이름으로 찾는다.
+_APPROVAL_ITEMS = {"클레임해결"}
+
+
+def _needs_approval(item: EnvItem) -> bool:
+    return item.name in _APPROVAL_ITEMS
+
+
 # ---------- EnvTaskLog (수행 기록 → 점수) ----------
 @router.post("/env-logs/photo", response_model=EnvLogPhotoOut, status_code=201)
 async def upload_env_photo(
@@ -292,20 +309,126 @@ async def create_env_log(
         place=place or None,
         link=link,
     )
+    # **승인 항목은 점수를 아직 안 준다** — 대표가 눌러야 붙는다.
+    # 컴플레인 해결 완료와 같은 규칙이다 (`set_complaint_status`).
+    if _needs_approval(item):
+        log.approval_status = ProjectRequestStatus.PENDING
+        # **신청할 때 미리 다듬는다** (2026-09-09 요청) — 대표가 결재하면서
+        # 벽에 어떻게 걸릴지를 보고 누를 수 있어야 한다
+        log.summary = await polish_env_note(note or "")
     db.add(log)
     await db.flush()
+    if not _needs_approval(item):
+        await accrue_score(
+            db,
+            employee_id=current.id,
+            branch_id=item.branch_id,
+            category=ScoreCategory.ENV,
+            points=item.points,
+            created_by_id=current.id,
+            source_ref_id=log.id,
+            reason=label,
+        )
+    else:
+        for eid in await master_ids(db, exclude=current.id):
+            await notify(
+                db,
+                employee_id=eid,
+                type="ENV",
+                title=f"{item.name} 결재",
+                body=f"{current.name} · {note or item.name}",
+                link="/work",
+            )
+    await db.commit()
+    await db.refresh(log)
+    return log
+
+
+@router.post("/env-logs/{log_id}/approve", response_model=EnvTaskLogOut)
+async def approve_env_log(
+    log_id: str,
+    current: Employee = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> EnvTaskLog:
+    """승인 — **이때 점수가 붙는다.** 올린 사람 앞으로 간다.
+
+    대표가 눌러 준다고 대표가 한 것은 아니다 (컴플레인 승인과 같은 규칙).
+    """
+    log = await _pending_log(db, log_id)
+    log.approval_status = ProjectRequestStatus.APPROVED
+    log.decided_by_id = current.id
+    log.decided_at = datetime.now(timezone.utc)
+    # **여기서 한 번 만들어 박는다** (2026-09-09 요청). 직원이 적은 글은
+    # `바벨 중앙 표시목 부착` 처럼 짧고 안쪽 말이라 벽에 그대로 걸 수 없다.
+    # 화면이 부를 때마다 만들면 새로고침마다 문장이 저 혼자 바뀐다
+    # (컴플레인 요약과 같은 이유).
+    # 신청할 때 이미 만들어 뒀다 — 그때 못 만든 것만 한 번 더 해 본다
+    if not log.summary:
+        log.summary = await polish_env_note(log.note or "")
     await accrue_score(
         db,
-        employee_id=current.id,
-        branch_id=item.branch_id,
+        employee_id=log.employee_id,
+        branch_id=log.branch_id,
         category=ScoreCategory.ENV,
-        points=item.points,
+        points=log.points + log.bonus_points,
         created_by_id=current.id,
         source_ref_id=log.id,
-        reason=label,
+        reason=log.item_name,
+    )
+    await notify(
+        db,
+        employee_id=log.employee_id,
+        type="ENV",
+        title=f"{josa(log.item_name, '이')} 승인됐어요",
+        body=f"{log.points}점이 들어갔어요",
+        link="/work",
     )
     await db.commit()
     await db.refresh(log)
+    return log
+
+
+@router.post("/env-logs/{log_id}/reject", response_model=EnvTaskLogOut)
+async def reject_env_log(
+    log_id: str,
+    reason: str | None = Query(None),
+    current: Employee = Depends(require_role(Role.MASTER)),
+    db: AsyncSession = Depends(get_db),
+) -> EnvTaskLog:
+    """반려 — **행을 남긴다.**
+
+    지우면 올린 사람이 왜 안 됐는지를 알 길이 없다. 대신 `GET /env-logs` 가
+    반려된 것을 빼므로 **내역에는 안 뜬다** (일정 반려와 같은 방식).
+    """
+    log = await _pending_log(db, log_id)
+    log.approval_status = ProjectRequestStatus.REJECTED
+    log.decided_by_id = current.id
+    log.decided_at = datetime.now(timezone.utc)
+    log.reject_reason = (reason or "").strip() or None
+    await notify(
+        db,
+        employee_id=log.employee_id,
+        type="ENV",
+        title=f"{josa(log.item_name, '이')} 반려됐어요",
+        body=log.reject_reason or "",
+        link="/work",
+    )
+    await db.commit()
+    await db.refresh(log)
+    return log
+
+
+async def _pending_log(db: AsyncSession, log_id: str) -> EnvTaskLog:
+    """대기 중인 기록만 — 이미 처리한 것을 또 누르면 점수가 두 번 붙는다."""
+    log = await db.get(EnvTaskLog, log_id)
+    if log is None:
+        raise HTTPException(
+            404, detail={"code": "ENV_LOG_NOT_FOUND", "message": "수행 기록을 찾을 수 없습니다"}
+        )
+    if log.approval_status is not ProjectRequestStatus.PENDING:
+        raise HTTPException(
+            400, detail={"code": "NOT_PENDING", "message": "결재를 기다리는 기록이 아닙니다"}
+        )
     return log
 
 
@@ -317,7 +440,12 @@ async def list_env_logs(
     date: str | None = Query(None),      # "YYYY-MM-DD" — 하루치(KST). 앱 '오늘' 필터
     period: str | None = Query(None),    # "YYYY-MM" — 월치(세션 싸인과 동일)
 ) -> list[EnvTaskLog]:
-    stmt = select(EnvTaskLog)
+    # 반려된 것은 안 그린다 — 안 한 일로 친다 (일정 반려와 같은 방식).
+    # 대기 중인 것은 **보여준다** — 안 보이면 올린 사람이 또 누른다
+    stmt = select(EnvTaskLog).where(
+        (EnvTaskLog.approval_status.is_(None))
+        | (EnvTaskLog.approval_status != ProjectRequestStatus.REJECTED)
+    )
     if scope:
         stmt = stmt.where(EnvTaskLog.branch_id == scope)
     if employee_id:

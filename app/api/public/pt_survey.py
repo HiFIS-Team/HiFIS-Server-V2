@@ -113,16 +113,24 @@ async def submit_pt_survey(
 async def _notify_answered(
     db: AsyncSession, survey: PtSurvey, trainer: Employee | None, member: Member | None
 ) -> None:
-    """설문이 들어왔다고 알린다 (2026-09-05) — **결과를 볼 수 있는 사람에게만.**
+    """설문이 들어왔다고 알린다 (2026-09-05) — **결과를 볼 수 있는 사람 전부에게.**
 
-    담당 트레이너 본인은 못 보는 자리라(`app/api/members/pt_surveys.py`) 알림도
-    안 보낸다 — 받는 사람은 MASTER·ADMIN(전사)과 그 지점 MANAGER(자기 지점)이고,
-    **양쪽 다 그날 수업한 트레이너는 뺀다.** 결과 조회 권한과 똑같이 맞춘 것이다.
+    받는 사람은 MASTER·ADMIN(전사) · 그 지점 MANAGER · **그 트레이너 본인**이다.
+    결과 조회 권한(`app/api/members/pt_surveys.py`)과 똑같이 맞춘 것이다.
+
+    **예전에는 트레이너를 일부러 뺐다.** 그때는 본인이 자기 설문을 못 보는
+    자리라, 열지도 못하는 알림을 보내는 게 이상했기 때문이다. 2026-09-09 에
+    본인 것은 본인이 보게 바뀌었는데 **알림만 안 따라와서, 자기에 대한 답이
+    들어와도 본인만 모르는 상태**가 됐다 (실제로 그랬다).
+
+    본인은 명단 둘 어디에도 없어서 **따로 넣는다** — MASTER·ADMIN·MANAGER 만
+    긁는 함수라, 트레이너가 MEMBER 면 아무 데도 안 걸린다. 점장이 수업한
+    날에는 명단과 겹치므로 한 번만 가게 거른다.
     """
     text = ntext.pt_survey_submitted(member.name if member else "", survey.session_no)
     branch_id = trainer.branch_id if trainer else None
-    trainer_id = trainer.id if trainer else None
-    for eid in await boss_ids(db, exclude=trainer_id):
-        await notify(db, employee_id=eid, **text)
-    for eid in await branch_manager_ids(db, branch_id, exclude=trainer_id):
+    targets = [*await boss_ids(db), *await branch_manager_ids(db, branch_id)]
+    if trainer is not None:
+        targets.append(trainer.id)
+    for eid in dict.fromkeys(targets):  # 순서를 지키면서 중복만 뺀다
         await notify(db, employee_id=eid, **text)

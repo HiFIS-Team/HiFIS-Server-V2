@@ -398,6 +398,8 @@ class InboxKind(StrEnum):
     TASK_MISS = "TASK_MISS"  # POST /my-task-misses/{id}/approve|reject
     # 컴플레인 해결 완료 (2026-08-31)
     COMPLAINT = "COMPLAINT"  # POST /kindness-surveys/{id}/approve|reject
+    # 환경정비 `클레임해결` — 15점짜리라 칩을 눌러도 대표가 본다 (2026-09-09)
+    ENV_CLAIM = "ENV_CLAIM"  # POST /env-logs/{id}/approve|reject
 
 
 class InboxStatus(StrEnum):

@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # ── 브로제이(BroJ) — 회원 출입 관리 웹 (2026-08-26)
     #
-    # **화순점만 쓴다.** 첨단·동광주는 브로제이를 안 써서 붙일 것이 없다.
+    # **화순점만 쓴다.** 첨단은 브로제이를 안 써서 붙일 것이 없다.
     # 그래서 그룹 키가 하나뿐이고, 지점별로 나누는 코드를 두지 않았다.
     #
     # `jgroup_token` 은 **로그인으로 안 받아진다** — 브라우저 네트워크탭에서
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     broj_jgroup_token: str = ""
     broj_jgroup_key: str = ""
 
-    # ── 다짐(Dagym) — 첨단·동광주가 쓰는 회원 관리 웹 (2026-08-26)
+    # ── 다짐(Dagym) — 첨단이 쓰는 회원 관리 웹 (2026-08-26)
     #
     # 계정은 하나이고 **지점은 `branches.dajim_gym_id` 가 가른다** — 지점마다
     # 값이 달라서 설정에 두면 지점 수만큼 항목이 늘어난다.
@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     solapi_api_key: str = ""
     solapi_api_secret: str = ""
     solapi_sender: str = ""
+
+    # 컴플레인 한 줄 요약 — Claude Messages API (2026-09-08 대표 요청).
+    #
+    # 매장 TV 는 줄을 **두 줄까지만** 보여주고 자른다(`tv.css` 의 line-clamp).
+    # 길게 적은 의견이 `...` 로 끊겨서, 해결될 때 한 줄로 줄여 박아 둔다.
+    #
+    # **비어 있으면 조용히 넘어간다** — 요약이 없으면 TV 가 원문을 그대로 쓴다.
+    # 솔라피·APNs 와 같은 규칙이다.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
 
     #: **대표만 쓸 수 있게 잠근다** — 사고 대응용 임시 스위치 (2026-08-18)
     #:

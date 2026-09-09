@@ -21,7 +21,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import KST, period_range
-from app.enums import RegistrationType, Role, ScoreCategory, VisitPath
+from app.enums import ProjectRequestStatus, RegistrationType, Role, ScoreCategory, VisitPath
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
@@ -230,7 +230,14 @@ async def build_board(
     rows = (
         await db.execute(
             select(EnvTaskLog.employee_id, func.count())
-            .where(EnvTaskLog.created_at >= start, EnvTaskLog.created_at < end)
+            # **결재를 기다리거나 반려된 것은 안 센다** (2026-09-09) —
+            # 점수가 아직(또는 영영) 안 붙은 기록이라 세면 횟수와 점수가 어긋난다
+            .where(
+                EnvTaskLog.created_at >= start,
+                EnvTaskLog.created_at < end,
+                (EnvTaskLog.approval_status.is_(None))
+                | (EnvTaskLog.approval_status == ProjectRequestStatus.APPROVED),
+            )
             .group_by(EnvTaskLog.employee_id)
         )
     ).all()

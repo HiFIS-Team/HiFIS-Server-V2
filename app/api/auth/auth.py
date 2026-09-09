@@ -275,7 +275,11 @@ async def password_reset_request(
         ).scalar_one_or_none()
     # 대상 유무와 무관하게 항상 성공 응답(사용자 열거 방지). 존재하면 인증번호 발송.
     if emp is not None:
-        await issue_code(payload.contact, emp.id)
+        # 문자는 **그 직원의 지점 번호로** 나간다 (2026-09-09 대표 요청).
+        # 없으면 기본 번호로 떨어진다 — 본사(HQ) 소속 대표·관리자가 그 자리다.
+        branch = await db.get(Branch, emp.branch_id) if emp.branch_id else None
+        sender = (branch.sms_sender or "").strip() if branch else ""
+        await issue_code(payload.contact, emp.id, sender or None)
     return {"ok": True}
 
 

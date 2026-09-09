@@ -605,9 +605,9 @@ def kindness_complaint(improvement: str, branch: str | None) -> dict:
 
 # ── PT 만족도 폼 ──
 def pt_survey_submitted(member_name: str, session_no: int) -> dict:
-    """PT 만족도 폼에 답이 왔다 — 결과를 볼 수 있는 대표·관리자·점장에게.
+    """PT 만족도 폼에 답이 왔다 — **결과를 볼 수 있는 사람 전부에게.**
 
-    담당 트레이너 본인은 못 보므로 이 알림도 안 받는다
+    대표·관리자·그 지점 점장 · **그 트레이너 본인**이다
     (`app/api/members/pt_surveys.py` 와 같은 기준).
     """
     return {
