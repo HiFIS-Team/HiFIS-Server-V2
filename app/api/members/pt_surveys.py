@@ -33,7 +33,9 @@ from app.core.deps import branch_filter, get_current_user
 from app.db.session import get_db
 from app.models.members.member import Member
 from app.models.members.pt_survey import PtSurvey
+from app.models.members.registration import Registration
 from app.enums import Role
+from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.members.pt_survey import PtSurveyOut
 
@@ -51,9 +53,21 @@ async def list_pt_surveys(
 ) -> list[PtSurveyOut]:
     """결과 목록 — 대표·관리자는 전부, 나머지는 **본인이 수업한 것만.**"""
     stmt = (
-        select(PtSurvey, Member.name, Employee.name)
+        select(
+            PtSurvey,
+            Member.name,
+            Employee.name,
+            Registration.price_paid,
+            Branch.name,
+        )
         .join(Member, Member.id == PtSurvey.member_id)
         .join(Employee, Employee.id == PtSurvey.trainer_id)
+        # **바깥 조인이다.** 둘 다 금액·지점 이름을 채우는 곁가지라, 한쪽이
+        # 비면 줄이 통째로 사라진다 — 목록에서 설문이 조용히 없어지는 것보다
+        # 금액 칸이 비는 편이 낫다 (지금은 회원을 지울 때 설문도 같이 지우므로
+        # 둘 다 늘 맞지만, 안 맞는 날 화면이 거짓말을 하면 안 된다)
+        .join(Registration, Registration.id == PtSurvey.registration_id, isouter=True)
+        .join(Branch, Branch.id == Member.branch_id, isouter=True)
         .order_by(PtSurvey.created_at.desc())
     )
     # 점장도 트레이너로 수업한다 — 권한이 아니라 `trainer_id` 로 가른다
@@ -69,10 +83,12 @@ async def list_pt_surveys(
     base = settings.public_base_url.rstrip("/")
     rows = (await db.execute(stmt)).all()
     out = []
-    for survey, member_name, trainer_name in rows:
+    for survey, member_name, trainer_name, price_paid, branch_name in rows:
         item = PtSurveyOut.model_validate(survey)
         item.member_name = member_name
         item.trainer_name = trainer_name
+        item.price_paid = price_paid
+        item.branch_name = branch_name
         item.url = f"{base}/pt/{survey.token}"
         out.append(item)
     return out

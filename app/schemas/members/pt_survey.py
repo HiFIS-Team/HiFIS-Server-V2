@@ -42,6 +42,11 @@ class PtSurveyOut(CamelModel):
     member_name: str | None = None
     trainer_id: str
     trainer_name: str | None = None
+    #: 그 등록권의 결제액(원) — '연장할래요' 로 답한 건을 다음달 예상 매출로
+    #: 합산할 때 쓴다. 모델에는 없는 값이라 라우터가 등록권을 조인해 채운다
+    price_paid: int | None = None
+    #: 회원 소속 지점 — 지점별 예상 매출을 가르는 자리라 라우터가 채운다
+    branch_name: str | None = None
     session_no: int
     #: 아직 문자를 못 보냈을 때 손으로 넘겨줄 수 있게 주소를 같이 준다.
     #: 모델에는 없는 값이라 `model_validate` 뒤에 라우터가 채운다 (그래서 기본값이 있다)
