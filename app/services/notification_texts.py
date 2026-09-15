@@ -599,7 +599,9 @@ def kindness_complaint(improvement: str, branch: str | None) -> dict:
         "type": "COMPLAINT",
         "title": "컴플레인이 들어왔어요",
         "body": f"{branch} · {body}" if branch else body,
-        "link": "/work",
+        # 회원 친절도 탭의 컴플레인 세그먼트까지 바로 연다 — 그냥 `/work` 면
+        # 앱이 환경정비(첫 칸)를 열어서 눌러도 딴 데로 가는 것처럼 보였다 (2026-09-15)
+        "link": "/work/kindness-complaints",
     }
 
 
@@ -626,5 +628,5 @@ def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> di
         "type": "COMPLAINT",
         "title": "컴플레인이 해결됐어요",
         "body": f"{branch} · {body}" if branch else body,
-        "link": "/work",
+        "link": "/work/kindness-complaints",
     }
