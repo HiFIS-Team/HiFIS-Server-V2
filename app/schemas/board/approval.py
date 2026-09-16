@@ -2,8 +2,6 @@
 
 from datetime import date, datetime
 
-from pydantic import Field
-
 from app.enums import ApprovalStatus, ApprovalStepStatus
 from app.schemas.base import CamelModel
 
@@ -29,7 +27,13 @@ class ApprovalCreate(CamelModel):
     start_date: date | None = None
     end_date: date | None = None
     place: str | None = None
-    approver_ids: list[str] = Field(min_length=1)  # 순차 결재선
+    #: 순차 결재선 — **금액이 문턱 아래면 비워도 된다** (2026-09-16).
+    #:
+    #: 10만원 미만은 결재 없이 그대로 올라가므로 세울 사람이 없다.
+    #: 서버가 `_needs_approval` 로 다시 보고, 받아야 하는데 비어 있으면
+    #: `400 NEED_APPROVER` 로 막는다 — 앱이 안 실어 보내서 결재가 조용히
+    #: 건너뛰어지는 일이 없어야 한다.
+    approver_ids: list[str] = []
 
 
 class ApprovalAction(CamelModel):

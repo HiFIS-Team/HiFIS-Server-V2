@@ -21,6 +21,36 @@ from app.services.notifications import notify
 router = APIRouter(prefix="/approvals", tags=["approvals"], dependencies=[Depends(get_current_user)])
 
 
+#: 이 금액**부터** 대표 승인을 받는다 (2026-09-16 대표 결정).
+#:
+#: 그 아래는 올리는 즉시 승인으로 선다 — 소모품 사는 데까지 대표를 거치면
+#: 결재함이 잔건으로 차서 정작 봐야 할 것이 묻힌다.
+#:
+#: **`이상`이 승인이다.** 딱 10만원이면 받는다 — 경계를 가르는 말이 둘
+#: (`10만원 이상은 승인` · `10만원 이하는 그냥`) 이라 한쪽을 골랐다.
+#: 바꾸려면 `>=` 를 `>` 로 고치면 된다.
+APPROVAL_LIMIT = 100_000
+
+
+def _needs_approval(current: Employee, amount: int | None) -> bool:
+    """이 문서가 대표 승인을 거쳐야 하나.
+
+    | 누가 | 10만원 미만 | 10만원 이상 |
+    |---|---|---|
+    | MASTER · ADMIN | 그냥 | **그냥** |
+    | MANAGER · MEMBER | 그냥 | 대표 승인 |
+
+    **대표·관리자는 금액을 안 본다.** 판단하는 쪽이라 자기가 올린 것을
+    자기가 승인하는 자리가 되는데, 그건 결재가 아니라 절차만 한 번 더 도는 것이다.
+
+    금액이 비어 있으면(`None`) 0으로 본다 — 외근·근무 변경처럼 돈이 안 드는
+    갈래다.
+    """
+    if current.role in (Role.MASTER, Role.ADMIN):
+        return False
+    return (amount or 0) >= APPROVAL_LIMIT
+
+
 def _mark_step(steps: list, approver_id: str, decision: ApprovalStepStatus, comment: str | None, acted_at: str) -> list:
     result = []
     for step in steps:
@@ -81,19 +111,30 @@ async def create_approval(
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Approval:
-    """결재 올리기 — **MASTER·ADMIN 은 못 올린다.**
+    """결재 올리기 — **누구나 올린다. 금액이 결재를 받을지를 정한다** (2026-09-16).
 
-    결재는 대표가 판단해 주는 것이라, 판단하는 쪽이 올리면 자기가 올려
-    자기가 결재하는 자리가 된다. 올리는 건 MANAGER·MEMBER 다.
+    예전에는 MASTER·ADMIN 이 못 올렸다(`NOT_A_REQUESTER`). 판단하는 쪽이
+    올리면 자기가 올려 자기가 결재하는 자리가 되기 때문이었는데, 그래서
+    **대표가 쓴 돈은 아예 기록이 안 남았다.** 이제는 올리되 그 문서가
+    결재를 안 탄다 — 남는 것과 거치는 것을 갈랐다.
+
+    [_needs_approval] 이 false 면 **올리는 즉시 승인**이다. 결재선도 차례도
+    없이 `APPROVED` 로 서고, `steps` 가 비어 있는 것이 곧 '결재를 안 거쳤다'는
+    표시다 (일정이 `decided_at` 으로 가르는 것과 같은 자리 — backend-gap 67).
     """
-    if current.role in (Role.MASTER, Role.ADMIN):
+    needs = _needs_approval(current, payload.amount)
+    if needs and not payload.approver_ids:
         raise HTTPException(
-            403,
-            detail={"code": "NOT_A_REQUESTER", "message": "대표·관리자는 결재를 올리지 않습니다"},
+            400,
+            detail={
+                "code": "NEED_APPROVER",
+                "message": f"{APPROVAL_LIMIT:,}원 이상은 결재자를 세워야 합니다",
+            },
         )
+    approver_ids = payload.approver_ids if needs else []
     steps = [
         {"approver_id": aid, "status": ApprovalStepStatus.PENDING, "comment": None, "acted_at": None}
-        for aid in payload.approver_ids
+        for aid in approver_ids
     ]
     approval = Approval(
         kind=payload.kind,
@@ -104,14 +145,21 @@ async def create_approval(
         end_date=payload.end_date,
         place=payload.place,
         requester_id=current.id,
-        approver_ids=payload.approver_ids,
+        approver_ids=approver_ids,
         steps=steps,
-        current_approver_id=payload.approver_ids[0],
+        status=ApprovalStatus.IN_PROGRESS if needs else ApprovalStatus.APPROVED,
+        current_approver_id=approver_ids[0] if needs else None,
         comments=[],
     )
     db.add(approval)
     await db.flush()  # approval.id 확보(알림 링크용)
-    await notify(db, employee_id=payload.approver_ids[0], **ntext.approval_requested(approval.title, approval.id))
+    # 결재를 안 타면 알릴 사람이 없다 — 올린 본인은 방금 눌러서 이미 안다
+    if needs:
+        await notify(
+            db,
+            employee_id=approver_ids[0],
+            **ntext.approval_requested(approval.title, approval.id),
+        )
     await db.commit()
     await db.refresh(approval)
     return approval
