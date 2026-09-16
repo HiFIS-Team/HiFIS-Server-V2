@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.periods import period_range
 from app.db.session import get_db
 from app.enums import ApprovalStatus, ApprovalStepStatus, Role
 from app.models.board.approval import Approval
@@ -80,10 +81,22 @@ def _require_participant(approval: Approval, current: Employee) -> None:
 @router.get("", response_model=list[ApprovalOut])
 async def list_approvals(
     box: str = Query(..., pattern="^(mine|inbox|decided|all)$"),
+    #: `2026-09` — **올린 달** 기준 (KST). 안 주면 전부.
+    #:
+    #: 달을 고를 수 있게 되면서 붙였다 (2026-09-16). 안 걸러 주면 목록이
+    #: 해가 갈수록 늘고, 지난 달 통계를 보려면 그걸 다 받아야 한다.
+    #:
+    #: **처리한 날이 아니라 올린 날이다.** 8월 말에 올려 9월에 승인된 건은
+    #: 8월에 선다 — 금액이 잡히는 달과 결재가 도는 달이 갈리면 합계가 두 번
+    #: 세어진다.
+    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Approval]:
     stmt = select(Approval)
+    if month:
+        start, end = period_range(month)
+        stmt = stmt.where(Approval.created_at >= start, Approval.created_at < end)
     if box == "all":  # 전사 결재 전체 — 관리자만(결재선 여러 단이라 남에게 걸린 문서도 봐야 함)
         if current.role not in (Role.MASTER, Role.ADMIN):
             raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "전사 결재 열람은 관리자만 가능합니다"})
