@@ -299,18 +299,24 @@ def staff_task_missing(name: str, left: int) -> dict:
     }
 
 
-def task_miss_confirmed(day, contents: list[str]) -> dict:
+def task_miss_confirmed(day, contents: list[str], nth: int, points: int) -> dict:
     """본인에게 — 다음 근무일까지도 안 해서 **확정 누락**이 됐다 (2026-08-21).
 
     퇴근할 때 온 알림과 글이 갈려야 한다. 저쪽은 '아직 기회가 있다' 는 뜻이고
     이쪽은 이미 깎였다는 뜻이라, 같은 문장이면 회복할 수 있는 날을 놓친다.
+
+    **몇 회째인지와 깎인 점수를 적는다** (2026-09-16 요청). 차감이 쌓이게
+    바뀌었는데(`TASK_MISS_PENALTY`) 본인이 그걸 모르면 쌓아 올린 뜻이 없다 —
+    지각 알림(`late_penalty`)과 같은 틀이다.
+
+    `points` 가 음수라 그대로 쓰면 "-10점 깎였어요" 로 부호가 두 번 붙는다.
     """
     head = contents[0] if contents else ""
-    body = head if len(contents) == 1 else f"{head} 외 {len(contents) - 1}개"
+    what = head if len(contents) == 1 else f"{head} 외 {len(contents) - 1}개"
     return {
         "type": "MY_TASK_MISSING",
-        "title": f"{day.month}월 {day.day}일 업무가 누락됐어요",
-        "body": f"{body} · 사유가 있으면 사유서를 내 주세요",
+        "title": f"{day.month}월 {day.day}일 업무 누락 {nth}회 · 종합 점수 {abs(points)}점 깎였어요",
+        "body": f"{what} · 사유가 있으면 사유서를 내 주세요",
         "link": "/work",
     }
 
