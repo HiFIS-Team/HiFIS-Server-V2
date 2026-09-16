@@ -29,7 +29,7 @@ from app.schemas.scoring.kindness import (
 from app.services import notification_texts as ntext
 from app.services.notifications import boss_ids, branch_ids, master_ids, notify
 from app.services import sms
-from app.services.scoring import accrue_score
+from app.services.scoring import CLAIM_ITEM_NAME, accrue_score
 from app.services.summarize import summarize_complaint
 
 logger = logging.getLogger(__name__)
@@ -497,9 +497,7 @@ async def _pending_requester(db: AsyncSession, survey: KindnessSurvey) -> Employ
     return requester
 
 
-# 컴플레인을 끝내면 이 환경정비 항목으로 점수가 붙는다.
-# **지점 항목 이름과 정확히 같아야 한다** — 이름이 바뀌면 점수가 안 들어간다.
-_CLAIM_ITEM_NAME = "클레임해결"
+
 
 
 async def _award_claim_resolved(
@@ -519,7 +517,7 @@ async def _award_claim_resolved(
     item = (
         await db.execute(
             select(EnvItem).where(
-                EnvItem.branch_id == branch_id, EnvItem.name == _CLAIM_ITEM_NAME
+                EnvItem.branch_id == branch_id, EnvItem.name == CLAIM_ITEM_NAME
             )
         )
     ).scalar_one_or_none()

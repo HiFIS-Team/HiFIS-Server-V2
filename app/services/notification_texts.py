@@ -580,14 +580,24 @@ def env_award(item: str, total: int, reason: str | None) -> dict:
 
 
 def score_reverted(points: int, reason: str | None) -> dict:
-    """깎였던 점수를 대표가 되돌렸다 (2026-08-28).
+    """대표가 점수 한 줄을 무르다 (2026-08-28 · 2026-09-16 양수까지).
+
+    **부호에 따라 말이 뒤집힌다.** 깎였던 것을 되돌리면 좋은 소식이고,
+    받았던 것을 무르면 나쁜 소식이다 — 한 문장으로 같이 쓰면 점수를 잃은
+    사람에게 `돌아왔어요` 라고 말하게 된다.
 
     **`SCORE` 다.** 깎을 때(`late_penalty`·`task_miss_confirmed`)는 경고 쪽인데
-    되돌리는 것은 좋은 소식이라 같은 종류로 보내면 안 된다.
+    되돌리는 것은 좋은 소식이라 같은 종류로 보내면 안 된다. 양수를 무르는 것도
+    같은 자리에 둔다 — 점수가 오간 일은 한 곳에서 보는 게 낫다.
     """
+    title = (
+        f"깎였던 {abs(points)}점이 돌아왔어요"
+        if points < 0
+        else f"받았던 {points}점이 취소됐어요"
+    )
     return {
         "type": "SCORE",
-        "title": f"깎였던 {abs(points)}점이 돌아왔어요",
+        "title": title,
         "body": reason,
         "link": "/work",
     }

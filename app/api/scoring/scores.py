@@ -5,7 +5,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,8 @@ from app.core.periods import current_period
 from app.db.session import get_db
 from app.enums import RankingKind, Role, ScoreCategory
 from app.models.staff.employee import Employee
+from app.models.scoring.contribution import ContributionGrant
+from app.models.scoring.env import EnvTaskLog
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.scoring.rank_overtake import RankOvertake
 from app.models.scoring.score_event import ScoreEvent
@@ -29,7 +31,7 @@ from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.ranking import compute_ranking
 from app.services.ranking_board import METRICS, build_board, rank_board
-from app.services.scoring import accrue_score, scores_apply_to
+from app.services.scoring import CLAIM_ITEM_NAME, accrue_score, scores_apply_to
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
 
@@ -51,6 +53,74 @@ def _hides_peer(role: Role) -> bool:
     return role in (Role.MEMBER, Role.MANAGER)
 
 
+#: 센터 기여도 내역에 **그냥 서는** 갈래 — 갈래 이름만 보고 가를 수 있는 것들
+#:
+#: 기여 부여·근무 외 출근·매출성과(`CONTRIB`), 운영자 직접 부여(`OPERATOR`),
+#: 블로그·인스타 보고 온 회원 등록과 OT→PT 전환(`BLOG`·`INSTAGRAM`·`OT_PT`),
+#: 그리고 차감 셋(`LATE`·`TASK_MISS`·`PEER_MISS`).
+_BOARD_CATEGORIES = (
+    ScoreCategory.CONTRIB,
+    ScoreCategory.OPERATOR,
+    ScoreCategory.BLOG,
+    ScoreCategory.INSTAGRAM,
+    ScoreCategory.OT_PT,
+    ScoreCategory.LATE,
+    ScoreCategory.TASK_MISS,
+    ScoreCategory.PEER_MISS,
+)
+
+#: 센터 기여도 내역에 **안 서는** 갈래 — 하던 일을 한 기록이다
+#:
+#: `ENV` 와 `PROJECT` 는 여기에도 저기에도 없다 — 갈래 안에서 갈리기 때문이다
+#: ([_contrib_board] 참고). 나머지는 갈래째 빠진다.
+#:
+#: **이 둘을 합치면 `ScoreCategory` 전부여야 한다** (`test_score_board.py`).
+#: 갈래를 새로 만들면서 어느 쪽에 둘지 안 정하면 거기서 걸린다 — 안 그러면
+#: 조용히 안 서고, 안 서면 되돌릴 수도 없다.
+_OFF_BOARD_CATEGORIES = (
+    ScoreCategory.CLASS,
+    ScoreCategory.KINDNESS,
+    ScoreCategory.PEER,
+)
+
+#: 갈래 안에서 갈리는 것 — 이름만으로는 못 정한다
+_SPLIT_CATEGORIES = (ScoreCategory.ENV, ScoreCategory.PROJECT)
+
+
+def _contrib_board():
+    """센터 기여도 내역에 서는 줄 — **당연한 업무는 안 센다** (2026-09-16 대표 결정).
+
+    환경정비(9월 2,029건)·수업 싸인(217)·회원 친절도(29)는 하던 일을 한 것이라
+    여기 안 선다. 셋 다 제 화면에 훨씬 자세한 내역이 있고, 같이 세우면 기여
+    내역이 그걸로 통째로 덮여서 되돌리기 아이콘을 쓸 수가 없다.
+
+    **갈래 이름만으로 못 가르는 것이 둘이다.**
+
+    - **컴플레인 해결**은 `ENV` 로 들어간다 (`클레임해결` 항목, 15점). 환경정비를
+      갈래째 빼면 이것도 같이 빠지는데, 대표가 승인해서 붙는 점수라 성격이
+      정반대다. 그 항목만 집어낸다 — 서버가 이미 같은 이름으로 승인 여부를
+      가르고 있다 (`env._needs_approval`).
+    - **프로젝트**는 완료하면 저절로 붙는 +10/+5 와 대표가 매긴 평가가 같은
+      갈래다. 앞의 것은 프로젝트를 끝냈다는 값이라 안 세고 **사람이 매긴 것만**
+      센다. `created_by_id` 로 갈린다 — 자동은 `None`, 평가·리셋 감점은 매긴 사람.
+
+    **[list_scores] 와 [revert_score] 가 이 조건 하나를 같이 쓴다.** 둘이 갈리면
+    목록에 섰는데 못 되돌리거나, 안 선 줄이 되돌려진다 — 앱은 목록에 선 줄마다
+    아이콘을 그리므로 그때 아이콘이 거짓말을 한다.
+    """
+    return or_(
+        ScoreEvent.category.in_(_BOARD_CATEGORIES),
+        and_(
+            ScoreEvent.category == ScoreCategory.PROJECT,
+            ScoreEvent.created_by_id.is_not(None),
+        ),
+        and_(
+            ScoreEvent.category == ScoreCategory.ENV,
+            ScoreEvent.reason == CLAIM_ITEM_NAME,
+        ),
+    )
+
+
 @router.get("", response_model=list[ScoreEventOut])
 async def list_scores(
     db: AsyncSession = Depends(get_db),
@@ -69,6 +139,11 @@ async def list_scores(
     # 카테고리를 여럿 부르는 대신 여기서 부호로 자른다 — 프로젝트 평가나
     # 운영자 감점처럼 **음수가 될 수 있는 나머지도 같이** 걸린다.
     negative_only: bool = Query(False, alias="negativeOnly"),
+    # 센터 기여도 내역에 서는 줄만 — 조건은 [_contrib_board] 에 적어 두었다.
+    #
+    # 앱이 갈래를 늘어놓게 하지 않는다. 그러면 정책이 앱에 박혀서, 나중에
+    # 갈래가 하나 늘 때 서버만 고치고 앱은 그대로라 **조용히 빠진다.**
+    contrib_board: bool = Query(False, alias="contribBoard"),
 ) -> list[ScoreEvent]:
     stmt = select(ScoreEvent)
     # 동료평가는 평가받은 사람에게 안 보인다 ([_hides_peer]) — 종류를 콕 집어
@@ -85,6 +160,8 @@ async def list_scores(
         stmt = stmt.where(ScoreEvent.period == period)
     if negative_only:
         stmt = stmt.where(ScoreEvent.points < 0)
+    if contrib_board:
+        stmt = stmt.where(_contrib_board())
     result = await db.execute(stmt.order_by(ScoreEvent.created_at.desc()))
     return list(result.scalars().all())
 
@@ -222,28 +299,49 @@ async def revert_score(
     current: Employee = Depends(require_role(Role.MASTER)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """깎인 점수 되돌리기 — **음수 줄만 지운다** (2026-08-28 대표 요청).
+    """점수 한 줄 되돌리기 — **센터 기여도 내역에 선 줄만** (2026-09-16 대표 요청).
 
-    지각·업무 누락은 자동으로 깎이는데, 사정이 있어 봐줘야 할 때 손댈 자리가
-    없었다. 사유서(누락)는 승인 경로가 있지만 지각에는 그것도 없다.
+    처음에는 깎인 줄만 지웠다 (2026-08-28). 지각·업무 누락은 자동으로 깎이는데
+    사정이 있어 봐줘야 할 때 손댈 자리가 없어서였다. 이제 **더해진 점수도**
+    같은 아이콘으로 취소한다 — 잘못 준 기여, 과하게 매긴 프로젝트 평가처럼
+    무를 일이 생기는데 그때도 손댈 자리가 없었다.
 
-    **상쇄로 `+20` 을 한 줄 넣지 않고 줄을 지운다.** 원장 합은 같지만 랭킹
-    내역에 `지각 -10` 과 `지각 +10` 이 나란히 서서 무슨 일인지 알 수 없다
-    (사유서 승인이 같은 이유로 그렇게 한다).
+    **상쇄로 반대 부호 한 줄을 넣지 않고 줄을 지운다.** 원장 합은 같지만 내역에
+    `지각 -10` 과 `지각 +10` 이 나란히 서서 무슨 일인지 알 수 없다 (사유서
+    승인이 같은 이유로 그렇게 한다).
+
+    **아무 줄이나 못 지운다.** 환경정비·수업 싸인·회원 친절도는 여기로 안 온다
+    ([_contrib_board]) — 하던 일을 한 기록이라 무르는 자리가 아니고, 열어 두면
+    남이 쌓은 점수를 지우는 길이 된다.
+
+    **원본이 점수를 다시 그리는 둘은 같이 지운다.**
+
+    - 기여 부여(`ContributionGrant`)는 센터 기여도 화면이 **그 줄에서** 점수를
+      그린다. 원장만 지우면 줄이 그대로 남아 **되돌렸는데 아무 일도 안 일어난
+      것처럼** 보인다.
+    - 컴플레인 해결은 대표가 승인할 때 `클레임해결` 환경정비 기록을 하나 만들어
+      점수를 붙인다 (`kindness._award_claim_resolved`). 그 기록은 사람이 수행한
+      것이 아니라 점수를 싣자고 만든 것이라, 점수를 무르면 같이 없앤다 —
+      안 그러면 환경정비 수행 **횟수**에만 남아 랭킹이 어긋난다.
 
     지웠다는 사실은 **활동 기록**(`audit_logs`)에 남는다 — 누가 언제 어느
     줄을 되돌렸는지가 거기 있다.
-
-    **양수는 못 지운다.** 여기로 열어 두면 남이 쌓은 점수를 지우는 길이 된다.
-    환경정비·기여처럼 원본이 있는 점수는 그 원본을 지우는 자기 경로가 있다.
     """
     event = await db.get(ScoreEvent, score_id)
     if event is None:
         raise HTTPException(404, detail={"code": "SCORE_NOT_FOUND", "message": "점수 기록을 찾을 수 없습니다"})
-    if event.points >= 0:
+    # 목록과 **같은 조건**으로 다시 물어본다 — 파이썬으로 따로 한 번 더 적으면
+    # 언젠가 둘이 갈린다
+    on_board = await db.scalar(
+        select(ScoreEvent.id).where(ScoreEvent.id == score_id, _contrib_board())
+    )
+    if on_board is None:
         raise HTTPException(
             400,
-            detail={"code": "NOT_A_PENALTY", "message": "깎인 점수만 되돌릴 수 있습니다"},
+            detail={
+                "code": "NOT_ON_BOARD",
+                "message": "센터 기여도 내역에 선 점수만 되돌릴 수 있습니다",
+            },
         )
 
     # 누락 기록이 이 줄을 가리키고 있으면 끊는다 — 안 끊으면 나중에 사유서를
@@ -253,9 +351,20 @@ async def revert_score(
     if miss is not None:
         miss.score_event_id = None
 
+    # 원본이 점수를 제 화면에 다시 그리는 둘은 같이 걷는다 (위 설명 참고)
+    if event.source_ref_id:
+        if event.category == ScoreCategory.CONTRIB:
+            grant = await db.get(ContributionGrant, event.source_ref_id)
+            if grant is not None:
+                await db.delete(grant)
+        elif event.category == ScoreCategory.ENV:
+            log = await db.get(EnvTaskLog, event.source_ref_id)
+            if log is not None:
+                await db.delete(log)
+
     employee_id, points, reason = event.employee_id, event.points, event.reason
     await db.delete(event)
-    # 깎였다고 알림을 받은 사람이라 되돌린 것도 알려야 한다
+    # 점수가 오간 것을 알림으로 받은 사람이라 무른 것도 알려야 한다
     await notify(db, employee_id=employee_id, **ntext.score_reverted(points, reason))
     await db.commit()
     return None
