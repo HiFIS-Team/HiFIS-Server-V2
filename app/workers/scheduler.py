@@ -19,6 +19,7 @@ from app.workers.absence_alerts import absence_alerts
 from app.workers.event_reminders import event_reminders
 from app.workers.payday_reminder import payday_reminders
 from app.workers.draw_videos import draw_videos
+from app.workers.ranking_freeze import freeze_previous_month
 from app.workers.monthly_draw import monthly_draw
 from app.workers.payroll_close import close_previous_month
 from app.workers.project_reminders import project_reminders
@@ -68,6 +69,11 @@ def _register_jobs() -> None:
                       id="payroll_close", replace_existing=True)
     # 매월 1일 00:00 UTC(=09:00 KST) — 매장 TV 추첨 (전달 설문 참여자 중 한 명)
     # **급여 마감보다 앞에 둔다** — 서로 상관없지만 아침에 TV 가 먼저 살아난다
+    # **추첨보다 먼저 굳힌다** — 추첨이 랭킹을 보고 뽑는데 그 사이에 원본이
+    # 바뀌면 뽑은 사람과 판이 어긋난다 (같은 분에 돌지만 등록 순서를 지킨다)
+    scheduler.add_job(freeze_previous_month, CronTrigger(day=1, hour=0, minute=0),
+                      id="ranking_freeze", replace_existing=True)
+
     scheduler.add_job(monthly_draw, CronTrigger(day=1, hour=0, minute=0),
                       id="monthly_draw", replace_existing=True)
     # 매일 00:20 UTC(=09:20 KST) — 추첨 게임 영상 굽기 (인스타 릴스용)

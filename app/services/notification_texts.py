@@ -630,3 +630,39 @@ def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> di
         "body": f"{branch} · {body}" if branch else body,
         "link": "/work/kindness-complaints",
     }
+
+
+# ── 세션 싸인·회원 등록 (2026-09-16 대표 요청) ──
+#
+# **누르면 그 화면까지 연다.** `/work` 만 보내면 첫 칸(환경정비)이 열려서
+# 볼 자리를 다시 찾아야 한다 — 컴플레인·PT 만족도가 겪은 것과 같다.
+
+
+def session_signed(trainer: str, member: str, session_no: int, total: int | None) -> dict:
+    """세션 싸인을 받았다 — 대표·관리자와 **그 트레이너 본인**에게.
+
+    **회차를 싣는다.** `12/20회차` 가 곧 얼마나 남았는지라, 재등록을 언제
+    권해야 하는지가 이 한 줄에서 보인다.
+    """
+    rounds = f"{session_no}/{total}회차" if total else f"{session_no}회차"
+    return {
+        "type": "SESSION_SIGN",
+        "title": "세션 싸인을 받았어요",
+        "body": f"{trainer} · {member}님 {rounds}",
+        "link": "/work/session-signs",
+    }
+
+
+def member_registered(trainer: str, member: str, is_new: bool, sessions: int) -> dict:
+    """회원이 등록했다 — 대표·관리자와 **그 트레이너 본인**에게.
+
+    **신규와 재등록을 말로 가른다** (`등록했어요` · `재등록 했어요`).
+    재등록은 그 트레이너가 붙잡은 것이라 뜻이 다르다.
+    """
+    what = "등록했어요" if is_new else "재등록 했어요"
+    return {
+        "type": "MEMBER_REGISTER",
+        "title": f"{member}님이 {what}",
+        "body": f"{trainer} · {sessions}회",
+        "link": "/members",
+    }

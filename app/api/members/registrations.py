@@ -14,7 +14,12 @@ from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.registration import RegistrationCreate, RegistrationOut
-from app.services.registrations import accrue_sales_score, ensure_used_within, initial_status
+from app.services.registrations import (
+    accrue_sales_score,
+    ensure_used_within,
+    initial_status,
+    notify_registered,
+)
 
 router = APIRouter(
     prefix="/registrations", tags=["registrations"], dependencies=[Depends(get_current_user)]
@@ -80,4 +85,7 @@ async def create_registration(
     await accrue_sales_score(db, registration, trainer)
     await db.commit()
     await db.refresh(registration)
+    # 등록했다고 알린다 (2026-09-16 대표 요청) — 대표·관리자와 그 트레이너 본인.
+    # **커밋 뒤에** 보낸다 — 되돌려진 등록을 알리면 안 된다
+    await notify_registered(db, registration, trainer)
     return registration

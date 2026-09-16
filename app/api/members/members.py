@@ -28,7 +28,13 @@ from app.models.members.workout import WorkoutLog
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut, MemberUpdate
 from app.schemas.members.registration import RegistrationOut
-from app.services.registrations import accrue_sales_score, counts_now, ensure_used_within, initial_status
+from app.services.registrations import (
+    accrue_sales_score,
+    counts_now,
+    ensure_used_within,
+    initial_status,
+    notify_registered,
+)
 from app.services.scoring import accrue_score
 
 logger = logging.getLogger(__name__)
@@ -193,6 +199,9 @@ async def create_member(
     if registration is not None:
         await db.refresh(registration)
         out.registration = RegistrationOut.model_validate(registration)
+        # 등록했다고 알린다 (2026-09-16 대표 요청) — 재등록과 같은 함수다.
+        # **커밋 뒤에** 보낸다 — 되돌려진 등록을 알리면 안 된다
+        await notify_registered(db, registration, reg_trainer)
     return out
 
 

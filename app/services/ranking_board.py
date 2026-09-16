@@ -21,6 +21,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import KST, period_range
+from app.models.scoring.ranking_freeze import RankingFreeze
 from app.enums import ProjectRequestStatus, RegistrationType, Role, ScoreCategory, VisitPath
 from app.models.members.member import Member
 from app.models.members.registration import Registration
@@ -111,10 +112,37 @@ def _blank(employee: Employee) -> dict:
     }
 
 
+def _is_past(period: str) -> bool:
+    """이미 지나간 달인가 — 이번 달·앞날은 False"""
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    return period < f"{today.year}-{today.month:02d}"
+
+
 async def build_board(
     db: AsyncSession, *, period: str, branch_id: str | None = None
 ) -> list[dict]:
-    """한 달치 랭킹판. 순위는 매기지 않고 **값만** 채운다."""
+    """한 달치 랭킹판. 순위는 매기지 않고 **값만** 채운다.
+
+    **지난달은 찍어 둔 것을 그대로 돌려준다** (2026-09-16 대표 요청).
+    원본에서 매번 다시 세면 **지난 데이터를 고칠 때 지난 랭킹이 같이 움직인다** —
+    9월에 잘못 넣은 등록권을 0원으로 고쳤더니 그 달 매출 순위가 바뀌었다.
+    전달 통계는 그 달로 끝나야 하는 값이다.
+
+    찍힌 것이 없으면(스냅샷을 만들기 전의 달) 예전처럼 계산한다 — 없다고
+    빈 판을 주면 옛 달이 통째로 사라진다.
+    """
+    if _is_past(period):
+        frozen = await db.scalar(
+            select(RankingFreeze.rows).where(
+                RankingFreeze.period == period,
+                RankingFreeze.branch_id.is_(None)
+                if branch_id is None
+                else RankingFreeze.branch_id == branch_id,
+            )
+        )
+        if frozen is not None:
+            return frozen
+
     start, end = period_range(period)
 
     people = (
