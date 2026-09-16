@@ -5,7 +5,16 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    String,
+    Text,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -59,6 +68,23 @@ class KindnessSurvey(UUIDMixin, TimestampMixin, Base):
     #: **비어 있으면 TV 가 원문(`improvement`)을 쓴다.** 요약을 못 만들었거나
     #: (키 없음·API 실패) 짧아서 안 줄인 것이라, 비어 있는 것이 정상 상태다.
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: **매장 TV 에 안 건다** (2026-09-16 대표 결정)
+    #:
+    #: 해결은 해결인데 **벽에 걸 글이 아닌** 컴플레인이 있다. 사람이나 무리를
+    #: 지목하는 것이 그렇다 — 실제로 두 건 나왔다.
+    #:
+    #: - `20-21시 운동부 학생들이 소란스럽다` (화순 09-15)
+    #: - `빡빡머리 스타렉스 … 출입제한 했으면` (화순 08-30)
+    #:
+    #: 회원이 보는 벽에 다른 회원 이야기를 거는 셈이라 성격이 안 맞는다.
+    #:
+    #: **TV 에서만 뺀다.** 해결 완료·점수·문자·앱 기록은 그대로 간다 —
+    #: 예전에는 `resolved_at` 을 비워서 뺐는데, 그건 '해결 시각이 없다' 라고
+    #: 적는 것이라 뜻이 어긋났다.
+    tv_hidden: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     #: 회원에게 해결 문자를 보낸 때 — **두 번 보내는 것을 막는다** (2026-09-08).
     #:

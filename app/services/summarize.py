@@ -39,9 +39,19 @@ logger = logging.getLogger(__name__)
 #: 벽에 걸릴 뻔했다. 빈 답은 모델이 지키기 어려운 약속이라 낱말로 바꿨다.
 _NONE = "NONE"
 
-#: 다듬은 줄이 이보다 길면 **버린다** — 35자로 시켰는데 이만큼 나왔다는 것은
-#: 문장이 아니라 설명을 답한 것이다 (위와 같은 사고를 한 번 더 거른다)
+#: 다듬은 줄이 이보다 길면 **한 번 더 짧게 물어본다** ([_RETRY]).
+#: 35자로 시켰는데 이만큼 나왔다는 것은 설명을 답했을 수 있어서 거르는 자리인데,
+#: 그냥 버리면 **긴 글일수록 더 잘 실패한다** — 정작 요약이 필요한 쪽이다.
+#: 실제로 229자·210자 컴플레인이 49·52자로 답해서 버려졌고, 그러면 원문이
+#: 통째로 벽에 걸렸다 (2026-09-16).
 _MAX_LEN = 45
+
+#: 너무 길게 답했을 때 되묻는 말 — **같은 시스템 프롬프트로 한 번만** 더 묻는다.
+#: 두 번 넘게 물으면 해결 완료 버튼이 그만큼 더 늦어진다.
+_RETRY = (
+    "방금 답이 너무 길다. 뜻을 그대로 두고 **35자 이내 한 문장**으로 다시 답해라.\n"
+    "다듬은 문장만 답한다. 설명·사과·따옴표를 붙이지 않는다."
+)
 
 #: 온전한 한글 글자 — `ㅇㅇ`·`ㅋㅋ` 같은 자모만 있는 글은 여기 안 걸린다
 _HANGUL = re.compile(r"[가-힣]")
@@ -170,7 +180,38 @@ async def _ask(system: str, clean: str, *, tag: str) -> str | None:
     """Claude 에 한 줄을 받아 온다 — **실패는 전부 `None`.**
 
     부르는 쪽이 곁가지라(요약이 없어도 일은 끝나야 한다) 여기서 예외를 안 낸다.
+
+    **길면 한 번 더 짧게 물어본다.** 그래도 길면 그때 버린다 — 설명을 답한
+    것으로 본다 ([_MAX_LEN]).
     """
+    first = await _call(system, [{"role": "user", "content": clean}], tag=tag)
+    if first is None or len(first) <= _MAX_LEN:
+        if first is not None:
+            logger.info("[%s] %d자 → %d자", tag, len(clean), len(first))
+        return first
+
+    logger.info("[%s] %d자라 다시 물어본다: %s", tag, len(first), first[:60])
+    again = await _call(
+        system,
+        [
+            {"role": "user", "content": clean},
+            {"role": "assistant", "content": first},
+            {"role": "user", "content": _RETRY},
+        ],
+        tag=tag,
+    )
+    if again is None:
+        logger.warning("[%s] 다시 물어봐도 못 받았다 — 원문을 쓴다", tag)
+        return None
+    if len(again) > _MAX_LEN:
+        logger.warning("[%s] 다시 물어도 %d자라 버린다: %s", tag, len(again), again[:60])
+        return None
+    logger.info("[%s] %d자 → %d자 (다시 물어봄)", tag, len(clean), len(again))
+    return again
+
+
+async def _call(system: str, messages: list[dict], *, tag: str) -> str | None:
+    """한 번 부르고 **다듬어서** 돌려준다 — 길이는 안 본다 ([_ask] 가 본다)."""
     if not settings.anthropic_api_key:
         logger.info("[%s] 키가 없어 건너뜀", tag)
         return None
@@ -188,7 +229,7 @@ async def _ask(system: str, clean: str, *, tag: str) -> str | None:
                     "model": settings.anthropic_model,
                     "max_tokens": _MAX_TOKENS,
                     "system": system,
-                    "messages": [{"role": "user", "content": clean}],
+                    "messages": messages,
                 },
             )
             res.raise_for_status()
@@ -214,12 +255,7 @@ async def _ask(system: str, clean: str, *, tag: str) -> str | None:
     if not summary or summary.upper().startswith(_NONE):
         logger.info("[%s] 다듬을 것이 없다고 답했다", tag)
         return None
-    # **설명을 답한 것을 거른다.** 35자로 시켰는데 이만큼 왔다는 것은 문장이
-    # 아니다 (`뜻이 없는 글이므로 답변하지 않습니다` 가 실제로 나왔다)
-    if len(summary) > _MAX_LEN:
-        logger.warning("[%s] %d자나 돼서 버린다: %s", tag, len(summary), summary[:60])
-        return None
-    logger.info("[%s] %d자 → %d자", tag, len(clean), len(summary))
+    # 길이 판정은 [_ask] 몫이다 — 여기서 버리면 다시 물어볼 기회가 없다
     return summary
 
 

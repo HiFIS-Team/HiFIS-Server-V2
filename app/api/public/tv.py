@@ -170,6 +170,10 @@ async def tv_resolved(token: str, db: AsyncSession = Depends(get_db)) -> TvOut:
                 Employee.branch_id == branch.id,
                 KindnessSurvey.improvement_status == ComplaintStatus.DONE,
                 KindnessSurvey.resolved_at.is_not(None),
+                # **벽에 걸지 말라고 한 것은 뺀다** (2026-09-16). 사람·무리를
+                # 지목하는 컴플레인이 그렇다 — 해결·점수·문자는 그대로 갔고
+                # 여기서만 빠진다 (`kindness_surveys.tv_hidden`)
+                KindnessSurvey.tv_hidden.is_(False),
             )
             .order_by(KindnessSurvey.resolved_at.desc())
             .limit(30)

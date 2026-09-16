@@ -325,6 +325,9 @@ async def set_complaint_status(
         survey.improvement_status = ComplaintStatus.DONE
         survey.resolved_at = now
         survey.resolved_by_id = current.id
+        # **벽에 걸지는 대표가 고른다** (2026-09-16). 안 걸어도 점수·문자·
+        # 앱 기록은 그대로 간다 — 빠지는 것은 매장 TV 하나뿐이다
+        survey.tv_hidden = not payload.on_wall
         await _award_claim_resolved(db, current, survey)
         await _make_summary(survey)
         await _sms_resolved(db, survey)
@@ -364,18 +367,24 @@ async def set_complaint_status(
 )
 async def approve_complaint_done(
     survey_id: str,
+    on_wall: bool = Query(True, alias="onWall"),
     db: AsyncSession = Depends(get_db),
 ) -> KindnessSurvey:
     """컴플레인 해결 완료 승인 — **점수는 올린 사람에게 간다.**
 
     대표가 눌러 준다고 대표가 치운 것은 아니다. 실제로 해결한 사람이
     `done_requested_by_id` 라 그 사람 앞으로 클레임해결 기록을 남긴다.
+
+    **[on_wall] 은 매장 TV 에만 걸린다** (2026-09-16 대표 결정). 끄면 벽에서만
+    빠지고 해결 완료·점수·회원 문자·앱 기록은 그대로 간다 — 사람이나 무리를
+    지목하는 컴플레인이 있어서 둔 자리다. 앱이 승인 버튼을 누를 때 물어본다.
     """
     survey = await _complaint(db, survey_id)
     requester = await _pending_requester(db, survey)
     survey.improvement_status = ComplaintStatus.DONE
     survey.resolved_at = datetime.now(timezone.utc)
     survey.resolved_by_id = requester.id
+    survey.tv_hidden = not on_wall
     await _award_claim_resolved(db, requester, survey)
     await _make_summary(survey)
     await _sms_resolved(db, survey)
