@@ -19,6 +19,21 @@ class AttendanceScanRequest(CamelModel):
     qr: str = Field(max_length=120)
 
 
+class AttendanceEdit(CamelModel):
+    """출퇴근을 손으로 고치거나 만든다 — 대표·관리자만 (2026-09-16)
+
+    시각은 **KST `HH:MM`** 이다. 날짜가 따로 있어서 날짜까지 받을 이유가 없고,
+    앞에서 고르는 값도 시·분뿐이다.
+
+    **비우면(null) 그 칸을 지운다** — 퇴근을 잘못 찍은 날을 되돌리는 길이다.
+    """
+
+    employee_id: str
+    date: date
+    check_in: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    check_out: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
 class AttendanceOut(CamelModel):
     id: str
     employee_id: str
