@@ -454,6 +454,29 @@ def project_completed(project_title: str, project_id: str | None = None) -> dict
     }
 
 
+def project_reset(project_title: str, project_id: str | None, due, penalty: int) -> dict:
+    """담당자·참여자에게 — 완료가 **처음으로 되돌려졌다** (2026-09-16).
+
+    `project_completed` 와 글이 갈려야 한다. 저쪽은 끝났다는 뜻이고 이쪽은
+    **다시 해야 한다**는 뜻이라, 같은 문장이면 새 기한을 놓친다.
+
+    감점을 적어 냈을 때만 점수를 말한다 — 실수로 완료한 것을 치운 경우에는
+    깎인 것이 없는데 깎였다고 알리면 안 된다. **PM 은 5점을 더 무는데 그
+    값은 안 적는다** — 받는 사람마다 달라서 한 문장으로 못 쓴다.
+    """
+    body = short(project_title)
+    if due:
+        body += f" · 새 기한 {due.month}월 {due.day}일"
+    if penalty:
+        body += f" · 감점 {penalty}점"
+    return {
+        "type": "PROJECT",
+        "title": "프로젝트를 다시 해야 해요",
+        "body": body,
+        "link": _project_link(project_id),
+    }
+
+
 def project_overdue_admin(project_title: str, who: str, project_id: str | None = None) -> dict:
     return {
         "type": "PROJECT",

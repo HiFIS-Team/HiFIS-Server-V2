@@ -115,9 +115,26 @@ class ProjectTodoOut(CamelModel):
 class ProjectAwardCreate(CamelModel):
     # 안 주면 담당자 **전원**에게 같은 점수 — 프로젝트는 다 같이 하는 일이라 보통 이쪽
     employee_id: str | None = None
-    # 기본 10, 어드민 평가로 -100 ~ +100 (음수 = 본인 점수에서 차감)
-    points: int = Field(default=10, ge=-100, le=100)
+    #: **참여자 기준 점수다** — PM 은 `PM_POINT_GAP`(5) 만큼 더 받는다.
+    #: 기본값이 `PROJECT_MEMBER_POINTS` 라, 그대로 다시 주면 완료 직후와 같아진다.
+    #:
+    #: **음수를 못 준다 (2026-09-16 대표 결정).** 깎는 것은 리셋
+    #: (`POST /projects/{id}/reset`) 으로 옮겼다 — 점수만 깎고 프로젝트는
+    #: 완료로 둔 채 넘어가면 못 한 일이 끝난 일로 남는다.
+    points: int = Field(default=5, ge=0, le=100)
     comment: str  # 점수 부여 사유 필수
+
+
+class ProjectReset(CamelModel):
+    """완료를 처음으로 되돌린다 — 기한·체크를 리셋하고 점수를 도로 걷는다.
+
+    감점은 **참여자 기준**이다. PM 은 `PM_POINT_GAP` 만큼 더 문다.
+    """
+
+    #: 깎을 점수 — **0이면 안 깎는다** (실수로 완료한 것을 치우는 경우)
+    penalty: int = Field(default=0, ge=0, le=100)
+    #: 왜 되돌리는지 — 점수 줄에 같이 남는다. 안 적어도 된다
+    reason: str | None = None
 
 
 class ProjectAwardOut(CamelModel):
