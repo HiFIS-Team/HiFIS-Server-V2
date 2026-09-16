@@ -16,7 +16,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Enum as SAEnum
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -51,9 +51,21 @@ class PtSurvey(UUIDMixin, TimestampMixin, Base):
 
     #: 만족도 1~5
     satisfaction: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    #: 앞으로 트레이너에게 바라는 점 — **서술형이다.**
-    #: 점수로 받으면 무엇을 바라는지가 안 남는다 (바꿀 거리가 안 나온다)
+    #: 앞으로 트레이너에게 바라는 점 — **옛 설문의 서술형 한 칸이다.**
+    #:
+    #: 2026-09-16 에 객관식(`praise`·`improve`)으로 갈아탔다. 새 답은 여기를
+    #: 안 채우지만 **지우지 않는다** — 그 전에 받은 답이 22건 있고, 그것만
+    #: 담긴 칸이라 지우면 통째로 사라진다.
     request: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: 좋았던 점 — `[{"topic": "DIET", "note": "사진 보내면 바로 답을 주셔요"}]`
+    #:
+    #: **주제(`topic`)는 `app/services/pt_topics.py` 의 코드다.** 문구를 안 담는
+    #: 이유는 거기 적어 두었다 (문구를 고치면 이미 낸 답까지 같이 바뀌어야 한다).
+    #: `note` 는 **비어 있을 수 있다** — 주제만 고르고 넘어가도 된다.
+    praise: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: 보완할 점 — 모양은 `praise` 와 같고 **문구만 요청형**이다
+    improve: Mapped[list | None] = mapped_column(JSON, nullable=True)
     #: 연장 여부
     renew: Mapped[RenewIntent | None] = mapped_column(
         SAEnum(RenewIntent, native_enum=False, length=20), nullable=True

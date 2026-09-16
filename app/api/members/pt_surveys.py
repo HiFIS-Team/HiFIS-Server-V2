@@ -37,7 +37,8 @@ from app.models.members.registration import Registration
 from app.enums import Role
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
-from app.schemas.members.pt_survey import PtSurveyOut
+from app.schemas.members.pt_survey import PtSurveyOut, PtTopicAnswer
+from app.services import pt_topics
 
 router = APIRouter(prefix="/pt-surveys", tags=["pt-surveys"])
 
@@ -80,6 +81,21 @@ async def list_pt_surveys(
     if unanswered:
         stmt = stmt.where(PtSurvey.answered_at.is_(None))
 
+    def answers(rows: list | None, *, praise: bool) -> list[PtTopicAnswer]:
+        """저장된 코드에 **문구를 붙여서** 내보낸다.
+
+        앱이 문구표를 따로 들면 표를 고칠 때마다 스토어를 거쳐야 한다 —
+        그래서 `label` 을 서버가 채운다 (`app/services/pt_topics.py`).
+        """
+        return [
+            PtTopicAnswer(
+                topic=row["topic"],
+                note=row.get("note"),
+                label=pt_topics.label_of(row["topic"], praise=praise),
+            )
+            for row in (rows or [])
+        ]
+
     base = settings.public_base_url.rstrip("/")
     rows = (await db.execute(stmt)).all()
     out = []
@@ -89,6 +105,8 @@ async def list_pt_surveys(
         item.trainer_name = trainer_name
         item.price_paid = price_paid
         item.branch_name = branch_name
+        item.praise = answers(survey.praise, praise=True)
+        item.improve = answers(survey.improve, praise=False)
         item.url = f"{base}/pt/{survey.token}"
         out.append(item)
     return out
