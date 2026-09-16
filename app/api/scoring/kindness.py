@@ -29,7 +29,7 @@ from app.schemas.scoring.kindness import (
 from app.services import notification_texts as ntext
 from app.services.notifications import boss_ids, branch_ids, master_ids, notify
 from app.services import sms
-from app.services.scoring import accrue_score
+from app.services.scoring import CLAIM_ITEM_NAME, accrue_score
 from app.services.summarize import summarize_complaint
 
 logger = logging.getLogger(__name__)
@@ -325,6 +325,9 @@ async def set_complaint_status(
         survey.improvement_status = ComplaintStatus.DONE
         survey.resolved_at = now
         survey.resolved_by_id = current.id
+        # **벽에 걸지는 대표가 고른다** (2026-09-16). 안 걸어도 점수·문자·
+        # 앱 기록은 그대로 간다 — 빠지는 것은 매장 TV 하나뿐이다
+        survey.tv_hidden = not payload.on_wall
         await _award_claim_resolved(db, current, survey)
         await _make_summary(survey)
         await _sms_resolved(db, survey)
@@ -364,18 +367,24 @@ async def set_complaint_status(
 )
 async def approve_complaint_done(
     survey_id: str,
+    on_wall: bool = Query(True, alias="onWall"),
     db: AsyncSession = Depends(get_db),
 ) -> KindnessSurvey:
     """컴플레인 해결 완료 승인 — **점수는 올린 사람에게 간다.**
 
     대표가 눌러 준다고 대표가 치운 것은 아니다. 실제로 해결한 사람이
     `done_requested_by_id` 라 그 사람 앞으로 클레임해결 기록을 남긴다.
+
+    **[on_wall] 은 매장 TV 에만 걸린다** (2026-09-16 대표 결정). 끄면 벽에서만
+    빠지고 해결 완료·점수·회원 문자·앱 기록은 그대로 간다 — 사람이나 무리를
+    지목하는 컴플레인이 있어서 둔 자리다. 앱이 승인 버튼을 누를 때 물어본다.
     """
     survey = await _complaint(db, survey_id)
     requester = await _pending_requester(db, survey)
     survey.improvement_status = ComplaintStatus.DONE
     survey.resolved_at = datetime.now(timezone.utc)
     survey.resolved_by_id = requester.id
+    survey.tv_hidden = not on_wall
     await _award_claim_resolved(db, requester, survey)
     await _make_summary(survey)
     await _sms_resolved(db, survey)
@@ -488,9 +497,7 @@ async def _pending_requester(db: AsyncSession, survey: KindnessSurvey) -> Employ
     return requester
 
 
-# 컴플레인을 끝내면 이 환경정비 항목으로 점수가 붙는다.
-# **지점 항목 이름과 정확히 같아야 한다** — 이름이 바뀌면 점수가 안 들어간다.
-_CLAIM_ITEM_NAME = "클레임해결"
+
 
 
 async def _award_claim_resolved(
@@ -510,7 +517,7 @@ async def _award_claim_resolved(
     item = (
         await db.execute(
             select(EnvItem).where(
-                EnvItem.branch_id == branch_id, EnvItem.name == _CLAIM_ITEM_NAME
+                EnvItem.branch_id == branch_id, EnvItem.name == CLAIM_ITEM_NAME
             )
         )
     ).scalar_one_or_none()
@@ -524,7 +531,18 @@ async def _award_claim_resolved(
         env_item_id=item.id,
         item_name=item.name,
         points=item.points,
-        note=(survey.improvement or "")[:200],
+        # **다듬은 줄을 남긴다** (2026-09-16 대표 요청). 예전에는 회원이 적은
+        # 원문을 그대로 넣어서, 환경정비 수행 내역에 200자짜리 하소연이
+        # 통째로 걸렸다 — 거기는 '무엇을 했나' 를 훑는 자리다.
+        #
+        # 요약은 **결재 대기로 올릴 때** 이미 만들어 둔다(`_make_summary`) —
+        # 대표가 벽에 어떻게 걸릴지 보고 누르는 자리라 그때 필요하다.
+        # 못 만들었으면(열쇠가 없거나 API 가 죽었으면) 예전처럼 원문이다.
+        note=((survey.summary or "").strip() or (survey.improvement or "").strip())[:200],
+        # **`summary` 는 비워 둔다.** 채우면 매장 TV 가 이 줄을 하나 더 세워서
+        # (`app/api/public/tv.py` 의 `env_rows`) 같은 컴플레인이 벽에 두 번
+        # 걸린다 — 설문 쪽(`rows`)에서 이미 서고 있다.
+        #
         # **바로 승인이다** — 칩으로 누른 것은 대표 결재를 기다리지만(2026-09-09),
         # 이 길은 대표가 컴플레인을 승인해서 온 것이라 이미 본 셈이다.
         # 대기로 두면 같은 일을 두 번 승인하게 된다.

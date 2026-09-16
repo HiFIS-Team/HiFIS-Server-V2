@@ -29,7 +29,8 @@ from app.models.members.session_sign import SessionSign
 from app.models.members.workout import WorkoutLog
 from app.schemas.members.registration import RegistrationOut
 from app.schemas.members.session_sign import SessionSignCreate, SessionSignOut, SessionSignResult
-from app.services import sms
+from app.services import notification_texts as ntext, sms
+from app.services.notifications import boss_ids, notify
 from app.services.scoring import accrue_score
 
 CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
@@ -224,6 +225,36 @@ async def _require_workout(db: AsyncSession, registration: Registration) -> None
         )
 
 
+async def _notify_signed(
+    db: AsyncSession,
+    performer: Employee,
+    member: Member | None,
+    sign: SessionSign,
+    registration: Registration,
+) -> None:
+    """세션 싸인을 알린다 — **대표·관리자와 그 트레이너 본인**에게.
+
+    PT 만족도 알림과 같은 명단이다 (`app/api/public/pt_survey.py`). 본인을
+    빼면 자기가 받은 싸인을 자기만 모른다 — 그 자리에서 한 번 겪었다.
+
+    **실패해도 싸인은 그대로 둔다.** 알림은 곁가지라 여기서 막으면 수업
+    기록이 안 남는다.
+    """
+    text = ntext.session_signed(
+        performer.name,
+        member.name if member else "",
+        sign.session_no,
+        registration.total_sessions,
+    )
+    targets = [*await boss_ids(db), performer.id]
+    try:
+        for eid in dict.fromkeys(targets):
+            await notify(db, employee_id=eid, **text)
+        await db.commit()
+    except Exception:
+        logger.warning("[session-sign] 알림 실패 — 싸인은 그대로 둔다", exc_info=True)
+
+
 @router.post("", response_model=SessionSignResult, status_code=201)
 async def create_session_sign(
     payload: SessionSignCreate,
@@ -288,6 +319,9 @@ async def create_session_sign(
     await db.refresh(sign)
     await db.refresh(registration)
     member = await db.get(Member, registration.member_id)
+    # 싸인이 들어왔다고 알린다 (2026-09-16 대표 요청) — 대표·관리자와 본인.
+    # **커밋 뒤에** 보낸다 — 되돌려진 싸인을 알리면 안 된다
+    await _notify_signed(db, performer, member, sign, registration)
     return SessionSignResult(
         sign=_sign_out(
             sign,

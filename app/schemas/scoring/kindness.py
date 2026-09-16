@@ -18,6 +18,10 @@ class KindnessSurveyWebhook(CamelModel):
 
 class ComplaintStatusUpdate(CamelModel):
     status: ComplaintStatus
+    #: 매장 TV 에 걸지 — **대표가 직접 완료로 찍을 때만 쓴다** (2026-09-16).
+    #: 끄면 벽에서만 빠지고 해결·점수·문자·앱 기록은 그대로 간다.
+    #: 안 주면 예전처럼 걸린다.
+    on_wall: bool = True
 
 
 class KindnessSurveyOut(CamelModel):
@@ -36,4 +40,6 @@ class KindnessSurveyOut(CamelModel):
     done_requested_by_id: str | None = None
     done_requested_at: datetime | None = None
     resolved_at: datetime | None = None
+    #: **매장 TV 에 안 걸린 것** — 승인할 때 대표가 고른다
+    tv_hidden: bool = False
     resolved_by_id: str | None = None

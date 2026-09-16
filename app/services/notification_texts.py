@@ -299,18 +299,24 @@ def staff_task_missing(name: str, left: int) -> dict:
     }
 
 
-def task_miss_confirmed(day, contents: list[str]) -> dict:
+def task_miss_confirmed(day, contents: list[str], nth: int, points: int) -> dict:
     """본인에게 — 다음 근무일까지도 안 해서 **확정 누락**이 됐다 (2026-08-21).
 
     퇴근할 때 온 알림과 글이 갈려야 한다. 저쪽은 '아직 기회가 있다' 는 뜻이고
     이쪽은 이미 깎였다는 뜻이라, 같은 문장이면 회복할 수 있는 날을 놓친다.
+
+    **몇 회째인지와 깎인 점수를 적는다** (2026-09-16 요청). 차감이 쌓이게
+    바뀌었는데(`TASK_MISS_PENALTY`) 본인이 그걸 모르면 쌓아 올린 뜻이 없다 —
+    지각 알림(`late_penalty`)과 같은 틀이다.
+
+    `points` 가 음수라 그대로 쓰면 "-10점 깎였어요" 로 부호가 두 번 붙는다.
     """
     head = contents[0] if contents else ""
-    body = head if len(contents) == 1 else f"{head} 외 {len(contents) - 1}개"
+    what = head if len(contents) == 1 else f"{head} 외 {len(contents) - 1}개"
     return {
         "type": "MY_TASK_MISSING",
-        "title": f"{day.month}월 {day.day}일 업무가 누락됐어요",
-        "body": f"{body} · 사유가 있으면 사유서를 내 주세요",
+        "title": f"{day.month}월 {day.day}일 업무 누락 {nth}회 · 종합 점수 {abs(points)}점 깎였어요",
+        "body": f"{what} · 사유가 있으면 사유서를 내 주세요",
         "link": "/work",
     }
 
@@ -448,6 +454,29 @@ def project_completed(project_title: str, project_id: str | None = None) -> dict
     }
 
 
+def project_reset(project_title: str, project_id: str | None, due, penalty: int) -> dict:
+    """담당자·참여자에게 — 완료가 **처음으로 되돌려졌다** (2026-09-16).
+
+    `project_completed` 와 글이 갈려야 한다. 저쪽은 끝났다는 뜻이고 이쪽은
+    **다시 해야 한다**는 뜻이라, 같은 문장이면 새 기한을 놓친다.
+
+    감점을 적어 냈을 때만 점수를 말한다 — 실수로 완료한 것을 치운 경우에는
+    깎인 것이 없는데 깎였다고 알리면 안 된다. **PM 은 5점을 더 무는데 그
+    값은 안 적는다** — 받는 사람마다 달라서 한 문장으로 못 쓴다.
+    """
+    body = short(project_title)
+    if due:
+        body += f" · 새 기한 {due.month}월 {due.day}일"
+    if penalty:
+        body += f" · 감점 {penalty}점"
+    return {
+        "type": "PROJECT",
+        "title": "프로젝트를 다시 해야 해요",
+        "body": body,
+        "link": _project_link(project_id),
+    }
+
+
 def project_overdue_admin(project_title: str, who: str, project_id: str | None = None) -> dict:
     return {
         "type": "PROJECT",
@@ -551,14 +580,24 @@ def env_award(item: str, total: int, reason: str | None) -> dict:
 
 
 def score_reverted(points: int, reason: str | None) -> dict:
-    """깎였던 점수를 대표가 되돌렸다 (2026-08-28).
+    """대표가 점수 한 줄을 무르다 (2026-08-28 · 2026-09-16 양수까지).
+
+    **부호에 따라 말이 뒤집힌다.** 깎였던 것을 되돌리면 좋은 소식이고,
+    받았던 것을 무르면 나쁜 소식이다 — 한 문장으로 같이 쓰면 점수를 잃은
+    사람에게 `돌아왔어요` 라고 말하게 된다.
 
     **`SCORE` 다.** 깎을 때(`late_penalty`·`task_miss_confirmed`)는 경고 쪽인데
-    되돌리는 것은 좋은 소식이라 같은 종류로 보내면 안 된다.
+    되돌리는 것은 좋은 소식이라 같은 종류로 보내면 안 된다. 양수를 무르는 것도
+    같은 자리에 둔다 — 점수가 오간 일은 한 곳에서 보는 게 낫다.
     """
+    title = (
+        f"깎였던 {abs(points)}점이 돌아왔어요"
+        if points < 0
+        else f"받았던 {points}점이 취소됐어요"
+    )
     return {
         "type": "SCORE",
-        "title": f"깎였던 {abs(points)}점이 돌아왔어요",
+        "title": title,
         "body": reason,
         "link": "/work",
     }
@@ -599,7 +638,9 @@ def kindness_complaint(improvement: str, branch: str | None) -> dict:
         "type": "COMPLAINT",
         "title": "컴플레인이 들어왔어요",
         "body": f"{branch} · {body}" if branch else body,
-        "link": "/work",
+        # 회원 친절도 탭의 컴플레인 세그먼트까지 바로 연다 — 그냥 `/work` 면
+        # 앱이 환경정비(첫 칸)를 열어서 눌러도 딴 데로 가는 것처럼 보였다 (2026-09-15)
+        "link": "/work/kindness-complaints",
     }
 
 
@@ -626,5 +667,41 @@ def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> di
         "type": "COMPLAINT",
         "title": "컴플레인이 해결됐어요",
         "body": f"{branch} · {body}" if branch else body,
-        "link": "/work",
+        "link": "/work/kindness-complaints",
+    }
+
+
+# ── 세션 싸인·회원 등록 (2026-09-16 대표 요청) ──
+#
+# **누르면 그 화면까지 연다.** `/work` 만 보내면 첫 칸(환경정비)이 열려서
+# 볼 자리를 다시 찾아야 한다 — 컴플레인·PT 만족도가 겪은 것과 같다.
+
+
+def session_signed(trainer: str, member: str, session_no: int, total: int | None) -> dict:
+    """세션 싸인을 받았다 — 대표·관리자와 **그 트레이너 본인**에게.
+
+    **회차를 싣는다.** `12/20회차` 가 곧 얼마나 남았는지라, 재등록을 언제
+    권해야 하는지가 이 한 줄에서 보인다.
+    """
+    rounds = f"{session_no}/{total}회차" if total else f"{session_no}회차"
+    return {
+        "type": "SESSION_SIGN",
+        "title": "세션 싸인을 받았어요",
+        "body": f"{trainer} · {member}님 {rounds}",
+        "link": "/work/session-signs",
+    }
+
+
+def member_registered(trainer: str, member: str, is_new: bool, sessions: int) -> dict:
+    """회원이 등록했다 — 대표·관리자와 **그 트레이너 본인**에게.
+
+    **신규와 재등록을 말로 가른다** (`등록했어요` · `재등록 했어요`).
+    재등록은 그 트레이너가 붙잡은 것이라 뜻이 다르다.
+    """
+    what = "등록했어요" if is_new else "재등록 했어요"
+    return {
+        "type": "MEMBER_REGISTER",
+        "title": f"{member}님이 {what}",
+        "body": f"{trainer} · {sessions}회",
+        "link": "/members",
     }

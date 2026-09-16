@@ -59,3 +59,14 @@ async def accrue_score(
     )
     db.add(event)
     return event
+
+
+#: 컴플레인을 해결하면 이 환경정비 항목으로 점수가 붙는다 (15점).
+#:
+#: **세 곳이 이 이름 하나를 봐야 한다** — 점수를 붙이는 쪽
+#: (`kindness._award_claim_resolved`), 칩으로 누른 것을 대표 승인으로 돌리는 쪽
+#: (`env._needs_approval`), 그리고 센터 기여도 내역에 세울지 가르는 쪽
+#: (`scores._contrib_board`). 각자 따로 적어 두면 이름을 고칠 때 하나가 남는다.
+#:
+#: 항목은 지점마다 행이 따로라 id 로는 못 묶는다 — 이름으로 가른다.
+CLAIM_ITEM_NAME = "클레임해결"

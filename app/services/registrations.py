@@ -17,16 +17,22 @@
 같이 쓴다. 한쪽만 고치면 같은 값이 경로에 따라 다르게 처리된다.
 """
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.periods import KST
-from app.enums import RegistrationStatus, ScoreCategory
+from app.enums import RegistrationType
+from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.staff.employee import Employee
+from app.services import notification_texts as ntext
+from app.services.notifications import boss_ids, notify
+
+from app.core.periods import KST
+from app.enums import RegistrationStatus, ScoreCategory
 from app.services.scoring import accrue_score
 
 #: 매출성과 점수 — 결제액 10,000원이 기본 1점, 거기에 배율을 곱한다.
@@ -34,6 +40,9 @@ from app.services.scoring import accrue_score
 SALES_WON_PER_POINT = 10_000
 SALES_MULTIPLIER = 0.25
 
+
+
+logger = logging.getLogger(__name__)
 
 def sales_points(price_paid: int) -> int:
     return round(price_paid / SALES_WON_PER_POINT * SALES_MULTIPLIER)
@@ -113,3 +122,31 @@ def ensure_used_within(used_sessions: int, total_sessions: int) -> None:
                 "message": "이미 받은 회차가 총 회차보다 많습니다",
             },
         )
+
+
+async def notify_registered(
+    db: AsyncSession, registration: Registration, trainer: Employee
+) -> None:
+    """회원이 등록했다고 알린다 — **대표·관리자와 그 트레이너 본인**에게.
+
+    세션 싸인 알림과 같은 명단이다. 본인을 빼면 자기가 받은 등록을 자기만 모른다.
+
+    **신규와 재등록을 말로 가른다** — 재등록은 그 트레이너가 붙잡은 것이라
+    뜻이 다르다 (`ntext.member_registered`).
+
+    **실패해도 등록은 그대로 둔다.** 알림은 곁가지라 여기서 막으면 등록이
+    안 남는다 — 세션 싸인과 같은 규칙이다.
+    """
+    member = await db.get(Member, registration.member_id)
+    text = ntext.member_registered(
+        trainer.name,
+        member.name if member else "",
+        registration.type is RegistrationType.NEW,
+        registration.total_sessions,
+    )
+    try:
+        for eid in dict.fromkeys([*await boss_ids(db), trainer.id]):
+            await notify(db, employee_id=eid, **text)
+        await db.commit()
+    except Exception:
+        logger.warning("[member-register] 알림 실패 — 등록은 그대로 둔다", exc_info=True)

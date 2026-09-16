@@ -5,7 +5,7 @@
 """
 
 import secrets
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select
@@ -33,6 +33,7 @@ from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.staff.attendance import (
+    AttendanceEdit,
     AttendanceDayOut,
     AttendanceOut,
     AttendanceRosterDayOut,
@@ -526,6 +527,178 @@ async def scan_attendance(
     out = AttendanceOut.model_validate(record)
     out.status = status
     return out
+
+
+#: 손으로 고칠 수 있는 사람 — **대표·관리자만.** 남의 근태를 만지는 자리다
+_EDITORS = (Role.MASTER, Role.ADMIN)
+
+
+def _wanted_auto(
+    target: Employee, record: Attendance, branch_name: str | None
+) -> dict[str, tuple[int, str]]:
+    """그 근무일에 **있어야 하는** 자동 점수 — `source_ref_id` → (점수, 사유)
+
+    ⚠️ **[scan_attendance] 의 조건과 같아야 한다.** 거기는 찍는 순간 하나씩
+    붙이고(멱등), 여기는 시각을 고친 뒤 **있어야 할 것 전체**를 셈한다.
+    한쪽만 고치면 스캔으로 찍은 날과 손으로 고친 날의 점수가 갈린다.
+    """
+    day = record.date
+    duty = duty_hours(day, branch_name)
+    start_ref = duty[0] if duty else target.shift_start
+    end_ref = duty[1] if duty else target.shift_end
+    first_day = _joined(target) == day
+    want: dict[str, tuple[int, str]] = {}
+
+    if record.check_in is not None and start_ref:
+        in_min = _kst_min(record.check_in)
+        if in_min <= _hhmm_to_min(start_ref) - OFFHOURS_THRESHOLD_MIN:
+            want[f"offhours:{day.isoformat()}:in"] = (OFFHOURS_POINTS, "조기 출근 (자동)")
+        # 지각은 **당직일·근무시간 미설정·입사 첫날**을 뺀다 (스캔과 같다)
+        if (
+            duty is None
+            and target.shift_start
+            and target.shift_end
+            and not first_day
+            and in_min > _hhmm_to_min(target.shift_start)
+        ):
+            # 몇 번째 지각인지는 넣을 때 센다 — 여기서는 '있어야 한다' 만 말한다
+            want[f"late:{day.isoformat()}"] = (0, "지각")
+
+    if record.check_out is not None and end_ref:
+        out_min = _kst_min(record.check_out)
+        if record.check_out.astimezone(KST).date() > day:
+            out_min += 1440
+        if out_min >= _hhmm_to_min(end_ref) + OFFHOURS_THRESHOLD_MIN:
+            want[f"offhours:{day.isoformat()}:out"] = (OFFHOURS_POINTS, "초과 근무 (자동)")
+    return want
+
+
+async def _resync_auto_scores(
+    db: AsyncSession, target: Employee, record: Attendance, branch_name: str | None
+) -> None:
+    """시각을 고친 뒤 자동 점수를 **그 날짜만** 다시 맞춘다 (2026-09-16 대표 요청).
+
+    예전에는 손으로 고칠 길이 DB 밖에 없어서, 고칠 때마다 점수가 조용히
+    빠졌다 — 9월 한 달에 오현종 50점·민중기 10점이 그렇게 비어 있었다.
+
+    **그 근무일 것만 건드린다.** 지우는 것은 `late:<날짜>` · `offhours:<날짜>:*`
+    뿐이고, 사람이 손으로 준 점수(`created_by_id` 가 있는 것)는 안 만진다 —
+    자동 적립은 전부 `created_by_id` 가 비어 있다.
+    """
+    day = record.date.isoformat()
+    rows = (
+        await db.execute(
+            select(ScoreEvent).where(
+                ScoreEvent.employee_id == target.id,
+                ScoreEvent.created_by_id.is_(None),
+                ScoreEvent.source_ref_id.in_(
+                    [f"late:{day}", f"offhours:{day}:in", f"offhours:{day}:out"]
+                ),
+            )
+        )
+    ).scalars().all()
+    have = {r.source_ref_id: r for r in rows}
+    want = _wanted_auto(target, record, branch_name)
+
+    for ref, row in have.items():
+        if ref not in want:
+            await db.delete(row)
+    for ref, (points, reason) in want.items():
+        if ref in have:
+            continue
+        if ref.startswith("late:"):
+            # 몇 번째 지각인지가 점수를 정한다 — 그 셈은 `_deduct_late` 에 있다
+            await _deduct_late(db, target, record.date)
+        else:
+            await accrue_score(
+                db,
+                employee_id=target.id,
+                branch_id=target.branch_id,
+                category=ScoreCategory.CONTRIB,
+                points=points,
+                reason=reason,
+                source_ref_id=ref,
+                period=day[:7],
+            )
+
+
+@router.put(
+    "/attendance",
+    response_model=AttendanceOut,
+    dependencies=[Depends(require_role(*_EDITORS))],
+)
+async def edit_attendance(
+    payload: AttendanceEdit,
+    db: AsyncSession = Depends(get_db),
+) -> AttendanceOut:
+    """출퇴근을 **손으로 고치거나 만든다** — 대표·관리자만 (2026-09-16 대표 요청).
+
+    바코드를 못 찍었거나 시각이 틀린 날이 매주 나오는데, 앞에서 고칠 길이
+    없어서 그동안 사람이 DB 를 직접 만졌다. 그러면 **자동 점수가 조용히
+    빠진다** — 9월에 실제로 60점이 비어 있었다.
+
+    **기록이 없는 날도 만든다.** 결근으로 찍힌 날을 되살리는 것이 이 자리에
+    오는 요청의 절반이다.
+
+    **자동 점수를 다시 맞춘다** ([_resync_auto_scores]) — 09:00 으로 고치면
+    지각 차감이 사라지고, 23:10 으로 고치면 초과근무 +10 이 붙는다.
+
+    시각은 **KST `HH:MM`** 이다. 비우면(null) 그 칸을 지운다 —
+    퇴근을 잘못 찍은 날을 되돌리는 길이다.
+    """
+    target = await db.get(Employee, payload.employee_id)
+    if target is None:
+        raise HTTPException(
+            404, detail={"code": "EMP_NOT_FOUND", "message": "직원을 찾을 수 없습니다"}
+        )
+    branch = await db.get(Branch, target.branch_id)
+    branch_name = branch.name if branch else None
+
+    record = (
+        await db.execute(
+            select(Attendance).where(
+                Attendance.employee_id == target.id, Attendance.date == payload.date
+            )
+        )
+    ).scalar_one_or_none()
+    if record is None:
+        record = Attendance(employee_id=target.id, date=payload.date)
+        db.add(record)
+
+    def _at(hhmm: str | None) -> datetime | None:
+        if not hhmm:
+            return None
+        hour, minute = (int(x) for x in hhmm.split(":"))
+        return datetime.combine(payload.date, time(hour, minute), tzinfo=KST)
+
+    record.check_in = _at(payload.check_in)
+    out = _at(payload.check_out)
+    # 자정을 넘긴 퇴근 — 출근보다 이르면 다음 날로 본다 (야간 근무)
+    if out is not None and record.check_in is not None and out <= record.check_in:
+        out += timedelta(days=1)
+    record.check_out = out
+    record.work_minutes = (
+        int((record.check_out - record.check_in).total_seconds() // 60)
+        if record.check_in is not None and record.check_out is not None
+        else None
+    )
+    # **손으로 넣은 줄이라고 남긴다** — 나중에 되짚을 때 스캔과 갈라 봐야 한다
+    record.source = AttendanceSource.MANUAL
+    await db.flush()
+    await _resync_auto_scores(db, target, record, branch_name)
+    await db.commit()
+    await db.refresh(record)
+
+    result = AttendanceOut.model_validate(record)
+    result.status = _attendance_status(
+        record,
+        target.shift_start,
+        target.shift_end,
+        datetime.now(timezone.utc).astimezone(KST),
+        _joined(target),
+        branch_name,
+    )
+    return result
 
 
 @router.get("/attendance", response_model=list[AttendanceOut])

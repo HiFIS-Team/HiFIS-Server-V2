@@ -32,6 +32,7 @@ from app.models.payroll.hourly_wage import HourlyWagePolicy
 from app.models.payroll.payday_policy import PaydayPolicy
 from app.models.payroll.rank_policy import RankPolicy
 from app.models.scoring.rank_overtake import RankOvertake
+from app.models.scoring.ranking_freeze import RankingFreeze
 from app.models.scoring.ranking_snapshot import RankingSnapshot
 from app.models.board.reaction import Reaction
 from app.models.board.comment import Comment
@@ -86,6 +87,7 @@ __all__ = [
     "PaydayPolicy",
     "RankPolicy",
     "RankOvertake",
+    "RankingFreeze",
     "RankingSnapshot",
     "Reaction",
     "Comment",

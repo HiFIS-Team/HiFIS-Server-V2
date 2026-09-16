@@ -33,7 +33,7 @@ from app.schemas.scoring.env import (
 )
 from app.services import notification_texts as ntext
 from app.services.notifications import master_ids, notify
-from app.services.scoring import accrue_score
+from app.services.scoring import CLAIM_ITEM_NAME, accrue_score
 from app.services.summarize import polish_env_note
 
 router = APIRouter(tags=["env"])
@@ -217,8 +217,9 @@ async def update_env_item(
 #: **한 컴플레인에 여러 사람이 15점씩** 가져갈 수 있었다.
 #:
 #: **이름으로 가른다.** 항목은 지점마다 행이 따로라 id 로는 못 묶고,
-#: `_award_claim_resolved` 도 같은 이름으로 찾는다.
-_APPROVAL_ITEMS = {"클레임해결"}
+#: `_award_claim_resolved` 도 같은 이름으로 찾는다 — 그래서 이름은
+#: `services.scoring.CLAIM_ITEM_NAME` 한 곳에 둔다.
+_APPROVAL_ITEMS = {CLAIM_ITEM_NAME}
 
 
 def _needs_approval(item: EnvItem) -> bool:

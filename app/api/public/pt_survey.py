@@ -28,7 +28,12 @@ from app.models.members.pt_survey import PtSurvey
 from app.models.members.registration import Registration
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
-from app.schemas.members.pt_survey import PtSurveyPageOut, PtSurveySubmit
+from app.services import pt_topics
+from app.schemas.members.pt_survey import (
+    PtSurveyPageOut,
+    PtSurveySubmit,
+    PtTopicOut,
+)
 from app.services import notification_texts as ntext
 from app.services.notifications import boss_ids, branch_manager_ids, notify
 
@@ -39,6 +44,18 @@ router = APIRouter(tags=["pt-survey"])
 #: 적은 게 없으면 아예 안 남긴다 — `-` · `없음` 같은 한두 글자가 실제로 쌓인다
 #: (매장 TV 가 같은 이유로 4자 미만을 안 올린다)
 _MIN_TEXT = 4
+
+
+def _rows(answers: list) -> list[dict] | None:
+    """고른 주제를 저장할 모양으로 — `[{"topic": …, "note": …}]`.
+
+    **아무것도 안 고르면 `None` 이다.** 빈 배열로 두면 '고르는 칸이 있었는데
+    안 골랐다' 와 '그런 칸이 아예 없던 옛 답' 이 같아 보인다.
+    """
+    rows = [
+        {"topic": a.topic, "note": a.note} for a in answers if pt_topics.is_known(a.topic)
+    ]
+    return rows or None
 
 
 async def _survey_of(token: str, db: AsyncSession) -> PtSurvey:
@@ -67,6 +84,11 @@ async def pt_survey_page(token: str, db: AsyncSession = Depends(get_db)) -> PtSu
         session_no=survey.session_no,
         total_sessions=registration.total_sessions if registration else 0,
         answered=survey.answered_at is not None,
+        # **문구를 화면에 안 박는다** — 앱도 같은 표를 쓰므로 여기서 한 번만 준다
+        topics=[
+            PtTopicOut(code=t.code, praise=t.praise, improve=t.improve)
+            for t in pt_topics.PT_TOPICS
+        ],
     )
 
 
@@ -86,7 +108,11 @@ async def submit_pt_survey(
 
     text = (payload.request or "").strip()
     survey.satisfaction = payload.satisfaction
+    # 옛 화면(객관식 전)이 낸 것만 여기로 온다 — 지금 웹폼은 안 보낸다
     survey.request = text if len(text) >= _MIN_TEXT else None
+    # **코드와 글만 남긴다.** 문구는 읽을 때 표에서 붙인다 (`pt_topics`)
+    survey.praise = _rows(payload.praise)
+    survey.improve = _rows(payload.improve)
     survey.renew = payload.renew
     survey.answered_at = datetime.now(timezone.utc)
 

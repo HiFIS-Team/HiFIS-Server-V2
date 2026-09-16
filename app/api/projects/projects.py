@@ -1,12 +1,13 @@
 """Project 라우터 — CLAUDE.md §6.1. status 는 progress+due 파생."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
+from app.core.periods import now_kst
 from app.db.session import get_db
 from app.services.branch_group import visible_branch_ids
 from app.enums import (
@@ -30,6 +31,7 @@ from app.models.scoring.score_event import ScoreEvent
 from app.schemas.projects.project import (
     ProjectActivityOut,
     ProjectAwardCreate,
+    ProjectReset,
     ProjectAwardOut,
     ProjectCreate,
     ProjectOut,
@@ -226,6 +228,12 @@ async def _any_todo_done(db: AsyncSession, project: Project) -> bool:
 # 헷갈리기 쉬운 자리라 적어 둔다.
 PROJECT_POINTS = 10
 PROJECT_MEMBER_POINTS = 5
+
+#: PM 과 참여자의 점수 차이 — **가점·감점에도 그대로 이어간다** (2026-09-16).
+#:
+#: 완료 기본 점수가 PM 10 · 참여자 5 라 차이가 5다. 대표가 더 주거나 깎을 때도
+#: PM 은 이만큼 더 받고 더 문다 — 끌고 가는 사람의 몫이라 한 값으로 묶어 둔다.
+PM_POINT_GAP = PROJECT_POINTS - PROJECT_MEMBER_POINTS
 
 
 async def _settle_completion(db: AsyncSession, project: Project) -> None:
@@ -487,18 +495,26 @@ def _ensure_member(project: Project, current: Employee) -> None:
         )
 
 
-def _ensure_open(project: Project, current: Employee) -> None:
-    """완료된 프로젝트는 **MASTER 만** 손댈 수 있다.
+def _ensure_open(project: Project) -> None:
+    """완료된 프로젝트는 **아무도 못 고친다 — MASTER·ADMIN 도 마찬가지다.**
 
-    완료가 곧 점수라(`_settle_completion`) 되돌리면 담당자 점수도 같이 흔들린다.
-    됐다 안 됐다 하는 걸 막으려고 잠그고, 실수로 완료한 것만 대표가 풀어 준다.
+    2026-09-16 에 좁혔다. 그 전에는 MASTER 만 예외였는데, 완료된 프로젝트에도
+    앱 헤더에 `수정`·`인원 추가` 아이콘이 그대로 떠서 **끝난 일이 계속 움직일
+    수 있는 자리**였다. 완료가 곧 점수라(`_settle_completion`) 인원이 늘면
+    받는 사람이 늘고, 기한이 바뀌면 지킨 것인지가 바뀐다.
+
+    돌아가는 길은 **리셋 하나뿐이다** (`POST /{id}/reset`, MASTER 전용).
+    거기는 기한과 체크를 처음으로 되돌리고 점수를 도로 걷는 자리라,
+    조용히 고치는 것과 뜻이 다르다.
 
     댓글과 점수 부여(`award`)는 잠기지 않는다 — 완료 뒤에 판단해서 매기는 값이다.
+    **삭제도 MASTER 는 그대로 된다** (`_ensure_can_edit` 이 먼저 통과시킨다) —
+    잘못 만든 것을 치우는 길까지 막으면 못 지우는 프로젝트가 남는다.
 
     **기준이 진행률에서 `completed_at` 으로 바뀌었다 (2026-08-19).** 할 일을 다
     체크한 것만으로는 안 잠긴다 — 담당자가 완료를 누르기 전까지는 진행 중이다.
     """
-    if project.completed_at is not None and current.role != Role.MASTER:
+    if project.completed_at is not None:
         raise HTTPException(
             403,
             detail={"code": "PROJECT_DONE", "message": "완료된 프로젝트는 수정할 수 없습니다"},
@@ -557,7 +573,7 @@ async def _ensure_can_edit(db: AsyncSession, project: Project, current: Employee
     if current.role == Role.MASTER:
         return
     _ensure_member(project, current)
-    _ensure_open(project, current)
+    _ensure_open(project)
     if current.role == Role.ADMIN:
         return
     if await _any_todo_done(db, project):
@@ -789,7 +805,7 @@ async def create_project_request(
     # 수정·삭제는 그 프로젝트의 담당자와 참여자만" 으로 정해지면서 같아졌다.
     # 그 밖의 사람은 여기서 `NOT_PROJECT_MEMBER` 로 걸린다 (조회만 된다).
     _ensure_member(project, current)
-    _ensure_open(project, current)
+    _ensure_open(project)
     if payload.type is ProjectRequestType.MEMBERS:
         await _check_addable(db, project, payload.members.add_ids)
     # 프로젝트당 대기 요청은 하나만 (중복 방지)
@@ -956,9 +972,17 @@ async def award_project(
 ) -> list[ProjectAwardOut]:
     """프로젝트 점수 조정 — **MASTER 만**.
 
-    완료하면 자동으로 10점이 붙는다. 그 위에서 대표가 판단해 올리거나 깎는다 —
-    기한 안에 힘든 걸 해냈으면 최대 100, 완료라고만 찍고 실제로 안 했으면 -100.
+    완료하면 자동으로 PM 10 · 참여자 5 가 붙는다. 그 위에서 대표가 판단해
+    올린다 — 기한 안에 힘든 걸 해냈으면 최대 100.
     여기서 주는 값이 그 사람이 이 프로젝트에서 받는 **최종 점수**다 (더해지지 않는다).
+
+    **`points` 는 참여자 기준이고 PM 은 [PM_POINT_GAP] 만큼 더 받는다**
+    (2026-09-16). 기본값이 `PROJECT_MEMBER_POINTS` 라 그대로 다시 주면
+    완료 직후와 같은 값이 된다.
+
+    **음수를 못 준다 (2026-09-16 대표 결정).** 깎는 것은 리셋(`/{id}/reset`)
+    으로 옮겼다 — 점수만 깎고 프로젝트는 완료로 둔 채 넘어가면 못 한 일이
+    끝난 일로 남는다.
 
     **`employeeId` 를 안 주면 담당자 전원에게 같은 점수를 매긴다.**
     프로젝트는 다 같이 하는 일이라 보통 이쪽을 쓴다. 한 트랜잭션이라
@@ -987,6 +1011,10 @@ async def award_project(
         employee = await db.get(Employee, employee_id)
         if employee is None:
             raise HTTPException(400, detail={"code": "EMPLOYEE_NOT_FOUND", "message": "직원이 존재하지 않습니다"})
+        # **PM 은 참여자보다 5점을 더 받는다** — 완료 기본 점수의 차이를 잇는다
+        points = payload.points + (
+            PM_POINT_GAP if employee_id == project.owner_id else 0
+        )
         # 같은 프로젝트·같은 직원은 하나만 — 재부여 시 점수·코멘트 갱신(재평가)
         existing = await db.scalar(
             select(ScoreEvent).where(
@@ -996,7 +1024,7 @@ async def award_project(
             )
         )
         if existing is not None:
-            existing.points = payload.points
+            existing.points = points
             existing.reason = payload.comment
             existing.created_by_id = current.id
             events.append(existing)
@@ -1017,7 +1045,7 @@ async def award_project(
                 employee_id=employee_id,
                 branch_id=employee.branch_id,
                 category=ScoreCategory.PROJECT,
-                points=payload.points,
+                points=points,
                 created_by_id=current.id,
                 source_ref_id=project_id,
                 reason=payload.comment,
@@ -1102,7 +1130,7 @@ async def create_project_todo(
 ) -> ProjectTodoOut:
     project = await _get_project_or_404(db, project_id)
     _ensure_member(project, current)
-    _ensure_open(project, current)
+    _ensure_open(project)
     todo = ProjectTodo(
         project_id=project_id,
         content=payload.content,
@@ -1129,7 +1157,7 @@ async def update_project_todo(
     todo = await _get_todo_or_404(db, project_id, todo_id)
     project = await _get_project_or_404(db, project_id)
     _ensure_member(project, current)
-    _ensure_open(project, current)
+    _ensure_open(project)
     fields = payload.model_dump(exclude_unset=True)
     if "done" in fields:
         _ensure_can_check(project, todo, current)
@@ -1160,7 +1188,7 @@ async def delete_project_todo(
     todo = await _get_todo_or_404(db, project_id, todo_id)
     project = await _get_project_or_404(db, project_id)
     _ensure_member(project, current)
-    _ensure_open(project, current)
+    _ensure_open(project)
     content = todo.content  # 삭제 전 스냅샷(타임라인 표시용)
     await db.delete(todo)
     await db.flush()
@@ -1216,6 +1244,10 @@ async def update_project(
     # 진행률은 보통 할 일 체크가 서버에서 다시 셈하지만(`_recompute_progress`),
     # 체크리스트가 없는 프로젝트는 여기로 직접 올린다.
     fields = payload.model_dump(exclude_unset=True)
+    # **완료된 프로젝트는 여기서 끝이다 — MASTER 도 못 고친다** (2026-09-16).
+    # `_ensure_can_edit` 은 MASTER 를 맨 먼저 통과시키므로 그 앞에 둬야 한다.
+    # 돌아가려면 리셋을 거친다 (`POST /{id}/reset`)
+    _ensure_open(project)
     if set(fields) - {"progress"}:
         # 이름·설명·색·기한처럼 **내용을 바꾸는 것**은 결재를 거치는 게 원칙이다.
         # 다만 `_ensure_can_edit` 이 통과시키는 사람은 바로 고친다 (2026-08-19) —
@@ -1227,7 +1259,7 @@ async def update_project(
         # 아직 아무도 체크를 안 했나는 여기서 안 본다 — 그러면 진행률을 처음
         # 올리는 순간부터 자기 프로젝트를 못 고치게 된다.
         _ensure_member(project, current)
-        _ensure_open(project, current)
+        _ensure_open(project)
     old_progress, old_due = project.progress, project.due
     old_assignees = set(project.assignee_ids or [])
     for key, value in fields.items():
@@ -1313,33 +1345,152 @@ async def complete_project(
 
 
 @router.post(
-    "/{project_id}/reopen",
+    "/{project_id}/reset",
     response_model=ProjectOut,
     dependencies=[Depends(require_role(Role.MASTER))],
 )
-async def reopen_project(
+async def reset_project(
     project_id: str,
+    payload: ProjectReset,
     current: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectOut:
-    """완료를 되돌린다 — **MASTER 만** (2026-08-19 대표 결정).
+    """완료를 **처음으로 되돌린다** — MASTER 전용 (2026-09-16 대표 결정).
 
-    앱은 완료할 때 '되돌릴 수 없어요' 라고 알린다. 실제로 담당자·참여자는 못
-    되돌린다 — 완료가 곧 점수라 됐다 안 됐다 하면 점수가 같이 흔들린다.
-    **실수로 누른 것을 치울 길만 대표에게 남겨 둔다.**
+    끝났다고 찍었는데 실제로는 안 된 프로젝트를 다시 시키는 자리다.
+    조용한 되돌리기(`/reopen`)를 없애고 이 하나로 모았다 — **길이 둘이면
+    어느 쪽을 눌러야 하는지를 매번 정해야 하고, 가벼운 쪽으로 기울면
+    벌점이 빈다.**
 
-    되돌리면 자동으로 준 10점은 회수하고, MASTER 가 손으로 매긴 점수는 남는다
-    (`_settle_completion`).
+    한 번에 넷을 한다.
+
+    | | |
+    |---|---|
+    | 완료 해제 | `completed_at` 을 비우고 자동 점수를 걷는다 |
+    | 할 일 | **전부 체크 해제** · 진행률 0 |
+    | 기한 | **리셋한 날부터 원래 길이만큼** 다시 (3일짜리면 오늘부터 3일) |
+    | 감점 | 적어 냈으면 그만큼 깎는다 — **따로 남는 줄이다** |
+
+    ## 기한은 `due - start_at` 길이를 그대로 옮긴다
+
+    연장을 받았으면 **그 늘어난 길이**로 돈다 (2026-09-16 결정). 처음 길이를
+    따로 저장해 두지 않았고, 연장은 대표가 승인해 준 것이라 없던 일로 칠
+    이유가 없다.
+
+    ## 감점은 `award` 와 **다른 줄**이다
+
+    `award` 는 사람당 한 줄(`source_ref_id = 프로젝트 id`)을 갈아끼우는
+    구조라, 같은 줄에 벌점을 쓰면 **다시 완료하고 점수를 주는 순간 벌점이
+    증발한다.** 그래서 리셋마다 `projectreset:<id>:<몇 번째>` 로 따로 남긴다 —
+    두 번 리셋하면 두 줄이다.
+
+    ## PM 은 참여자보다 5점을 더 문다
+
+    완료 기본 점수가 PM 10 · 참여자 5 로 **5 차이**다 ([PM_POINT_GAP]).
+    깎을 때도 그 차이를 이어간다 — 끌고 가는 사람의 몫이 더 크다.
     """
     project = await _get_project_or_404(db, project_id)
     if project.completed_at is None:
         raise HTTPException(400, detail={"code": "NOT_DONE", "message": "완료된 프로젝트가 아닙니다"})
+
+    # 1) 완료 해제 — `_settle_completion` 이 자동으로 준 점수를 걷는다
     project.completed_at = None
-    await _log_activity(db, project_id, current.id, ProjectActivityKind.PROGRESS, "완료를 되돌렸어요")
+
+    # 2) 할 일을 전부 되돌린다 — 다시 하라는 뜻이라 체크가 남아 있으면 안 된다
+    await db.execute(
+        update(ProjectTodo)
+        .where(ProjectTodo.project_id == project_id)
+        .values(done=False)
+    )
+    await db.flush()
+    project.progress = 0
+
+    # 3) 기한을 오늘부터 다시 — 길이(`due - start_at`)는 그대로 옮긴다.
+    #
+    # **`start_at` 이 비어 있으면 만든 때를 시작으로 본다** — 앱도 그렇게
+    # 폴백한다(`Project.start_at` 주석). 그것도 없으면 길이를 못 재므로
+    # 기한을 안 건드린다 — 임의로 정하면 없던 마감이 생긴다.
+    today = now_kst().replace(hour=0, minute=0, second=0, microsecond=0)
+    began = project.start_at or project.created_at
+    span = project.due - began if (project.due and began) else None
+    project.start_at = today
+    if span is not None:
+        # 하루 미만으로 끝나는 프로젝트는 없다 — 반올림해서 날 단위로 맞춘다
+        project.due = today + timedelta(days=max(round(span.total_seconds() / 86400), 0))
+    project.overdue_notified_at = None  # 마감 알림 재무장
+
     await _settle_completion(db, project)
+
+    # 4) 감점 — 적어 냈을 때만. **완료 점수를 걷은 뒤에 붙인다**
+    penalty = payload.penalty or 0
+    if penalty:
+        await _apply_reset_penalty(db, project, penalty, current, payload.reason)
+
+    body = "프로젝트를 리셋했어요"
+    if project.due:
+        body += f" · 새 기한 {project.due.month}월 {project.due.day}일"
+    if penalty:
+        body += f" · 감점 {penalty}점"
+    await _log_activity(db, project_id, current.id, ProjectActivityKind.PROGRESS, body)
+    for employee_id in _reset_targets(project):
+        await notify(
+            db,
+            employee_id=employee_id,
+            **ntext.project_reset(project.title, project.id, project.due, penalty),
+        )
     await db.commit()
     await db.refresh(project)
     return await _single_out(db, project)
+
+
+def _reset_targets(project: Project) -> list[str]:
+    """리셋을 알릴 사람 — 담당자와 참여 멤버. **담당자가 명단에 없어도 넣는다**"""
+    targets = list(project.assignee_ids or [])
+    if project.owner_id and project.owner_id not in targets:
+        targets.append(project.owner_id)
+    return targets
+
+
+async def _apply_reset_penalty(
+    db: AsyncSession, project: Project, penalty: int, current: Employee, reason: str | None
+) -> None:
+    """리셋 감점을 **따로 남긴다** — 다시 완료해도 안 지워진다.
+
+    `source_ref_id` 에 몇 번째 리셋인지를 넣어서 두 번 리셋하면 두 줄이 된다.
+    같은 키를 쓰면 두 번째 리셋이 첫 번째 벌점을 덮어써서 **거듭 놓친 것이
+    한 번 놓친 것과 같아진다.**
+    """
+    # **줄이 아니라 `source_ref_id` 가짓수를 센다** — 리셋 한 번에 사람 수만큼
+    # 줄이 생겨서, 줄로 세면 두 사람짜리 프로젝트가 한 번 리셋에 `3회` 가 된다
+    nth = (
+        await db.scalar(
+            select(func.count(func.distinct(ScoreEvent.source_ref_id)))
+            .select_from(ScoreEvent)
+            .where(
+                ScoreEvent.category == ScoreCategory.PROJECT,
+                ScoreEvent.source_ref_id.like(f"projectreset:{project.id}:%"),
+            )
+        )
+    ) or 0
+    ref = f"projectreset:{project.id}:{nth + 1}"
+    note = (reason or "").strip()
+    for employee_id in _reset_targets(project):
+        employee = await db.get(Employee, employee_id)
+        if employee is None:
+            continue
+        # PM 은 참여자보다 5점을 더 문다 — 완료 기본 점수의 차이를 그대로 잇는다
+        amount = penalty + (PM_POINT_GAP if employee_id == project.owner_id else 0)
+        label = f"프로젝트 리셋 {nth + 1}회"
+        await accrue_score(
+            db,
+            employee_id=employee_id,
+            branch_id=employee.branch_id,
+            category=ScoreCategory.PROJECT,
+            points=-amount,
+            created_by_id=current.id,
+            source_ref_id=ref,
+            reason=f"{label} · {note}" if note else label,
+        )
 
 
 async def _purge_project(db: AsyncSession, project: Project) -> None:
