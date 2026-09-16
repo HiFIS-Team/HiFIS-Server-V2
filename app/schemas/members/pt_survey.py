@@ -117,4 +117,16 @@ class PtSurveyOut(CamelModel):
     praise: list[PtTopicAnswer] = []
     improve: list[PtTopicAnswer] = []
     renew: RenewIntent | None = None
+
+    @field_validator("praise", "improve", mode="before")
+    @classmethod
+    def _none_is_empty(cls, v: object) -> object:
+        """**옛 답은 이 칸이 `None` 이다.**
+
+        객관식 전에 받은 22건이 그렇다. 저장 쪽에서 `None` 과 `[]` 를 일부러
+        가른다 — '고르는 칸이 있었는데 안 골랐다' 와 '그런 칸이 아예 없던
+        답' 이 다르기 때문이다. 내보낼 때는 화면이 둘 다 '없음' 으로 그리므로
+        여기서 빈 배열로 맞춘다 (안 하면 목록 전체가 500 이다).
+        """
+        return [] if v is None else v
     created_at: datetime

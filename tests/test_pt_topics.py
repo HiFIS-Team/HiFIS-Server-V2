@@ -70,3 +70,28 @@ def test_공백만_적은_글은_비운다():
 def test_글이_너무_길면_자른다():
     got = _submit(praise=[{"topic": "DIET", "note": "가" * 900}])
     assert len(got.praise[0].note) == pt_topics.MAX_NOTE
+
+
+def test_옛_답은_두_칸이_None_이라도_읽힌다():
+    """**객관식 전에 받은 답이 그렇다** — 안 막으면 목록 전체가 500 이다.
+
+    실제로 났다. 저장 쪽은 `None` 과 `[]` 를 일부러 가르는데, 내보내는 DTO 가
+    `list` 만 받고 있어서 옛 줄 하나 때문에 화면이 통째로 안 떴다.
+    """
+    from datetime import datetime, timezone
+
+    from app.schemas.members.pt_survey import PtSurveyOut
+
+    got = PtSurveyOut.model_validate(
+        {
+            "id": "x",
+            "registrationId": "r",
+            "memberId": "m",
+            "trainerId": "t",
+            "sessionNo": 7,
+            "createdAt": datetime.now(timezone.utc),
+            "praise": None,
+            "improve": None,
+        }
+    )
+    assert got.praise == [] and got.improve == []
