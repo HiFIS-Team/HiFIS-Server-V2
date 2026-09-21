@@ -226,6 +226,28 @@ def _needs_approval(item: EnvItem) -> bool:
     return item.name in _APPROVAL_ITEMS
 
 
+def auto_awardable(item: EnvItem) -> bool:
+    """**누르기만 하는 길**로 점수를 붙여도 되는 항목인가 (2026-09-21).
+
+    `POST /env-logs` 말고도 점수가 붙는 길이 있다 — 프로젝트 할 일 이름이
+    항목과 맞으면 체크하는 순간 수행 기록이 생긴다
+    (`projects._award_todo_env`). **그 길은 여기 검사를 하나도 안 거쳤다.**
+
+    | 항목 | 칩으로 누르면 | 할 일로 누르면 (고치기 전) |
+    |---|---|---|
+    | `클레임해결` 15점 | 대표 승인 대기 | **바로 적립** |
+    | `현수막` 10점 | 사진·위치 필수 | **사진 없이 적립** |
+    | `족자` 5 · `전단지` 1 | 같음 | 같음 |
+
+    할 일에는 사진을 실을 자리도, 결재를 걸 자리도 없다. 그래서 **자동
+    적립에서 뺀다** — 그 항목은 환경정비 칩으로 제대로 남겨야 한다.
+
+    세 검사를 그대로 다시 쓴다. 이름을 따로 베껴 두면 `PHOTO_REQUIRED_ITEMS`
+    에 항목이 하나 늘 때 이쪽이 안 따라와서 또 갈린다.
+    """
+    return not (_needs_photo(item) or _needs_note(item) or _needs_approval(item))
+
+
 # ---------- EnvTaskLog (수행 기록 → 점수) ----------
 @router.post("/env-logs/photo", response_model=EnvLogPhotoOut, status_code=201)
 async def upload_env_photo(

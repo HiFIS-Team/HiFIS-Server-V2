@@ -65,3 +65,33 @@ def test_문턱에_닿으면_거기서_멈춘다():
         person, date(2026, 1, 1), date(2026, 12, 31), stop_at=TASK_MISS_RESET_WORKDAYS
     )
     assert got == TASK_MISS_RESET_WORKDAYS
+
+
+# ── 만들기 전 날에는 서지 않는다 (2026-09-21) ────────────────────────────
+#
+# `due_tasks` 의 제 차례 목록에 만든 날 가드가 없어서, **오늘 만든 업무가
+# 지난 근무일에도 서 있던 것으로 셈됐다.** 그날 안 한 것이 되어 없던 업무로
+# 확정 누락(-10~-30)이 났다. `born_on(t) <= day` 가 그걸 막는다.
+#
+# 여기서는 그 가드가 읽는 값(`born_on`)을 본다 — UTC 로 셈하면 **KST 새벽에
+# 만든 업무가 전날 생긴 것**이 되어 가드가 하루를 헛돈다.
+
+
+def test_새벽에_만든_업무도_만든_날은_KST_기준이다():
+    from datetime import datetime, timezone
+
+    from app.models.scoring.my_task import MyTask
+    from app.services.my_tasks import born_on
+
+    # 2026-09-08 08:00 KST = 2026-09-07 23:00 UTC — `.date()` 로는 7일이 된다
+    task = MyTask(created_at=datetime(2026, 9, 7, 23, 0, tzinfo=timezone.utc))
+    assert task.created_at.date() == date(2026, 9, 7)  # 옛 셈
+    assert born_on(task) == date(2026, 9, 8)  # KST 근무일
+
+    # 저녁에 만든 것은 UTC 와 같은 날이다 (12:00 KST = 03:00 UTC)
+    noon = MyTask(created_at=datetime(2026, 9, 8, 3, 0, tzinfo=timezone.utc))
+    assert born_on(noon) == date(2026, 9, 8)
+
+    # 만든 날보다 앞선 날에는 안 선다 — 가드가 쓰는 비교 그대로
+    assert not born_on(task) <= date(2026, 9, 7)
+    assert born_on(task) <= date(2026, 9, 8)
