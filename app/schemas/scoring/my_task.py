@@ -24,6 +24,20 @@ def clean_weekdays(value: list[int] | None) -> list[int]:
     return days or list(EVERY_DAY)
 
 
+def clean_monthdays(value: list[int] | None) -> list[int] | None:
+    """달의 며칠 — 1~31 로 추리고 **차례대로 하나씩** 남긴다 (2026-09-21).
+
+    `None` 이나 빈 배열이면 `None` 이다 — **매일이 아니다.** 요일 쪽
+    (`clean_weekdays`)은 비면 매일로 보는데, 여기서 같은 규칙을 쓰면
+    월 단위를 고른 사람이 날짜를 하나도 안 골랐을 때 매일 도는 업무가 된다.
+    `None` 이면 요일로 도는 업무라는 뜻이고, 그때는 `weekdays` 가 정한다.
+    """
+    if not value:
+        return None
+    days = sorted({d for d in value if 1 <= d <= 31})
+    return days or None
+
+
 #: 업무 하나에 붙일 수 있는 입력 칸 수 — 사람이 체크하며 채우는 값이라 이 위는 사고다
 MAX_FIELDS = 5
 
@@ -56,11 +70,13 @@ def clean_fields(value: list[MyTaskField] | None) -> list[dict]:
 
 
 class MyTaskItem(CamelModel):
-    """만들 업무 한 줄 — 내용과 그 줄에 걸리는 요일."""
+    """만들 업무 한 줄 — 내용과 그 줄이 돌아오는 차례."""
 
     content: str
     #: 안 주면 매일
     weekdays: list[int] | None = None
+    #: **달의 며칠** — 주면 요일 대신 이걸로 돈다 (`[1, 15]` = 매달 1일·15일)
+    monthdays: list[int] | None = None
     #: 체크할 때 받을 칸 — 안 주면 없다(누르기만 하면 된다)
     fields: list[MyTaskField] | None = None
 
@@ -68,6 +84,11 @@ class MyTaskItem(CamelModel):
     @classmethod
     def _days(cls, v: list[int] | None) -> list[int]:
         return clean_weekdays(v)
+
+    @field_validator("monthdays")
+    @classmethod
+    def _month(cls, v: list[int] | None) -> list[int] | None:
+        return clean_monthdays(v)
 
 
 class MyTaskCreate(CamelModel):
@@ -89,6 +110,8 @@ class MyTaskCreate(CamelModel):
     contents: list[str] | None = None
     #: `contents` 와 짝 — 그 묶음 전체에 걸린다. 안 주면 매일
     weekdays: list[int] | None = None
+    #: `contents` 와 짝 — **달의 며칠.** 주면 그 묶음이 월 단위로 돈다
+    monthdays: list[int] | None = None
     items: list[MyTaskItem] | None = None
 
     @field_validator("weekdays")
@@ -96,18 +119,33 @@ class MyTaskCreate(CamelModel):
     def _days(cls, v: list[int] | None) -> list[int]:
         return clean_weekdays(v)
 
-    def rows(self) -> list[tuple[str, list[int], list[dict]]]:
-        """어느 길로 왔든 `(내용, 요일, 입력 칸)` 목록 하나로 만들어 준다.
+    @field_validator("monthdays")
+    @classmethod
+    def _month(cls, v: list[int] | None) -> list[int] | None:
+        return clean_monthdays(v)
+
+    def rows(self) -> list[tuple[str, list[int], list[int] | None, list[dict]]]:
+        """어느 길로 왔든 `(내용, 요일, 며칠, 입력 칸)` 목록 하나로 만들어 준다.
 
         옛 모양(`contents`)에는 입력 칸이 없다 — 그때는 그런 개념이 없었다.
+
+        **월 단위여도 `weekdays` 는 채워 둔다.** 컬럼이 `NOT NULL` 이고,
+        나중에 결재로 주 단위로 되돌릴 때 값이 있어야 한다. 판정은
+        `monthdays` 가 있으면 그쪽이 이긴다 (`services/my_tasks.stands_on`).
         """
         if self.items:
             return [
-                (i.content, i.weekdays or list(EVERY_DAY), clean_fields(i.fields))
+                (
+                    i.content,
+                    i.weekdays or list(EVERY_DAY),
+                    clean_monthdays(i.monthdays),
+                    clean_fields(i.fields),
+                )
                 for i in self.items
             ]
         days = self.weekdays or list(EVERY_DAY)
-        return [(c, days, []) for c in (self.contents or [])]
+        month = clean_monthdays(self.monthdays)
+        return [(c, days, month, []) for c in (self.contents or [])]
 
 
 class MyTaskUpdate(CamelModel):
@@ -118,6 +156,8 @@ class MyTaskUpdate(CamelModel):
 
     content: str | None = None
     weekdays: list[int] | None = None
+    #: **달의 며칠** — 빈 배열을 주면 월 단위를 풀고 요일로 돌아간다
+    monthdays: list[int] | None = None
     #: 통째로 갈아 끼운다 — 빈 배열을 주면 칸이 없어진다
     fields: list[MyTaskField] | None = None
 
@@ -138,6 +178,8 @@ class MyTaskOut(CamelModel):
     content: str
     #: 돌아오는 요일 (ISO 1~7) — 앱이 목록 줄과 고르개에 그린다
     weekdays: list[int] = Field(default_factory=lambda: list(EVERY_DAY))
+    #: 돌아오는 **달의 며칠** — null 이면 요일로 도는 업무다 (`weekdays` 가 정한다)
+    monthdays: list[int] | None = None
     #: 체크할 때 받을 칸 — 비어 있으면 누르기만 하면 된다
     fields: list[MyTaskField] = Field(default_factory=list)
     #: **그날 적어 넣은 값** — 체크를 안 했으면 비어 있다

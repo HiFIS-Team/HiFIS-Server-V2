@@ -59,6 +59,18 @@ class EnvTaskLog(UUIDMixin, TimestampMixin, Base):
     source_todo_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("project_todos.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 개인 업무를 체크해서 저절로 생긴 기록이면 그 체크 (2026-09-21 대표 요청)
+    #
+    # 개인 업무 `블로그` 를 체크하면 공통 업무 `블로그` 도 같이 찍힌다.
+    # **어디서 나온 것인지 남긴다** — 할 일 쪽이 `SET NULL` 이라 끈이 끊겨서
+    # 손으로 누른 기록과 구분이 안 됐고, 그래서 점수가 새는 것을 한동안
+    # 아무도 못 봤다 (2026-09-21 에 고쳤다). 같은 자리를 또 만들지 않는다.
+    #
+    # **걷는 길은 없다.** 개인 업무 체크는 되돌릴 수 없어서(`uncheck_my_task`
+    # 가 늘 400) 사라질 일이 없다 — 이 칸은 되짚기용이다.
+    source_my_task_check_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("my_task_checks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # 블로그 글 주소 — **블로그만 채워진다** (2026-08-28 대표 요청).
     #
     # 배점을 10 → 3 으로 내리는 대신 대표가 글을 보고 가산점을 얹기로 했는데,

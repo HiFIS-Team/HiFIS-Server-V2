@@ -48,6 +48,7 @@ from app.models.scoring.my_task import MyTask, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
+from app.services.workdays import is_birthday
 from app.schemas.staff.home import HomeAttendanceOut, HomeSummaryOut, InboxItemOut
 
 router = APIRouter(tags=["home"])
@@ -122,7 +123,10 @@ async def my_home(
             att = HomeAttendanceOut(
                 status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
             )
-        elif current.work_days and today.isoweekday() not in set(current.work_days):
+        elif is_birthday(current, today) or (
+            current.work_days and today.isoweekday() not in set(current.work_days)
+        ):
+            # 생일도 휴무다 (2026-09-21) — `services/workdays` 가 판정한다
             att = HomeAttendanceOut(status=AttendanceStatus.DAY_OFF)
         elif current.work_days and _absent_today(current, now_kst):
             # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근

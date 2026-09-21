@@ -47,6 +47,7 @@ from app.schemas.staff.attendance import (
 from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
 from app.services.my_tasks import due_tasks
+from app.services.workdays import is_birthday
 from app.services.notifications import (
     boss_ids,
     branch_manager_ids,
@@ -869,7 +870,11 @@ async def attendance_calendar(
         elif work_days:
             # 토·일·공휴일이어도 **본인 근무 요일이면 결근을 찍는다** (2026-08-18).
             # 나와야 하는 날에 안 나온 것이라, 당직이라고 넘어가지 않는다.
-            if day.isoweekday() not in work_days:
+            #
+            # **생일은 휴무다** (2026-09-21 대표 요청). 나와서 찍었으면 위
+            # `rec is not None` 가지로 빠져 평소처럼 판정된다 — 쉬라고 여는
+            # 것이지 못 오게 막는 게 아니다 (`services/workdays`).
+            if is_birthday(target, day) or day.isoweekday() not in work_days:
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
             elif day < today:  # 근무일인데 과거·기록없음·휴가없음 → 결근
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.ABSENT))
@@ -999,7 +1004,8 @@ async def attendance_calendar_all(
                 status = AttendanceStatus.ON_LEAVE
             elif day <= joined_d:
                 status = None  # 가입한 날까지 — 위 사람별 캘린더와 같은 규칙
-            elif work_days and day.isoweekday() in work_days:
+            # 생일은 판에서 통째로 빠진다 — 쉬는 날이라 결근도 미출근도 아니다
+            elif work_days and day.isoweekday() in work_days and not is_birthday(emp, day):
                 if day < today or _absent_today(emp, now_kst):
                     status = AttendanceStatus.ABSENT
                 else:

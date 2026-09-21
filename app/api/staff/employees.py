@@ -28,6 +28,7 @@ from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.staff.employee import (
+    BirthdaySet,
     EmployeeCreate,
     EmployeeMeUpdate,
     EmployeeOut,
@@ -39,6 +40,7 @@ from app.services import notification_texts as ntext
 from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
 from app.services.notifications import notify_bosses
+from app.services.workdays import is_birthday
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -142,7 +144,10 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
             model.today_attendance_status = AttendanceStatus.NORMAL
         elif e.id in leaves:
             model.today_attendance_status = AttendanceStatus.ON_LEAVE
-        elif e.work_days and today.isoweekday() not in set(e.work_days):
+        elif is_birthday(e, today) or (
+            e.work_days and today.isoweekday() not in set(e.work_days)
+        ):
+            # 생일도 휴무다 (2026-09-21) — `services/workdays` 가 판정한다
             model.today_attendance_status = AttendanceStatus.DAY_OFF
         elif e.work_days and _absent_today(e, now_kst):
             # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근
@@ -239,6 +244,48 @@ async def set_my_schedule(
     user.shift_start = payload.shift_start
     user.shift_end = payload.shift_end
     user.work_days = payload.work_days  # 결근 판정 기준 근무 요일
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/me/birthday", response_model=EmployeeOut)
+async def set_my_birthday(
+    payload: BirthdaySet,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Employee:
+    """생일 등록 — **딱 한 번이다** (2026-09-21 대표 요청).
+
+    업데이트 뒤 첫 로그인에 한 번 묻고, 적고 나면 다시 안 묻는다. 앱이
+    `birthday` 가 비었는지로 그 화면을 띄울지 정한다.
+
+    **이미 있으면 409 다.** 생일은 **그날을 휴무로 만드는 값**이라
+    (`services/workdays`) 바꿀 수 있게 두면 쉬고 싶은 날로 옮길 수 있다.
+    근무 시간(`shift_start`)이 한 번 정하면 잠기는 것과 같은 이유다.
+
+    잘못 넣었으면 고칠 길이 **DB 뿐이다** — 화면에 열어 두는 것보다 낫다.
+
+    앞날은 안 받는다. 오늘 태어난 사람은 없고, 미래 날짜를 넣으면 올해
+    생일이 아직 안 지난 것으로 보여 달력이 어지러워진다.
+    """
+    if user.birthday is not None:
+        raise HTTPException(
+            409,
+            detail={"code": "BIRTHDAY_SET", "message": "생일은 한 번만 등록할 수 있어요"},
+        )
+    today = datetime.now(timezone.utc).astimezone(KST).date()
+    if payload.birthday > today:
+        raise HTTPException(
+            400,
+            detail={"code": "FUTURE_BIRTHDAY", "message": "생일이 오늘보다 뒤일 수 없어요"},
+        )
+    if payload.birthday.year < today.year - 100:
+        raise HTTPException(
+            400,
+            detail={"code": "BAD_BIRTHDAY", "message": "생년월일을 다시 확인해 주세요"},
+        )
+    user.birthday = payload.birthday
     await db.commit()
     await db.refresh(user)
     return user

@@ -36,6 +36,7 @@ from app.enums import EmployeeStatus, MyTaskFieldKind, MyTaskRequestType, Projec
 from app.models.scoring.my_task import MyTask, MyTaskCheck, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.employee import Employee
+from app.api.scoring.env import award_env_for
 from app.schemas.scoring.my_task import (
     EVERY_DAY,
     MyTaskCheckCreate,
@@ -54,6 +55,7 @@ from app.schemas.scoring.my_task import (
     MyTaskUpdate,
     clean_fields,
     clean_weekdays,
+    clean_monthdays,
 )
 from app.services import notification_texts as ntext
 from app.services.my_tasks import carried_over, due_tasks, is_workday, missing_now
@@ -449,13 +451,17 @@ async def create_my_tasks(
     # 같은 이름이 여러 요일에 걸리면 **처음 것의 입력 칸**을 쓴다 — 요일마다
     # 다른 칸을 받으면 한 줄로 합칠 때 어느 쪽을 남길지 알 수 없다
     fields_of: dict[str, list[dict]] = {}
-    for content, days, fields in payload.rows():
+    # 월 단위로 온 줄의 날짜 — 요일과 같은 규칙으로 합친다 (2026-09-21)
+    month_of: dict[str, set[int]] = {}
+    for content, days, month, fields in payload.rows():
         content = content.strip()
         if not content:
             continue
         if len(content) > 200:
             raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
         merged.setdefault(content, set()).update(days)
+        if month:
+            month_of.setdefault(content, set()).update(month)
         if fields and not fields_of.get(content):
             fields_of[content] = fields
     if not merged:
@@ -476,6 +482,8 @@ async def create_my_tasks(
             employee_id=current.id,
             content=content,
             weekdays=sorted(days),
+            # 월 단위로 온 줄만 채운다 — 비어 있으면 요일로 돈다 (`stands_on`)
+            monthdays=sorted(month_of[content]) if content in month_of else None,
             fields=fields_of.get(content, []),
             sort=base + i,
         )
@@ -508,10 +516,17 @@ async def update_my_task(
     if len(content) > 200:
         raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": "업무가 너무 길어요"})
     days = clean_weekdays(payload.weekdays) if payload.weekdays is not None else list(task.weekdays or EVERY_DAY)
+    # 빈 배열은 **월 단위를 푸는 뜻**이라 `None` 과 갈라야 한다 (안 보낸 것 ≠ 비운 것)
+    month = (
+        clean_monthdays(payload.monthdays)
+        if payload.monthdays is not None
+        else (list(task.monthdays) if task.monthdays else None)
+    )
     fields = clean_fields(payload.fields) if payload.fields is not None else list(task.fields or [])
     if (
         content == task.content
         and days == sorted(task.weekdays or [])
+        and month == (list(task.monthdays) if task.monthdays else None)
         and fields == list(task.fields or [])
     ):
         raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "바뀐 것이 없어요"})
@@ -521,6 +536,7 @@ async def update_my_task(
 
     task.content = content
     task.weekdays = days
+    task.monthdays = month
     task.fields = fields
     await db.commit()
     await db.refresh(task)
@@ -598,10 +614,16 @@ async def check_my_task(
     )
     if exists is None:
         values = _check_values(task, payload.values if payload else {})
-        db.add(
-            MyTaskCheck(
-                my_task_id=task.id, employee_id=current.id, date=day, values=values
-            )
+        check = MyTaskCheck(
+            my_task_id=task.id, employee_id=current.id, date=day, values=values
+        )
+        db.add(check)
+        await db.flush()
+        # **공통 업무도 같이 찍는다** (2026-09-21 대표 요청) — 개인 업무
+        # `블로그` 를 체크하면 환경정비 `블로그` 기록과 배점이 같이 올라간다.
+        # 이름이 안 맞으면 조용히 넘어간다 (대부분은 안 맞는다).
+        await award_env_for(
+            db, current, task.content, source_check_id=check.id, created_by_id=current.id
         )
         await db.commit()
 
@@ -655,6 +677,13 @@ async def create_my_task_request(
             if "weekdays" in raw
             else list(task.weekdays or EVERY_DAY)
         )
+        # 월 단위도 같은 규칙 — 안 보내면 지금 것을 그대로 싣는다 (2026-09-21).
+        # **빈 배열은 월 단위를 푸는 뜻**이라 '안 보냄' 과 갈라야 한다
+        month = (
+            clean_monthdays(raw.get("monthdays"))
+            if "monthdays" in raw
+            else (list(task.monthdays) if task.monthdays else None)
+        )
         # 입력 칸도 같은 규칙 — 안 보내면 지금 것을 그대로 싣는다 (2026-08-31)
         fields = (
             clean_fields([MyTaskField.model_validate(f) for f in raw["fields"]])
@@ -666,13 +695,21 @@ async def create_my_task_request(
         if (
             content == task.content
             and days == sorted(task.weekdays or [])
+            and month == (list(task.monthdays) if task.monthdays else None)
             and fields == list(task.fields or [])
         ):
             raise HTTPException(400, detail={"code": "SAME_CONTENT", "message": "바뀐 것이 없어요"})
         if content != task.content:
             # 승인되고 나서야 겹치는 걸 알면 이미 두 줄이다 — 올릴 때 막는다
             await _reject_duplicate(db, current.id, [content], skip_id=task.id)
-        payload.payload = {"content": content, "weekdays": days, "fields": fields}
+        payload.payload = {
+            "content": content,
+            "weekdays": days,
+            # **늘 싣는다 (null 이어도).** 있는지로 가르면 월 단위를 푸는
+            # 신청과 요일만 고치는 신청을 승인할 때 구분할 수 없다
+            "monthdays": month,
+            "fields": fields,
+        }
 
     # 업무 하나에 대기 요청은 하나뿐 — 수정 대기 중에 삭제까지 오면
     # 처리 순서에 따라 결과가 갈린다
@@ -766,6 +803,10 @@ async def _decide(
             # 그대로 둔다 — 그때는 매일이 전제였다
             if body.get("weekdays"):
                 task.weekdays = clean_weekdays(body["weekdays"])
+            # 월 단위는 **있는지로 가른다** — `null` 도 뜻이 있다(월 단위를
+            # 풀고 요일로 돌아감). 이 칸이 없는 옛 결재는 그대로 둔다
+            if "monthdays" in body:
+                task.monthdays = clean_monthdays(body["monthdays"])
             # 입력 칸은 **빈 배열도 뜻이 있다** (칸을 없애는 것) — 있는지로 가른다
             if isinstance(body.get("fields"), list):
                 task.fields = body["fields"]

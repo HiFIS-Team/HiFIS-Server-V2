@@ -4,7 +4,7 @@
 들어가 승인을 기다리고, 그동안 **올린 사람과 MASTER·ADMIN 에게만** 보인다.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
 from app.db.session import get_db
-from app.enums import EventStatus, Role
+from app.core.periods import KST
+from app.enums import EmployeeStatus, EventStatus, Role
 from app.models.staff.employee import Employee
 from app.models.board.event import Event
 from app.schemas.board.event import EventCreate, EventOut, EventUpdate
@@ -39,6 +40,88 @@ _OVERSEERS = (Role.MASTER, Role.ADMIN)
 #: | 직원·점장 | **못 본다** |
 #: | MASTER·ADMIN | `?employeeId=` 로 **한 사람씩** 본다 |
 PERSONAL_SCOPE = "개인"
+
+#: 생일 줄이 서는 갈래 — **이미 쌓인 전사 일정과 같은 글자다** (`전사`).
+#:
+#: 앱의 갈래 고르개가 `전사`·`개인` 둘뿐이라, 새 글자를 만들면 어느 칸에도
+#: 안 걸려서 안 보인다.
+COMPANY_SCOPE = "전사"
+
+#: 종류 — 앱이 이 글자로 케이크 아이콘과 색을 고른다 (`Kind.parse`)
+BIRTHDAY_CATEGORY = "생일"
+
+#: 달력 점 색 — 휴무(회색)와 갈라야 해서 따로 둔다
+BIRTHDAY_COLOR = "#FF7A45"
+
+
+def _birthday_id(employee_id: str, day: "date") -> str:
+    """합성 줄의 id — **DB 에 없는 값이다.**
+
+    수정·삭제로 이 id 가 오면 `db.get` 이 `None` 을 주어 404 가 된다.
+    앱도 생일 줄에는 편집 단추를 안 그린다 (`Kind.birthday`).
+    """
+    return f"birthday:{employee_id}:{day.isoformat()}"
+
+
+async def _birthday_rows(
+    db: AsyncSession, from_: datetime | None, to: datetime | None
+) -> list[EventOut]:
+    """그 창에 걸리는 **생일 줄을 지어 낸다** (2026-09-21 대표 요청).
+
+    **행을 안 만든다.** 해마다 돌아오는 것이라 미리 만들어 두면 연말마다
+    누가 다음 해치를 찍어야 하고, 생일을 고치면 이미 만든 줄이 남는다.
+    조회할 때 셈하면 답이 하나로 정해진다 (개인 업무 이월과 같은 판단).
+
+    **창이 없으면 안 만든다.** `from`·`to` 를 안 주고 부르는 자리가 있는데
+    (앱은 늘 준다) 그때 해를 어디까지 펼칠지가 정해지지 않는다.
+
+    2월 29일은 **평년에 그냥 안 선다** — 28일로 당기지 않는다.
+    """
+    if from_ is None or to is None:
+        return []
+    start = from_.astimezone(KST).date()
+    end = to.astimezone(KST).date()
+    if end < start:
+        return []
+
+    people = list(
+        await db.scalars(
+            select(Employee).where(
+                Employee.birthday.is_not(None),
+                Employee.deleted_at.is_(None),
+                Employee.status == EmployeeStatus.ACTIVE,
+            )
+        )
+    )
+    out: list[EventOut] = []
+    for person in people:
+        born = person.birthday
+        for year in range(start.year, end.year + 1):
+            try:
+                day = date(year, born.month, born.day)
+            except ValueError:
+                continue  # 평년의 2월 29일 — 그해에는 없는 날이다
+            if not (start <= day <= end):
+                continue
+            begins = datetime(day.year, day.month, day.day, tzinfo=KST)
+            out.append(
+                EventOut(
+                    id=_birthday_id(person.id, day),
+                    title=f"{person.name}님 생일",
+                    start_at=begins,
+                    end_at=begins + timedelta(days=1) - timedelta(seconds=1),
+                    all_day=True,
+                    category=BIRTHDAY_CATEGORY,
+                    scope=COMPANY_SCOPE,
+                    color=BIRTHDAY_COLOR,
+                    attendee_ids=[],
+                    owner_id=person.id,
+                    status=EventStatus.APPROVED,
+                    created_at=begins,
+                    updated_at=begins,
+                )
+            )
+    return out
 
 
 def _not_found() -> HTTPException:
@@ -72,7 +155,7 @@ async def list_events(
     # 누구의 개인 일정을 볼 것인가 — **MASTER·ADMIN 만.** 그 밖에는 넣어도
     # 본인 것이 온다 (403 이 아니라 조용히 고정 — `/attendance` 와 같은 규칙)
     employee_id: str | None = Query(None, alias="employeeId"),
-) -> list[Event]:
+) -> list[EventOut]:
     # 반려된 일정은 아무에게도 안 보인다 — 행은 결재 이력으로 남기지만
     # 달력에 죽은 일정이 서면 칸만 어지럽힌다 (EventStatus 참고).
     # **이력은 `GET /me/inbox?status=REJECTED` 로 본다.**
@@ -98,7 +181,12 @@ async def list_events(
     if scope:
         stmt = stmt.where(Event.scope == scope)
     result = await db.execute(stmt.order_by(Event.start_at))
-    return list(result.scalars().all())
+    rows = [EventOut.model_validate(e) for e in result.scalars().all()]
+    # 생일은 **저장된 줄이 아니라 지어 낸 줄**이다 — 전사 칸에서만 선다
+    if scope in (None, COMPANY_SCOPE):
+        rows += await _birthday_rows(db, from_, to)
+        rows.sort(key=lambda e: e.start_at)
+    return rows
 
 
 @router.post("", response_model=EventOut, status_code=201)

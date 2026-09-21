@@ -1,6 +1,6 @@
 """Employee DTO — CLAUDE.md §2.2."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import Field, field_validator
 
@@ -88,8 +88,21 @@ class EmployeeOut(CamelModel):
     shift_start: str | None = None  # 기본 근무 시간 "HH:MM" (null=미설정 → 첫 로그인 시 설정 유도)
     shift_end: str | None = None
     work_days: list[int] | None = None  # 근무 요일 ISO 1(월)~7(일). null=미설정
+    #: 생일 — **null 이면 아직 안 받았다** (앱이 첫 로그인 화면을 띄운다).
+    #: 한 번 채우면 못 바꾼다 (`POST /employees/me/birthday` 는 두 번째에 409).
+    birthday: date | None = None
     # 오늘 근태 판정 (§59) — 목록(GET /employees)에서만 채움. 그 외 응답은 null.
     today_attendance_status: AttendanceStatus | None = None
+
+
+class BirthdaySet(CamelModel):
+    """생일 등록 — `YYYY-MM-DD`. 한 번만 받는다 (2026-09-21).
+
+    **연도까지 받는다.** 달력은 월·일만 보지만 2월 29일을 담으려면 윤년이어야
+    하고, `date` 가 연도 없이는 값을 못 만든다.
+    """
+
+    birthday: date
 
 
 class ScheduleSet(CamelModel):

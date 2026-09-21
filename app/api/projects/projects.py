@@ -22,8 +22,8 @@ from app.enums import (
     ScoreCategory,
 )
 from app.models.projects.project import Project
-from app.api.scoring.env import auto_awardable
-from app.models.scoring.env import EnvItem, EnvTaskLog
+from app.api.scoring.env import award_env_for
+from app.models.scoring.env import EnvTaskLog
 from app.models.projects.project_activity import ProjectActivity
 from app.models.projects.project_request import ProjectRequest
 from app.models.projects.project_todo import ProjectTodo
@@ -52,7 +52,7 @@ from app.schemas.board.reaction import ReactionAgg
 from app.services.reactions import aggregate_for
 from app.services import notification_texts as ntext
 from app.services.notifications import notify, notify_bosses
-from app.services.scoring import accrue_score, scores_apply_to
+from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(get_current_user)])
 
@@ -320,28 +320,6 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
 
 # ---------- 프로젝트 할 일 ↔ 환경정비 (2026-08-14) ----------
 
-#: 손으로 적는 칸이라 매칭에서 뺀다 — `기타 정리` 같은 할 일이 전부 걸린다
-_ENV_MATCH_EXCLUDE = {"기타"}
-
-
-async def _env_item_for(db: AsyncSession, branch_id: str, content: str) -> EnvItem | None:
-    """할 일 내용에서 그 지점의 환경정비 항목을 찾는다 — **단어가 똑같을 때만.**
-
-    `현수막 설치 1` → 단어 `현수막` `설치` `1` 중 `현수막` 이 항목 이름과
-    정확히 같아서 걸린다. `세탁기 수리` 는 **안 걸린다** (`세탁기` ≠ `세탁`) —
-    글자가 들어 있기만 해도 치면 엉뚱한 할 일이 점수를 받는다.
-
-    배점은 지점마다 다를 수 있어서 **사람마다 자기 지점 항목**으로 찾는다.
-    """
-    words = {w for w in content.split() if w and w not in _ENV_MATCH_EXCLUDE}
-    if not words:
-        return None
-    return (
-        await db.execute(
-            select(EnvItem).where(EnvItem.branch_id == branch_id, EnvItem.name.in_(words))
-        )
-    ).scalars().first()
-
 
 async def _award_todo_env(
     db: AsyncSession, todo: ProjectTodo, actor: Employee
@@ -351,12 +329,10 @@ async def _award_todo_env(
     **할 일 담당자와 누른 사람 둘 다** 각자 항목 배점만큼 받는다 (2026-08-14 결정).
     담당자가 못 할 때 남이 대신 해 줄 수 있어서다. 같은 사람이면 한 번만.
 
-    컴플레인 → `클레임해결` 과 같은 길이다 (`kindness._award_claim_resolved`).
-    지점에 그 항목이 없으면 조용히 넘어간다 — 점수가 안 붙을 뿐이고 체크 자체가
-    실패하면 안 된다.
-
-    **대표·관리자는 뺀다.** `POST /env-logs` 가 그 둘을 막고 있고, 점수도
-    `accrue_score` 가 안 쌓아서 기록만 남으면 환경정비 내역이 어지러워진다.
+    **붙이는 규칙은 `scoring.env.award_env_for` 가 들고 있다** (2026-09-21).
+    개인 업무 체크도 같은 길로 들어오는데, 여기 따로 적어 두면 사진·승인
+    검사를 한쪽만 고치게 된다 — 실제로 그래서 `클레임해결`(15점)이 승인
+    없이 붙었다.
     """
     seen: set[str] = set()
     for employee_id in (todo.assignee_id, actor.id):
@@ -364,34 +340,14 @@ async def _award_todo_env(
             continue
         seen.add(employee_id)
         person = await db.get(Employee, employee_id)
-        if person is None or not scores_apply_to(person) or person.branch_id is None:
+        if person is None:
             continue
-        item = await _env_item_for(db, person.branch_id, todo.content)
-        # **사진·메모·대표 승인이 걸린 항목은 이 길로 안 준다** (2026-09-21).
-        # 할 일에는 사진을 실을 자리도 결재를 걸 자리도 없어서, 여기로 오면
-        # `클레임해결`(15점)이 승인 없이, `현수막`(10점)이 사진 없이 붙었다
-        if item is None or not auto_awardable(item):
-            continue
-        log = EnvTaskLog(
-            employee_id=person.id,
-            branch_id=person.branch_id,
-            env_item_id=item.id,
-            item_name=item.name,
-            points=item.points,
-            note=todo.content[:200],
-            source_todo_id=todo.id,
-        )
-        db.add(log)
-        await db.flush()
-        await accrue_score(
+        await award_env_for(
             db,
-            employee_id=person.id,
-            branch_id=person.branch_id,
-            category=ScoreCategory.ENV,
-            points=item.points,
+            person,
+            todo.content,
+            source_todo_id=todo.id,
             created_by_id=actor.id,
-            source_ref_id=log.id,
-            reason=item.name,
         )
 
 
