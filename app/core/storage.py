@@ -24,6 +24,16 @@ _WORKOUT_VIDEO_EXTS = {"mp4", "mov", "m4v", "webm"}
 _WORKOUT_IMAGE_MAX = 10 * 1024 * 1024  # 10MB
 #: 영상 상한 — 홈서버 디스크 한 대가 전부라 무제한은 곧 장애다.
 #: 한 세트 찍은 영상이 30초 안팂이라 이면 넘친다.
+#:
+#: ⚠️ **앞단 nginx 가 먼저 자른다.** 홈서버 nginx 의 `client_max_body_size` 가
+#: 50m 이라, 그 위 영상은 여기까지 오지도 못하고 nginx 기본 HTML 로 413 이 된다
+#: (봉투가 없어서 앱은 "오류 413"만 띄웠다 — `api_exception.dart` 참고).
+#: 이 100MB 를 실제로 쓰려면 nginx 에서 같이 올려야 한다:
+#:
+#:     # /etc/nginx/conf.d/hifis-upload.conf
+#:     client_max_body_size 100m;
+#:
+#: 클라우드플레어 무료 요금제의 본문 상한도 100MB 라 그 위로는 못 올린다.
 _WORKOUT_VIDEO_MAX = 100 * 1024 * 1024  # 100MB
 
 #: 일반 첨부 상한 — 홈서버 디스크 한 대가 전부라 무제한은 곧 장애다
