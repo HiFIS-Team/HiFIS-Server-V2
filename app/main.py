@@ -46,7 +46,7 @@ from app.api.public import (
     tv as public_tv,
 )
 from app.api.scoring import contributions, env, kindness, my_tasks, peer_reviews, scores
-from app.api.staff import attendance, branches, employees, home
+from app.api.staff import attendance, birthdays, branches, employees, home
 from app.core.audit_middleware import AuditMiddleware
 from app.core.metrics_middleware import MetricsMiddleware
 from app.core.config import settings
@@ -119,6 +119,7 @@ app.add_middleware(MetricsMiddleware)
 app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(home.router)  # GET /me/home (개인 홈 요약)
+app.include_router(birthdays.router)  # 생일 축하 모달
 app.include_router(branches.router)
 app.include_router(invite_keys.router)
 app.include_router(attendance.router)

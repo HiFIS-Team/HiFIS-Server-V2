@@ -706,3 +706,43 @@ def member_registered(trainer: str, member: str, is_new: bool, sessions: int) ->
         "body": f"{trainer} · {sessions}회",
         "link": "/members",
     }
+
+
+def birthday_eve(name: str) -> dict:
+    """생일 전날 — 생일자 **말고** 전원에게 (2026-09-27 대표 요청)."""
+    return {
+        "type": "BIRTHDAY",
+        "title": f"내일 {name}님 생일이에요!",
+        "body": None,
+        "link": "/schedule",
+    }
+
+
+def birthday_today(name: str) -> dict:
+    """생일 당일 — 생일자 **말고** 전원에게."""
+    return {
+        "type": "BIRTHDAY",
+        "title": f"오늘 {name}님 생일이에요!",
+        "body": "축하 메시지를 보내보세요!",
+        "link": "/schedule",
+    }
+
+
+def birthday_self(name: str) -> dict:
+    """생일 당일 — 생일자 본인에게."""
+    return {
+        "type": "BIRTHDAY",
+        "title": f"{name}님, 생일 축하해요! 🎂",
+        "body": "오늘 하루 행복하게 보내세요",
+        "link": None,
+    }
+
+
+def birthday_cheer(sender: str, emoji: str) -> dict:
+    """생일자에게 — 누가 축하 모달에서 이모지를 눌렀다."""
+    return {
+        "type": "BIRTHDAY_CHEER",
+        "title": f"{sender}님이 축하 이모지를 보냈어요! {emoji}",
+        "body": None,
+        "link": None,
+    }
