@@ -36,6 +36,9 @@ class SessionSignOut(CamelModel):
     # 앱 기록 표시용 조인값(목록·생성 응답에서 서버가 채움) — "박서연 [신규] 12/20회차"
     member_name: str | None = None
     total_sessions: int | None = None
+    #: 남은 등록권을 합친 번호 — 기록 줄은 이걸 먼저 쓴다 (없으면 옛 기록이다)
+    combined_no: int | None = None
+    combined_total: int | None = None
     registration_type: RegistrationType | None = None
 
 

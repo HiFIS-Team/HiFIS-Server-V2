@@ -169,9 +169,13 @@ async def build_board(
     # 랭킹만 다른 값을 보던 자리라, 며칠 늦게 입력하면 목록과 랭킹이 서로 다른
     # 달로 갈리기도 했다.
     #
-    # **워크인은 뺀다** (2026-08-13 대표 결정). 센터를 보고 제 발로 온 사람이라
+    # **신규 워크인은 뺀다** (2026-08-13 대표 결정). 센터를 보고 제 발로 온 사람이라
     # 직원이 끌어온 실적이 아니다. 방문 경로 점수를 줄 때 워크인을 빼는 것과
     # 같은 기준이다 (`VISIT_PATH_SCORE`).
+    #
+    # **재등록은 워크인이어도 넣는다** (2026-09-27 대표 확인). 처음엔 제 발로
+    # 왔어도 다시 끊게 만든 건 트레이너의 수업이다. 예전에는 회원의 방문 경로만
+    # 봐서 워크인 회원의 재등록이 통째로 빠졌다.
     #
     # **급여는 그대로다** — 커미션은 워크인도 포함해서 계산한다. 랭킹에서만 뺀다.
     # 애초에 커미션은 등록이 아니라 **수행한 세션 싸인**마다 붙어서(`payroll.py`)
@@ -188,7 +192,10 @@ async def build_board(
             .where(
                 Registration.purchased_at >= start,
                 Registration.purchased_at < end,
-                Member.visit_path.is_distinct_from(VisitPath.WALK_IN),
+                or_(
+                    Registration.type == RegistrationType.RENEWAL,
+                    Member.visit_path.is_distinct_from(VisitPath.WALK_IN),
+                ),
             )
             .group_by(Registration.trainer_id, Registration.type)
         )

@@ -255,6 +255,27 @@ async def _notify_signed(
         logger.warning("[session-sign] 알림 실패 — 싸인은 그대로 둔다", exc_info=True)
 
 
+async def _combined_round(db: AsyncSession, member_id: str) -> tuple[int, int]:
+    """이번 싸인의 **합친** 번호 — 남은 등록권을 다 더한다 (2026-09-27).
+
+    8회 남은 20회권에 10회를 미리 재등록했으면 `13/30`. 앱 `MemberPass` 와
+    같은 셈이다 — 싸인 화면과 기록 목록이 같은 번호를 보여야 한다.
+    """
+    used, total = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Registration.used_sessions), 0),
+                func.coalesce(func.sum(Registration.total_sessions), 0),
+            ).where(
+                Registration.member_id == member_id,
+                Registration.status != RegistrationStatus.EXPIRED,
+                Registration.used_sessions < Registration.total_sessions,
+            )
+        )
+    ).one()
+    return int(used) + 1, int(total)
+
+
 @router.post("", response_model=SessionSignResult, status_code=201)
 async def create_session_sign(
     payload: SessionSignCreate,
@@ -285,11 +306,14 @@ async def create_session_sign(
     # 수행 트레이너가 아니라 버튼을 누른 사람이다 (대타를 지정해도 책임은 누른 쪽이다)
     skipped = payload.skip_signature
     signature_url = None if skipped else save_signature(payload.signature_base64)
+    combined_no, combined_total = await _combined_round(db, registration.member_id)
     sign = SessionSign(
         registration_id=registration.id,
         member_id=registration.member_id,
         performed_by_trainer_id=performer_id,
         session_no=registration.used_sessions + 1,
+        combined_no=combined_no,
+        combined_total=combined_total,
         signature_url=signature_url,
         signature_skipped_by_id=current.id if skipped else None,
     )
