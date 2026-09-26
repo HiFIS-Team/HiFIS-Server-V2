@@ -18,7 +18,7 @@ from app.core.deps import branch_filter, get_current_user, require_role
 from app.core.periods import period_range
 from app.core.tokens import public_token
 from app.core.storage import save_signature
-from app.enums import RegistrationStatus, RegistrationType, Role, ScoreCategory, WorkoutKind
+from app.enums import RegistrationStatus, Role, ScoreCategory, WorkoutKind
 from app.db.session import get_db
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
@@ -35,11 +35,14 @@ from app.services.scoring import accrue_score
 
 CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
 
-#: 몇 회차에 만족도 폼을 여나 (2026-08-20 요청)
+#: 몇 회차**마다** 만족도 폼을 여나 (2026-08-20 요청 · 2026-09-27 반복으로)
 #:
 #: 10회 등록이 흔해서 **한참 남았을 때** 물어야 연장 이야기를 꺼낼 여지가 있다.
 #: 마지막 회차에 물으면 이미 마음을 정한 뒤다.
-PT_SURVEY_AT = 7
+#:
+#: **회원 누적 회차로 센다** (7·14·21…). 등록권마다 1 로 돌아가는 싸인 번호가
+#: 아니라 운동일지 번호와 같은 수다 — 재등록 회원도 이어서 받는다.
+PT_SURVEY_EVERY = 7
 
 logger = logging.getLogger("app.pt_survey")
 
@@ -66,6 +69,22 @@ _SMS_TEMPLATE = """[피트니스스타 {branch}]
 
 더 잘 맞는 수업으로 보답하겠습니다."""
 
+#: 두 번째부터(14·21…회차) — **첫 문자와 말이 달라야 한다** (2026-09-27 대표 요청).
+#: 같은 문자가 7회마다 또 오면 회원이 이미 낸 것을 다시 묻는 줄 안다.
+_SMS_SUBJECT_AGAIN = "수업 만족도 다시 여쭙습니다"
+_SMS_TEMPLATE_AGAIN = """[피트니스스타 {branch}]
+
+{member}, 안녕하세요.
+{trainer} 트레이너와 벌써 {session}회차 수업을 함께했습니다.
+
+꾸준히 나와 주셔서 감사합니다.
+요즘 수업은 어떠신지, 처음과 달라진 점이나
+더 바라시는 점은 없는지 다시 여쭙고 싶습니다.
+
+{url}
+
+앞으로도 더 좋은 수업으로 보답하겠습니다."""
+
 
 def _member_label(name: str | None) -> str:
     """`장예진님` · `정훈` 이 섞여 있다 — 붙은 `님` 을 떼고 하나로 맞춘다.
@@ -81,12 +100,13 @@ router = APIRouter(prefix="/session-signs", tags=["session-signs"])
 
 
 async def _open_pt_survey(
-    db: AsyncSession, registration: Registration, sign: SessionSign, trainer_id: str
+    db: AsyncSession, registration: Registration, lifetime_no: int, trainer_id: str
 ) -> PtSurvey | None:
-    """신규 등록권의 7회차면 **만족도 폼을 하나 연다** (2026-08-20 요청).
+    """회원 누적 **7회차마다** 만족도 폼을 하나 연다 (2026-08-20 · 09-27 요청).
 
-    **신규만이다.** 재등록한 사람은 이미 겪어 보고 다시 온 것이라
-    7회차에 "연장하실래요" 를 다시 묻는 것이 어색하다.
+    예전에는 신규 등록권의 7회차 한 번뿐이었다. 이제 7·14·21…회차마다 열고,
+    재등록 회원도 누적 회차가 이어지므로 같이 받는다. 두 번째부터는 문자
+    말이 다르다 ([_SMS_TEMPLATE_AGAIN]).
 
     **만든 줄을 돌려준다** — 문자는 커밋한 **뒤에** 보낸다 ([_sms_pt_survey]).
     커밋 전에 보내면 싸인이 되돌려졌을 때 없는 설문 주소가 회원에게 가 있다.
@@ -94,11 +114,14 @@ async def _open_pt_survey(
     받는 트레이너는 **그날 실제로 수업한 사람**이다. 등록권의 담당으로 하면
     대타로 들어간 날 물어본 것이 엉뚱한 사람에게 붙는다.
     """
-    if registration.type != RegistrationType.NEW or sign.session_no != PT_SURVEY_AT:
+    if lifetime_no % PT_SURVEY_EVERY != 0:
         return None
-    # 되돌렸다 다시 찍는 일이 있어도 두 줄이 안 생긴다 (등록권당 하나다)
+    # 되돌렸다 다시 찍는 일이 있어도 두 줄이 안 생긴다 (회원·회차당 하나다)
     exists = await db.scalar(
-        select(PtSurvey.id).where(PtSurvey.registration_id == registration.id)
+        select(PtSurvey.id).where(
+            PtSurvey.member_id == registration.member_id,
+            PtSurvey.session_no == lifetime_no,
+        )
     )
     if exists is not None:
         return None
@@ -107,14 +130,14 @@ async def _open_pt_survey(
         member_id=registration.member_id,
         trainer_id=trainer_id,
         token=public_token(),
-        session_no=sign.session_no,
+        session_no=lifetime_no,
     )
     db.add(survey)
     return survey
 
 
 async def _sms_pt_survey(db: AsyncSession, survey: PtSurvey) -> None:
-    """7회차 설문 주소를 **회원에게** 문자로 보낸다 (2026-09-09 대표 요청).
+    """7회차마다 설문 주소를 **회원에게** 문자로 보낸다 (2026-09-09 대표 요청).
 
     예전에는 줄만 만들고 트레이너가 `GET /pt-surveys` 의 주소를 복사해 직접
     보냈다. 발신번호가 지점마다 정해지면서(`branches.sms_sender`) 자동으로
@@ -148,7 +171,8 @@ async def _sms_pt_survey(db: AsyncSession, survey: PtSurvey) -> None:
         return
 
     base = settings.public_base_url.rstrip("/")
-    text = _SMS_TEMPLATE.format(
+    first = survey.session_no <= PT_SURVEY_EVERY
+    text = (_SMS_TEMPLATE if first else _SMS_TEMPLATE_AGAIN).format(
         branch=sms.branch_label(branch.name),
         member=_member_label(member.name),
         trainer=(trainer.name if trainer else "담당"),
@@ -158,7 +182,9 @@ async def _sms_pt_survey(db: AsyncSession, survey: PtSurvey) -> None:
     try:
         await asyncio.to_thread(
             sms.send_sync, to, text,
-            sender=sender, subject=_SMS_SUBJECT, tag="pt-survey-sms",
+            sender=sender,
+            subject=_SMS_SUBJECT if first else _SMS_SUBJECT_AGAIN,
+            tag="pt-survey-sms",
         )
     except Exception:
         logger.warning("[pt-survey-sms] 발송 실패 — 싸인은 그대로 둔다", exc_info=True)
@@ -185,7 +211,7 @@ def _sign_out(
     return out
 
 
-async def _require_workout(db: AsyncSession, registration: Registration) -> None:
+async def _require_workout(db: AsyncSession, registration: Registration) -> int:
     """이번에 찍을 회차의 **운동일지가 있어야 싸인이다** (2026-08-31 대표 요청).
 
     일지를 안 써도 싸인이 되면 회차는 줄어드는데 그날 뭘 했는지가 어디에도
@@ -223,6 +249,7 @@ async def _require_workout(db: AsyncSession, registration: Registration) -> None
                 "message": f"{session_no}회차 운동일지를 먼저 써 주세요",
             },
         )
+    return session_no
 
 
 async def _notify_signed(
@@ -255,6 +282,27 @@ async def _notify_signed(
         logger.warning("[session-sign] 알림 실패 — 싸인은 그대로 둔다", exc_info=True)
 
 
+async def _combined_round(db: AsyncSession, member_id: str) -> tuple[int, int]:
+    """이번 싸인의 **합친** 번호 — 남은 등록권을 다 더한다 (2026-09-27).
+
+    8회 남은 20회권에 10회를 미리 재등록했으면 `13/30`. 앱 `MemberPass` 와
+    같은 셈이다 — 싸인 화면과 기록 목록이 같은 번호를 보여야 한다.
+    """
+    used, total = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Registration.used_sessions), 0),
+                func.coalesce(func.sum(Registration.total_sessions), 0),
+            ).where(
+                Registration.member_id == member_id,
+                Registration.status != RegistrationStatus.EXPIRED,
+                Registration.used_sessions < Registration.total_sessions,
+            )
+        )
+    ).one()
+    return int(used) + 1, int(total)
+
+
 @router.post("", response_model=SessionSignResult, status_code=201)
 async def create_session_sign(
     payload: SessionSignCreate,
@@ -267,7 +315,8 @@ async def create_session_sign(
         raise HTTPException(404, detail={"code": "REGISTRATION_NOT_FOUND", "message": "등록을 찾을 수 없습니다"})
     if registration.status == RegistrationStatus.EXPIRED or registration.used_sessions >= registration.total_sessions:
         raise HTTPException(400, detail={"code": "NO_SESSIONS_LEFT", "message": "남은 세션이 없습니다"})
-    await _require_workout(db, registration)
+    # 이번 싸인의 **회원 누적** 회차 — PT 설문이 7회차마다 이걸 본다
+    lifetime_no = await _require_workout(db, registration)
 
     # 싸인을 생략하려면 **그렇다고 말해야 한다** (2026-09-05 요청).
     # 그냥 빈 서명을 받아 주면 앱이 이미지를 못 만든 버그와 갈리지 않는다.
@@ -285,11 +334,14 @@ async def create_session_sign(
     # 수행 트레이너가 아니라 버튼을 누른 사람이다 (대타를 지정해도 책임은 누른 쪽이다)
     skipped = payload.skip_signature
     signature_url = None if skipped else save_signature(payload.signature_base64)
+    combined_no, combined_total = await _combined_round(db, registration.member_id)
     sign = SessionSign(
         registration_id=registration.id,
         member_id=registration.member_id,
         performed_by_trainer_id=performer_id,
         session_no=registration.used_sessions + 1,
+        combined_no=combined_no,
+        combined_total=combined_total,
         signature_url=signature_url,
         signature_skipped_by_id=current.id if skipped else None,
     )
@@ -310,7 +362,7 @@ async def create_session_sign(
         source_ref_id=sign.id,
         reason="세션 수행",
     )
-    survey = await _open_pt_survey(db, registration, sign, performer_id)
+    survey = await _open_pt_survey(db, registration, lifetime_no, performer_id)
 
     await db.commit()
     # **커밋한 뒤에** 보낸다 — 위 트랜잭션이 되돌려지면 없는 설문 주소가 간다

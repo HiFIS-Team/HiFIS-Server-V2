@@ -25,6 +25,12 @@ class SessionSign(UUIDMixin, TimestampMixin, Base):
         String(36), ForeignKey("employees.id"), nullable=False, index=True
     )
     session_no: Mapped[int] = mapped_column(Integer, nullable=False)  # n회차
+    #: 남은 등록권을 **합친** 번호 — 싸인할 때 앱이 보여준 `12/30회차` (2026-09-27)
+    #:
+    #: 미리 재등록하면 등록권이 둘이라 `session_no` 는 등록권 안의 번호일 뿐이다.
+    #: 기록 목록이 싸인 화면과 같은 번호를 보이려고 남긴다. 그 전 기록은 null.
+    combined_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    combined_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: 서명 이미지 (로컬 §9.2) — **싸인을 생략하고 기록하면 비어 있다**
     signature_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     signed_at: Mapped[datetime] = mapped_column(

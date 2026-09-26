@@ -22,7 +22,8 @@ from app.enums import (
     ScoreCategory,
 )
 from app.models.projects.project import Project
-from app.models.scoring.env import EnvItem, EnvTaskLog
+from app.api.scoring.env import award_env_for
+from app.models.scoring.env import EnvTaskLog
 from app.models.projects.project_activity import ProjectActivity
 from app.models.projects.project_request import ProjectRequest
 from app.models.projects.project_todo import ProjectTodo
@@ -51,7 +52,7 @@ from app.schemas.board.reaction import ReactionAgg
 from app.services.reactions import aggregate_for
 from app.services import notification_texts as ntext
 from app.services.notifications import notify, notify_bosses
-from app.services.scoring import accrue_score, scores_apply_to
+from app.services.scoring import accrue_score
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(get_current_user)])
 
@@ -319,28 +320,6 @@ async def _settle_completion(db: AsyncSession, project: Project) -> None:
 
 # ---------- 프로젝트 할 일 ↔ 환경정비 (2026-08-14) ----------
 
-#: 손으로 적는 칸이라 매칭에서 뺀다 — `기타 정리` 같은 할 일이 전부 걸린다
-_ENV_MATCH_EXCLUDE = {"기타"}
-
-
-async def _env_item_for(db: AsyncSession, branch_id: str, content: str) -> EnvItem | None:
-    """할 일 내용에서 그 지점의 환경정비 항목을 찾는다 — **단어가 똑같을 때만.**
-
-    `현수막 설치 1` → 단어 `현수막` `설치` `1` 중 `현수막` 이 항목 이름과
-    정확히 같아서 걸린다. `세탁기 수리` 는 **안 걸린다** (`세탁기` ≠ `세탁`) —
-    글자가 들어 있기만 해도 치면 엉뚱한 할 일이 점수를 받는다.
-
-    배점은 지점마다 다를 수 있어서 **사람마다 자기 지점 항목**으로 찾는다.
-    """
-    words = {w for w in content.split() if w and w not in _ENV_MATCH_EXCLUDE}
-    if not words:
-        return None
-    return (
-        await db.execute(
-            select(EnvItem).where(EnvItem.branch_id == branch_id, EnvItem.name.in_(words))
-        )
-    ).scalars().first()
-
 
 async def _award_todo_env(
     db: AsyncSession, todo: ProjectTodo, actor: Employee
@@ -350,12 +329,10 @@ async def _award_todo_env(
     **할 일 담당자와 누른 사람 둘 다** 각자 항목 배점만큼 받는다 (2026-08-14 결정).
     담당자가 못 할 때 남이 대신 해 줄 수 있어서다. 같은 사람이면 한 번만.
 
-    컴플레인 → `클레임해결` 과 같은 길이다 (`kindness._award_claim_resolved`).
-    지점에 그 항목이 없으면 조용히 넘어간다 — 점수가 안 붙을 뿐이고 체크 자체가
-    실패하면 안 된다.
-
-    **대표·관리자는 뺀다.** `POST /env-logs` 가 그 둘을 막고 있고, 점수도
-    `accrue_score` 가 안 쌓아서 기록만 남으면 환경정비 내역이 어지러워진다.
+    **붙이는 규칙은 `scoring.env.award_env_for` 가 들고 있다** (2026-09-21).
+    개인 업무 체크도 같은 길로 들어오는데, 여기 따로 적어 두면 사진·승인
+    검사를 한쪽만 고치게 된다 — 실제로 그래서 `클레임해결`(15점)이 승인
+    없이 붙었다.
     """
     seen: set[str] = set()
     for employee_id in (todo.assignee_id, actor.id):
@@ -363,43 +340,40 @@ async def _award_todo_env(
             continue
         seen.add(employee_id)
         person = await db.get(Employee, employee_id)
-        if person is None or not scores_apply_to(person) or person.branch_id is None:
+        if person is None:
             continue
-        item = await _env_item_for(db, person.branch_id, todo.content)
-        if item is None:
-            continue
-        log = EnvTaskLog(
-            employee_id=person.id,
-            branch_id=person.branch_id,
-            env_item_id=item.id,
-            item_name=item.name,
-            points=item.points,
-            note=todo.content[:200],
-            source_todo_id=todo.id,
-        )
-        db.add(log)
-        await db.flush()
-        await accrue_score(
+        await award_env_for(
             db,
-            employee_id=person.id,
-            branch_id=person.branch_id,
-            category=ScoreCategory.ENV,
-            points=item.points,
+            person,
+            todo.content,
+            source_todo_id=todo.id,
             created_by_id=actor.id,
-            source_ref_id=log.id,
-            reason=item.name,
         )
 
 
-async def _retract_todo_env(db: AsyncSession, todo: ProjectTodo) -> None:
-    """체크를 풀었다 — 그 할 일에서 나온 환경정비 기록과 점수를 걷는다.
+async def retract_todo_env(db: AsyncSession, todo_ids: list[str]) -> None:
+    """이 할 일들에서 나온 환경정비 기록과 점수를 걷는다.
 
-    **안 걷으면 체크·해제를 반복해 점수를 무한히 쌓을 수 있다.**
-    컴플레인은 '해결 완료를 못 되돌리게' 막아서 이 문제를 피했는데, 할 일은
-    풀 수 있어야 하는 자리라 대신 걷는다 (프로젝트 완료 점수 회수와 같은 결).
+    **안 걷으면 점수를 무한히 쌓을 수 있다.** 체크·해제 반복은 막혀 있었는데
+    **할 일이 사라지는 길 셋이 여기를 안 불렀다** (2026-09-21).
+
+    | 길 | 무슨 일이 났나 |
+    |---|---|
+    | `DELETE .../todos/{id}` | 체크 → 점수 → 할 일만 삭제. **점수가 남는다** |
+    | `_purge_project` | 프로젝트째 지워도 환경정비 점수만 남는다 |
+    | `POST /{id}/reset` | 체크만 풀려서, **다시 체크하면 점수가 두 배** |
+
+    `EnvTaskLog.source_todo_id` 가 `ondelete="SET NULL"` 이라 할 일이 지워지면
+    되짚을 끈까지 끊겼다 — 손으로 눌러 남긴 기록과 구분이 안 됐다.
     """
+    if not todo_ids:
+        return
     logs = (
-        (await db.execute(select(EnvTaskLog).where(EnvTaskLog.source_todo_id == todo.id)))
+        (
+            await db.execute(
+                select(EnvTaskLog).where(EnvTaskLog.source_todo_id.in_(todo_ids))
+            )
+        )
         .scalars()
         .all()
     )
@@ -1172,7 +1146,7 @@ async def update_project_todo(
         await _award_todo_env(db, todo, current)
     elif was_done and not todo.done:  # 완료 취소 → 타임라인
         await _log_activity(db, project_id, current.id, ProjectActivityKind.TODO, f"완료 취소: {todo.content}")
-        await _retract_todo_env(db, todo)
+        await retract_todo_env(db, [todo.id])
     await db.commit()
     await db.refresh(todo)
     return _todo_out(todo)
@@ -1190,6 +1164,9 @@ async def delete_project_todo(
     _ensure_member(project, current)
     _ensure_open(project)
     content = todo.content  # 삭제 전 스냅샷(타임라인 표시용)
+    # **지우기 전에 걷는다** — 체크로 붙은 환경정비 점수가 할 일만 사라진 채
+    # 원장에 남으면, 지웠다 만들었다를 되풀이해 점수를 무한히 쌓을 수 있다
+    await retract_todo_env(db, [todo.id])
     await db.delete(todo)
     await db.flush()
     await _recompute_progress(db, project)
@@ -1397,6 +1374,14 @@ async def reset_project(
     project.completed_at = None
 
     # 2) 할 일을 전부 되돌린다 — 다시 하라는 뜻이라 체크가 남아 있으면 안 된다
+    #
+    # **체크로 붙은 환경정비 점수도 같이 걷는다** (2026-09-21). 체크만 풀면
+    # 다시 체크할 때 `_award_todo_env` 가 또 붙여서 **점수가 두 배**가 된다 —
+    # 한 벌은 지금 원장에, 또 한 벌은 다시 완료할 때.
+    todo_ids = list(
+        await db.scalars(select(ProjectTodo.id).where(ProjectTodo.project_id == project_id))
+    )
+    await retract_todo_env(db, todo_ids)
     await db.execute(
         update(ProjectTodo)
         .where(ProjectTodo.project_id == project_id)
@@ -1500,6 +1485,14 @@ async def _purge_project(db: AsyncSession, project: Project) -> None:
     지워진 프로젝트의 점수가 랭킹에 남는 식으로 갈린다.
     """
     # 자식(FK) 먼저 정리 — 체크리스트·기한변경요청·타임라인
+    #
+    # **체크리스트에서 나온 환경정비 점수를 먼저 걷는다.** 할 일이 지워지면
+    # `source_todo_id` 가 null 이 되어(`ondelete="SET NULL"`) 되짚을 끈이
+    # 끊긴다 — 프로젝트는 없는데 그 점수만 랭킹에 남는다.
+    todo_ids = list(
+        await db.scalars(select(ProjectTodo.id).where(ProjectTodo.project_id == project.id))
+    )
+    await retract_todo_env(db, todo_ids)
     await db.execute(delete(ProjectTodo).where(ProjectTodo.project_id == project.id))
     await db.execute(delete(ProjectRequest).where(ProjectRequest.project_id == project.id))
     await db.execute(delete(ProjectActivity).where(ProjectActivity.project_id == project.id))

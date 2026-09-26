@@ -24,6 +24,7 @@ from app.enums import (
     ApprovalStatus,
     AttendanceStatus,
     ComplaintStatus,
+    EmployeeStatus,
     EventStatus,
     InboxKind,
     InboxStatus,
@@ -48,6 +49,7 @@ from app.models.scoring.my_task import MyTask, MyTaskMiss, MyTaskRequest
 from app.models.scoring.score_event import ScoreEvent
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
+from app.services.workdays import rests_on
 from app.schemas.staff.home import HomeAttendanceOut, HomeSummaryOut, InboxItemOut
 
 router = APIRouter(tags=["home"])
@@ -122,7 +124,10 @@ async def my_home(
             att = HomeAttendanceOut(
                 status=AttendanceStatus.ON_LEAVE, leave_type=lv.type, half_period=lv.half_period
             )
-        elif current.work_days and today.isoweekday() not in set(current.work_days):
+        elif rests_on(current, today) or (
+            current.work_days and today.isoweekday() not in set(current.work_days)
+        ):
+            # 생일·공휴일은 휴무다 — `services/workdays` 가 판정한다
             att = HomeAttendanceOut(status=AttendanceStatus.DAY_OFF)
         elif current.work_days and _absent_today(current, now_kst):
             # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근
@@ -267,7 +272,22 @@ async def my_inbox(
 
     for leave in (
         await db.scalars(
-            select(LeaveRequest).where(LeaveRequest.status.in_(_LEAVE_IN[status]))
+            select(LeaveRequest).where(
+                LeaveRequest.status.in_(_LEAVE_IN[status]),
+                # 나간 사람의 **대기 중** 월차는 결재할 뜻이 없다 (2026-09-27).
+                # 이미 처리한 것은 기록이라 승인·반려 칸에 그대로 남긴다
+                *(
+                    [
+                        LeaveRequest.employee_id.notin_(
+                            select(Employee.id).where(
+                                Employee.status == EmployeeStatus.RESIGNED
+                            )
+                        )
+                    ]
+                    if pending
+                    else []
+                ),
+            )
         )
     ).all():
         span = (

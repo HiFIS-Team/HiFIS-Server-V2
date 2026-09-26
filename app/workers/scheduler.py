@@ -35,6 +35,7 @@ from app.workers.my_task_miss_reminders import my_task_miss_reminders
 from app.workers.my_task_miss_scan import my_task_miss_scan
 from app.workers.peer_review_miss_scan import peer_review_miss_scan
 from app.workers.peer_review_reminders import peer_review_reminders
+from app.workers.birthday_alerts import birthday_alerts
 from app.workers.retention import purge_old_access_logs
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,9 @@ def _register_jobs() -> None:
     # 매일 00:00 UTC(=09:00 KST) — 일정 D-7/D-3/전날/당일 리마인더
     scheduler.add_job(event_reminders, CronTrigger(hour=0, minute=0),
                       id="event_reminder", replace_existing=True)
+    # 매일 00:00 UTC(=09:00 KST) — 생일 전날·당일 알림 (전원)
+    scheduler.add_job(birthday_alerts, CronTrigger(hour=0, minute=0),
+                      id="birthday_alert", replace_existing=True)
     # 매월 1일 01:00 UTC(=10:00 KST) — 전월 랭킹 1등 발표(급여마감 00:30 이후라 SALES 반영됨)
     scheduler.add_job(announce_monthly_winners, CronTrigger(day=1, hour=1, minute=0),
                       id="ranking_monthly", replace_existing=True)

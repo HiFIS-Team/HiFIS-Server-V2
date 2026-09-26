@@ -30,6 +30,7 @@ from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
 from app.services import notification_texts as ntext
 from app.services.notifications import notify_bosses
+from app.services.workdays import rests_on
 
 
 async def absence_alerts(now: datetime | None = None) -> None:
@@ -94,6 +95,9 @@ def _due_now(employee: Employee, now_kst: datetime) -> bool:
     근무 요일이 아니거나 근무 시간을 설정 안 했으면 판정하지 않는다 —
     기준이 없는 것을 결근이라 부를 수는 없다.
     """
+    # 생일·공휴일은 휴무라 결근이 아니다 — `services/workdays`
+    if rests_on(employee, now_kst.date()):
+        return False
     work_days = set(employee.work_days or [])
     if not work_days or now_kst.isoweekday() not in work_days:
         return False

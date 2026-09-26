@@ -154,6 +154,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("POST", "/employees/me/password"): "비밀번호 변경",
     ("POST", "/employees/me/schedule"): "근무 설정 변경",
     ("POST", "/employees/me/consents"): "약관 동의",
+    ("POST", "/birthdays/{id}/cheer"): "생일 축하 보내기",
     ("POST", "/employees/me/withdraw"): "탈퇴",
     ("PATCH", "/employees/{id}"): "인사 정보 변경",
     ("DELETE", "/employees/{id}"): "직원 삭제",

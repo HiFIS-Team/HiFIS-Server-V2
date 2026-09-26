@@ -47,6 +47,7 @@ from app.schemas.staff.attendance import (
 from app.services import notification_texts as ntext
 from app.services.duty import duty_hours
 from app.services.my_tasks import due_tasks
+from app.services.workdays import rests_on
 from app.services.notifications import (
     boss_ids,
     branch_manager_ids,
@@ -213,6 +214,15 @@ _SCAN_NOTES = {
     AttendanceStatus.LATE_AND_EARLY: "지각 · 조기 퇴근",
     AttendanceStatus.OVERTIME: "야근",
 }
+
+
+def _left_by(employee: Employee, day: date) -> bool:
+    """그날 이미 퇴사했나 — 퇴사일(KST)부터 근태 판정에서 빠진다 (2026-09-27).
+
+    지난 기록까지 지우면 그 달 근태가 거짓이 된다. 나간 **뒤**만 뺀다.
+    """
+    left = employee.resigned_at
+    return left is not None and day >= left.astimezone(KST).date()
 
 
 def _absent_today(
@@ -866,10 +876,16 @@ async def attendance_calendar(
             # 가입 첫날 지각·조기퇴근을 안 매기는 것과 같은 이유다
             # (`_attendance_status` 의 `first_day`) — 그때 결근을 빠뜨렸다.
             pass
+        elif _left_by(target, day):
+            pass  # 퇴사한 날부터는 결근을 안 찍는다 (2026-09-27)
         elif work_days:
             # 토·일·공휴일이어도 **본인 근무 요일이면 결근을 찍는다** (2026-08-18).
             # 나와야 하는 날에 안 나온 것이라, 당직이라고 넘어가지 않는다.
-            if day.isoweekday() not in work_days:
+            #
+            # **생일·공휴일은 휴무다** (2026-09-21 · 09-26). 나와서 찍었으면 위
+            # `rec is not None` 가지로 빠져 평소처럼 판정된다 — 쉬라고 여는
+            # 것이지 못 오게 막는 게 아니다 (`services/workdays`).
+            if rests_on(target, day) or day.isoweekday() not in work_days:
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.DAY_OFF))
             elif day < today:  # 근무일인데 과거·기록없음·휴가없음 → 결근
                 out.append(AttendanceDayOut(date=day, status=AttendanceStatus.ABSENT))
@@ -999,7 +1015,8 @@ async def attendance_calendar_all(
                 status = AttendanceStatus.ON_LEAVE
             elif day <= joined_d:
                 status = None  # 가입한 날까지 — 위 사람별 캘린더와 같은 규칙
-            elif work_days and day.isoweekday() in work_days:
+            # 생일·공휴일은 판에서 통째로 빠진다 — 쉬는 날이라 결근도 미출근도 아니다
+            elif work_days and day.isoweekday() in work_days and not rests_on(emp, day):
                 if day < today or _absent_today(emp, now_kst):
                     status = AttendanceStatus.ABSENT
                 else:
@@ -1008,7 +1025,9 @@ async def attendance_calendar_all(
                     # 통째로 빠져서, 달력이 남은 사람만 보고 `전원 출근` 으로
                     # 접었다 (2026-08-19 대표 지적 — 전원이 온 게 아닌데 그렇게 떴다).
                     status = AttendanceStatus.NOT_IN
-            if status is not None:
+            # **퇴사한 날부터는 안 담는다** (2026-09-27 대표 요청). 안 빼면
+            # 나간 사람이 근무 요일마다 결근으로 계속 선다. 그 전 기록은 남긴다
+            if status is not None and not _left_by(emp, day):
                 board.setdefault(day, {}).setdefault(status, []).append(emp.name)
             day += timedelta(days=1)
 
@@ -1084,6 +1103,14 @@ async def list_leaves(
         )
     if employee_id:
         stmt = stmt.where(LeaveRequest.employee_id == employee_id)
+    else:
+        # 전체 목록에서 퇴사자는 뺀다 (2026-09-27 대표 요청). 그 사람을 골라
+        # 보면(`employeeId`) 기록은 그대로 나온다 — 조직도 상세가 그렇게 본다
+        stmt = stmt.where(
+            LeaveRequest.employee_id.notin_(
+                select(Employee.id).where(Employee.status == EmployeeStatus.RESIGNED)
+            )
+        )
     if status:
         stmt = stmt.where(LeaveRequest.status == status)
     result = await db.execute(stmt.order_by(LeaveRequest.start_date.desc()))

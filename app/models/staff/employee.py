@@ -3,9 +3,9 @@
 wire(Employee)엔 없는 password_hash 는 DB 전용 컬럼 (응답 직렬화 안 함).
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import ARRAY, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import ARRAY, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -97,3 +97,19 @@ class Employee(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     shift_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
     # 근무 요일 — ISO 요일 1(월)~7(일) 배열. null=미설정. 결근 판정 기준(근무일인데 기록 없으면 결근).
     work_days: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
+
+    #: 생일 — **첫 로그인에 한 번 받고 그 뒤로 안 묻는다** (2026-09-21 대표 요청).
+    #:
+    #: 두 가지에 쓴다.
+    #:
+    #: | | |
+    #: |---|---|
+    #: | 달력 | `이건주님 생일` 로 해마다 선다 (`events._birthday_rows`) |
+    #: | 근태 | **그날은 휴무다** — 결근·개인 업무 누락이 안 잡힌다 |
+    #:
+    #: **연도까지 받는다.** 나이를 쓰지는 않지만 `date` 가 연도 없이는 못
+    #: 담고, 2월 29일을 받으려면 윤년이어야 한다. 달력은 월·일만 본다.
+    #:
+    #: null = 아직 안 받았다 (첫 로그인 게이트가 이 값을 본다). 한 번 채우면
+    #: 본인도 관리자도 바꿀 길이 없다 — 근무 시간(`shift_start`)과 같은 규칙이다.
+    birthday: Mapped["date | None"] = mapped_column(Date, nullable=True)

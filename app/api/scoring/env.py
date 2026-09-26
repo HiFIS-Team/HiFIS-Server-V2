@@ -33,7 +33,7 @@ from app.schemas.scoring.env import (
 )
 from app.services import notification_texts as ntext
 from app.services.notifications import master_ids, notify
-from app.services.scoring import CLAIM_ITEM_NAME, accrue_score
+from app.services.scoring import CLAIM_ITEM_NAME, accrue_score, scores_apply_to
 from app.services.summarize import polish_env_note
 
 router = APIRouter(tags=["env"])
@@ -60,6 +60,7 @@ BASE_ENV_ITEMS: list[tuple[str, int, bool]] = [
     ("남탈청소", 2, False),
     ("여탈부스", 5, False),
     ("여탈청소", 2, False),
+    ("유산소존청소", 2, False),  # 2026-09-18 대표 요청 — 여탈청소와 화장실청소 사이
     ("화장실청소", 2, False),  # 5 → 2 (2026-08-13 대표 결정)
     # 관리
     ("기구관리", 2, False),
@@ -226,6 +227,120 @@ def _needs_approval(item: EnvItem) -> bool:
     return item.name in _APPROVAL_ITEMS
 
 
+def auto_awardable(item: EnvItem) -> bool:
+    """**누르기만 하는 길**로 점수를 붙여도 되는 항목인가 (2026-09-21).
+
+    `POST /env-logs` 말고도 점수가 붙는 길이 있다 — 프로젝트 할 일 이름이
+    항목과 맞으면 체크하는 순간 수행 기록이 생긴다
+    (`projects._award_todo_env`). **그 길은 여기 검사를 하나도 안 거쳤다.**
+
+    | 항목 | 칩으로 누르면 | 할 일로 누르면 (고치기 전) |
+    |---|---|---|
+    | `클레임해결` 15점 | 대표 승인 대기 | **바로 적립** |
+    | `현수막` 10점 | 사진·위치 필수 | **사진 없이 적립** |
+    | `족자` 5 · `전단지` 1 | 같음 | 같음 |
+
+    할 일에는 사진을 실을 자리도, 결재를 걸 자리도 없다. 그래서 **자동
+    적립에서 뺀다** — 그 항목은 환경정비 칩으로 제대로 남겨야 한다.
+
+    세 검사를 그대로 다시 쓴다. 이름을 따로 베껴 두면 `PHOTO_REQUIRED_ITEMS`
+    에 항목이 하나 늘 때 이쪽이 안 따라와서 또 갈린다.
+    """
+    return not (_needs_photo(item) or _needs_note(item) or _needs_approval(item))
+
+
+# ---------- 다른 화면에서 들어오는 자동 적립 ----------
+#
+# 환경정비 칩 말고도 점수가 붙는 길이 둘이다. **규칙을 여기 하나로 둔다** —
+# 예전에는 프로젝트 쪽에만 있어서 검사(사진·승인)를 통째로 건너뛰었다.
+#
+# | 길 | 언제 |
+# |---|---|
+# | 프로젝트 할 일 | 이름이 항목과 맞는 할 일을 체크할 때 (2026-08-14) |
+# | **개인 업무** | 이름이 항목과 맞는 내 업무를 체크할 때 (2026-09-21 요청) |
+
+#: 손으로 적는 칸이라 매칭에서 뺀다 — `기타 정리` 같은 줄이 전부 걸린다
+_ENV_MATCH_EXCLUDE = {"기타"}
+
+
+async def env_item_for(db: AsyncSession, branch_id: str, content: str) -> EnvItem | None:
+    """적은 글에서 그 지점의 환경정비 항목을 찾는다 — **단어가 똑같을 때만.**
+
+    `현수막 설치 1` → 단어 `현수막` `설치` `1` 중 `현수막` 이 항목 이름과
+    정확히 같아서 걸린다. `세탁기 수리` 는 **안 걸린다** (`세탁기` ≠ `세탁`) —
+    글자가 들어 있기만 해도 치면 엉뚱한 줄이 점수를 받는다.
+
+    배점은 지점마다 다를 수 있어서 **사람마다 자기 지점 항목**으로 찾는다.
+    """
+    words = {w for w in content.split() if w and w not in _ENV_MATCH_EXCLUDE}
+    if not words:
+        return None
+    return (
+        await db.execute(
+            select(EnvItem).where(EnvItem.branch_id == branch_id, EnvItem.name.in_(words))
+        )
+    ).scalars().first()
+
+
+async def award_env_for(
+    db: AsyncSession,
+    person: Employee,
+    content: str,
+    *,
+    source_todo_id: str | None = None,
+    source_check_id: str | None = None,
+    created_by_id: str | None = None,
+) -> EnvTaskLog | None:
+    """이름이 환경정비 항목과 맞으면 **수행 기록과 점수를 같이 남긴다.**
+
+    개인 업무에서 `블로그` 를 체크하면 공통 업무의 `블로그` 도 같이 찍히고
+    배점이 그대로 올라간다 (2026-09-21 대표 요청) — 같은 일을 두 화면에서
+    두 번 누르게 하지 않는다.
+
+    **안 맞으면 조용히 `None`.** 이름을 그냥 지어 만드는 목록이라 대부분은
+    안 걸리고, 못 걸렸다고 체크 자체가 실패하면 안 된다.
+
+    **[auto_awardable] 을 지킨다** — 사진·메모·대표 승인이 걸린 항목은 이 길로
+    안 준다. 개인 업무 체크에도 사진을 실을 자리가 없어서 프로젝트 할 일과
+    사정이 같다.
+
+    **대표·관리자는 빠진다** (`scores_apply_to`) — 기록만 남으면 환경정비
+    내역이 어지러워진다. 지점이 없어도 마찬가지다.
+
+    되돌리기는 부르는 쪽 몫이다. 할 일은 체크를 풀 수 있어서 걷는 길이 있고
+    (`projects.retract_todo_env`), 개인 업무 체크는 못 되돌린다
+    (`uncheck_my_task` 가 늘 400) — 그래서 걷을 자리가 없다.
+    """
+    if not scores_apply_to(person) or person.branch_id is None:
+        return None
+    item = await env_item_for(db, person.branch_id, content)
+    if item is None or not auto_awardable(item):
+        return None
+    log = EnvTaskLog(
+        employee_id=person.id,
+        branch_id=person.branch_id,
+        env_item_id=item.id,
+        item_name=item.name,
+        points=item.points,
+        note=content[:200],
+        source_todo_id=source_todo_id,
+        source_my_task_check_id=source_check_id,
+    )
+    db.add(log)
+    await db.flush()
+    await accrue_score(
+        db,
+        employee_id=person.id,
+        branch_id=person.branch_id,
+        category=ScoreCategory.ENV,
+        points=item.points,
+        created_by_id=created_by_id,
+        source_ref_id=log.id,
+        reason=item.name,
+    )
+    return log
+
+
 # ---------- EnvTaskLog (수행 기록 → 점수) ----------
 @router.post("/env-logs/photo", response_model=EnvLogPhotoOut, status_code=201)
 async def upload_env_photo(
@@ -348,12 +463,22 @@ async def create_env_log(
 @router.post("/env-logs/{log_id}/approve", response_model=EnvTaskLogOut)
 async def approve_env_log(
     log_id: str,
+    on_wall: bool = Query(True, alias="onWall"),
     current: Employee = Depends(require_role(Role.MASTER)),
     db: AsyncSession = Depends(get_db),
 ) -> EnvTaskLog:
     """승인 — **이때 점수가 붙는다.** 올린 사람 앞으로 간다.
 
     대표가 눌러 준다고 대표가 한 것은 아니다 (컴플레인 승인과 같은 규칙).
+
+    **[on_wall] 은 매장 TV 에만 걸린다** (2026-09-21 대표 요청). 설문으로 들어온
+    컴플레인에는 이 고르개가 있었는데(`approve_complaint_done`) **환경정비에서
+    올린 `클레임해결` 에는 없어서**, 사람을 지목하는 내용도 무조건 벽에 걸렸다.
+    두 길이 같은 일을 하는데 한쪽만 고를 수 있으면 안 된다.
+
+    끄면 **벽에서만 빠진다** — 승인·점수·앱 기록은 그대로 간다.
+    TV 는 `summary` 가 빈 줄을 안 거므로(`public/tv.py` 의 `env_rows`)
+    그 칸을 안 채우는 것으로 끈다.
     """
     log = await _pending_log(db, log_id)
     log.approval_status = ProjectRequestStatus.APPROVED
@@ -364,7 +489,11 @@ async def approve_env_log(
     # 화면이 부를 때마다 만들면 새로고침마다 문장이 저 혼자 바뀐다
     # (컴플레인 요약과 같은 이유).
     # 신청할 때 이미 만들어 뒀다 — 그때 못 만든 것만 한 번 더 해 본다
-    if not log.summary:
+    if not on_wall:
+        # **벽에 안 건다** — 신청할 때 미리 만들어 둔 것도 지운다.
+        # 안 지우면 이미 채워져 있어서 끈 것이 아무 일도 안 한 게 된다.
+        log.summary = None
+    elif not log.summary:
         log.summary = await polish_env_note(log.note or "")
     await accrue_score(
         db,

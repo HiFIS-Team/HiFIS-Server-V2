@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import branch_filter, get_current_user
+from app.core.periods import period_range
 from app.db.session import get_db
 from app.models.members.member import Member
 from app.models.members.pt_survey import PtSurvey
@@ -51,8 +52,20 @@ async def list_pt_surveys(
     trainer_id: str | None = Query(None, alias="trainerId"),
     #: 안 낸 것만 — 누구에게 다시 물어봐야 하는지 보는 자리
     unanswered: bool = Query(False),
+    #: `YYYY-MM` — **그 달에 만들어진 설문만** (2026-09-21 대표 요청)
+    period: str | None = Query(None),
 ) -> list[PtSurveyOut]:
-    """결과 목록 — 대표·관리자는 전부, 나머지는 **본인이 수업한 것만.**"""
+    """결과 목록 — 대표·관리자는 전부, 나머지는 **본인이 수업한 것만.**
+
+    ## 달로 끊어 본다 (2026-09-21 대표 요청)
+
+    예전에는 통째로 내려와서, 쌓일수록 **이번 달 것을 보려면 한참 내려야**
+    했다. 환경정비 내역·세션 기록과 같은 달 이동 줄을 붙였다.
+
+    **`created_at` 으로 끊는다** — 설문이 만들어진 때가 곧 그 수업을 한
+    때다. `answered_at` 으로 끊으면 아직 안 낸 것이 어느 달에도 안 서서,
+    '안 낸 것' 탭이 통째로 빈다.
+    """
     stmt = (
         select(
             PtSurvey,
@@ -80,6 +93,10 @@ async def list_pt_surveys(
         stmt = stmt.where(Employee.branch_id == scope)
     if unanswered:
         stmt = stmt.where(PtSurvey.answered_at.is_(None))
+    if period:
+        # 모양이 틀리면 `period_range` 가 400 을 낸다 — 여기서 또 안 본다
+        start, end = period_range(period)
+        stmt = stmt.where(PtSurvey.created_at >= start, PtSurvey.created_at < end)
 
     def answers(rows: list | None, *, praise: bool) -> list[PtTopicAnswer]:
         """저장된 코드에 **문구를 붙여서** 내보낸다.

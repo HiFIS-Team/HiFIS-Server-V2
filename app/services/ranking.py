@@ -7,7 +7,7 @@ compute_ranking 은 ScoreEvent 합산으로 (employee_id, name, points, rank) �
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import RankingKind, Role, ScoreCategory
+from app.enums import EmployeeStatus, RankingKind, Role, ScoreCategory
 from app.models.staff.employee import Employee
 from app.models.scoring.score_event import ScoreEvent
 
@@ -65,7 +65,11 @@ async def compute_ranking(
     stmt = (
         select(Employee.id, Employee.name, total)
         .join(ScoreEvent, ScoreEvent.employee_id == Employee.id)
-        .where(Employee.role.notin_([Role.MASTER, Role.ADMIN]))
+        .where(
+            Employee.role.notin_([Role.MASTER, Role.ADMIN]),
+            # 퇴사자는 줄에서 뺀다 (2026-09-27) — 랭킹 보드와 같은 기준
+            Employee.status != EmployeeStatus.RESIGNED,
+        )
     )
     if kind is not None:
         for cond in kind_conditions(kind):

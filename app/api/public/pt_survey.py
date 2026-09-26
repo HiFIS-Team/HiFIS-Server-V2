@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ratelimit import limiter
@@ -73,7 +73,13 @@ async def pt_survey_page(token: str, db: AsyncSession = Depends(get_db)) -> PtSu
     survey = await _survey_of(token, db)
     member = await db.get(Member, survey.member_id)
     trainer = await db.get(Employee, survey.trainer_id)
-    registration = await db.get(Registration, survey.registration_id)
+    # 회차가 **회원 누적**이라(7·14·21…) 총 회차도 등록권 전부를 더한다 —
+    # 화면이 `총 − 회차` 로 남은 회차를 그린다 (2026-09-27)
+    purchased = await db.scalar(
+        select(func.coalesce(func.sum(Registration.total_sessions), 0)).where(
+            Registration.member_id == survey.member_id
+        )
+    )
     branch = await db.get(Branch, trainer.branch_id) if trainer and trainer.branch_id else None
 
     return PtSurveyPageOut(
@@ -82,7 +88,7 @@ async def pt_survey_page(token: str, db: AsyncSession = Depends(get_db)) -> PtSu
         trainer_avatar_color=trainer.avatar_color if trainer else "#2F54EB",
         branch_name=branch.name if branch else "",
         session_no=survey.session_no,
-        total_sessions=registration.total_sessions if registration else 0,
+        total_sessions=int(purchased or 0),
         answered=survey.answered_at is not None,
         # **문구를 화면에 안 박는다** — 앱도 같은 표를 쓰므로 여기서 한 번만 준다
         topics=[

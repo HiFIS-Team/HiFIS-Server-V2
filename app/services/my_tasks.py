@@ -46,10 +46,12 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.periods import KST
 from app.enums import LeaveStatus, LeaveType
 from app.models.scoring.my_task import MyTask, MyTaskCheck
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.employee import Employee
+from app.services.workdays import works_on
 
 #: 지난 차례를 며칠까지 거슬러 보나 — **7일이면 충분하다.**
 #:
@@ -99,13 +101,16 @@ class DueDay:
 
 
 def is_workday(employee: Employee | None, day: date) -> bool:
-    """그 사람의 근무일인가 — `Employee.work_days` (ISO 1~7).
+    """그 사람의 근무일인가 — **판정은 `services/workdays` 가 한다.**
 
-    **설정을 안 했으면 근무일로 본다.** 안 정한 사람을 쉬는 사람으로 치면
-    누락이 통째로 사라진다 (근무 요일을 아직 안 넣은 사람이 많다 — 69번).
+    근무 요일(ISO 1~7)이면서 생일이 아니어야 한다. 같은 질문을 근태 달력·
+    결근 알림·명단도 하는데, 예전에는 여섯 곳이 제각각 적어 두어서 한 곳만
+    고치면 갈렸다 — 생일 휴무를 넣으면서 한 자리로 모았다.
+
+    **이름을 안 바꾼다.** 이 모듈 밖에서 쓰는 곳이 둘이라(`my_tasks` 라우터·
+    확정 누락 잡) 그대로 두고 속만 옮긴다.
     """
-    days = (employee.work_days if employee else None) or []
-    return not days or day.isoweekday() in days
+    return works_on(employee, day)
 
 
 def is_complete(
@@ -191,18 +196,52 @@ async def _ledger(db: AsyncSession, people_ids: list[str], task_ids: list[str], 
     return _Ledger(checks, leaves)
 
 
+def born_on(task: MyTask) -> date:
+    """이 업무가 생긴 **KST 근무일** — 그 전 날짜에는 이 업무가 없었다.
+
+    `created_at` 은 UTC 라 `.date()` 를 그냥 쓰면 **KST 00:00~09:00 에 만든
+    업무가 전날 생긴 것이 된다.** 근무일은 전부 KST 기준(`MyTaskCheck.date`·
+    `Attendance.date`)이라 여기서 맞춰 준다.
+    """
+    return task.created_at.astimezone(KST).date()
+
+
+def stands_on(task: MyTask, day: date) -> bool:
+    """그날 이 업무가 **제 차례로 서는가** — 주 단위든 월 단위든 여기서 가른다.
+
+    | `monthdays` | 무엇으로 보나 |
+    |---|---|
+    | 비어 있다 | 요일 (`weekdays`, ISO 1(월)~7(일)) — 여태 하던 방식 |
+    | 값이 있다 | **달의 며칠** (`[1, 15]` = 매달 1일·15일) |
+
+    **한 업무가 둘을 같이 걸지 않는다.** 만드는 화면이 주냐 월이냐 하나를
+    고르게 돼 있고, 둘을 겹치면 '매달 1일이면서 금요일'이라는 뜻이 되어
+    그런 날이 몇 달에 한 번씩만 온다.
+
+    없는 날은 그 달에 **안 선다** — 31일짜리는 2월에 안 돈다. 말일로 당기면
+    2월 28일에 서는데, 그날 제 차례인 다른 업무와 섞여 왜 섰는지가 안 보인다.
+    """
+    if task.monthdays:
+        return day.day in task.monthdays
+    return day.isoweekday() in (task.weekdays or [])
+
+
 def _last_due(task: MyTask, day: date, created: date) -> date | None:
     """`day` 전에 이 업무가 마지막으로 섰던 날 — 없으면 `None`.
 
     만든 날보다 앞선 날은 안 본다. 안 그러면 **오늘 만든 업무가 어제 것을
     안 했다고 밀려 온다.**
+
+    **[LOOKBACK] 은 월 단위 업무에도 그대로 7일이다.** 31일을 거슬러 보면
+    매달 1일짜리 업무를 안 한 사람이 그달 내내 밀린 일로 서고, 하루에 한 번씩
+    확정 누락이 나서 한 달에 서른 번 깎인다. 주 단위와 같은 길이만 준다 —
+    '다음 근무일에 한 번 더'가 원래 규칙이고, 7일이면 근무일이 그 안에 온다.
     """
-    days = task.weekdays or []
     for back in range(1, LOOKBACK + 1):
         d = day - timedelta(days=back)
         if d < created:
             return None
-        if d.isoweekday() in days:
+        if stands_on(task, d):
             return d
     return None
 
@@ -242,7 +281,6 @@ async def due_tasks(
         mine[t.employee_id].append(t)
 
     book = await _ledger(db, ids, [t.id for t in rows], day)
-    iso = day.isoweekday()
     today_checks = book.checked_on.get(day, set())
     out: dict[str, DueDay] = {}
 
@@ -253,7 +291,14 @@ async def due_tasks(
             out[person.id] = DueDay([], set(), True, 0, 0, True)
             continue
 
-        scheduled = [t for t in tasks if iso in (t.weekdays or [])]
+        # **만들기 전 날에는 안 선다** — `_last_due` 에만 있던 가드가 여기엔
+        # 없어서, 오늘 만든 업무가 지난 근무일에도 서 있던 것으로 셈됐다.
+        # 그날 안 한 것이 되어 **없던 업무로 확정 누락(-10~-30)이 났다**
+        # (`workers/my_task_miss_scan`). 지난 달 내역에도 그때 없던 업무가
+        # 누락으로 찍혔다 (`GET /my-tasks/history`).
+        scheduled = [
+            t for t in tasks if stands_on(t, day) and born_on(t) <= day
+        ]
         due = [DueTask(t) for t in scheduled]
 
         # 오지 않은 날에는 안 민다. 쉬는 날에도 안 민다 (2026-08-20 요청 —
@@ -263,7 +308,7 @@ async def due_tasks(
             for t in tasks:
                 if t.id in standing:
                     continue  # 그날 제 차례로 이미 서 있다
-                last = _last_due(t, day, t.created_at.date())
+                last = _last_due(t, day, born_on(t))
                 # 규칙을 세우기 전 날짜는 안 민다 ([CARRY_FROM])
                 if last is None or last < CARRY_FROM:
                     continue
