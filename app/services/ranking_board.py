@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import KST, period_range
 from app.models.scoring.ranking_freeze import RankingFreeze
-from app.enums import ProjectRequestStatus, RegistrationType, Role, ScoreCategory, VisitPath
+from app.enums import EmployeeStatus, ProjectRequestStatus, RegistrationType, Role, ScoreCategory, VisitPath
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.members.session_sign import SessionSign
@@ -152,6 +152,9 @@ async def build_board(
                 # 대표·관리자는 줄 세우는 쪽이지 서는 쪽이 아니다 (2026-08-11 대표 결정).
                 # 근태 판정에서 뺀 것과 같은 이유다 (backend-gap 70번).
                 Employee.role.notin_([Role.MASTER, Role.ADMIN]),
+                # 퇴사자는 줄에서 뺀다 (2026-09-27 대표 요청). 지난 달 판은
+                # 확정(`RankingFreeze`)돼 있어서 그때 순위는 그대로 남는다
+                Employee.status != EmployeeStatus.RESIGNED,
             )
         )
     ).all()

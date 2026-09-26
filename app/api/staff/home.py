@@ -24,6 +24,7 @@ from app.enums import (
     ApprovalStatus,
     AttendanceStatus,
     ComplaintStatus,
+    EmployeeStatus,
     EventStatus,
     InboxKind,
     InboxStatus,
@@ -271,7 +272,22 @@ async def my_inbox(
 
     for leave in (
         await db.scalars(
-            select(LeaveRequest).where(LeaveRequest.status.in_(_LEAVE_IN[status]))
+            select(LeaveRequest).where(
+                LeaveRequest.status.in_(_LEAVE_IN[status]),
+                # 나간 사람의 **대기 중** 월차는 결재할 뜻이 없다 (2026-09-27).
+                # 이미 처리한 것은 기록이라 승인·반려 칸에 그대로 남긴다
+                *(
+                    [
+                        LeaveRequest.employee_id.notin_(
+                            select(Employee.id).where(
+                                Employee.status == EmployeeStatus.RESIGNED
+                            )
+                        )
+                    ]
+                    if pending
+                    else []
+                ),
+            )
         )
     ).all():
         span = (
