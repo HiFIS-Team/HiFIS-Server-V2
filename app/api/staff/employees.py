@@ -40,7 +40,7 @@ from app.services import notification_texts as ntext
 from app.services.avatar import next_avatar_color
 from app.services.employee_codes import unique_emp_no
 from app.services.notifications import notify_bosses
-from app.services.workdays import is_birthday
+from app.services.workdays import rests_on
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -144,10 +144,10 @@ async def _with_today_status(db: AsyncSession, employees: list[Employee]) -> lis
             model.today_attendance_status = AttendanceStatus.NORMAL
         elif e.id in leaves:
             model.today_attendance_status = AttendanceStatus.ON_LEAVE
-        elif is_birthday(e, today) or (
+        elif rests_on(e, today) or (
             e.work_days and today.isoweekday() not in set(e.work_days)
         ):
-            # 생일도 휴무다 (2026-09-21) — `services/workdays` 가 판정한다
+            # 생일·공휴일은 휴무다 — `services/workdays` 가 판정한다
             model.today_attendance_status = AttendanceStatus.DAY_OFF
         elif e.work_days and _absent_today(e, now_kst):
             # 근무일인데 퇴근 시간이 지나도록 스캔이 없다 → 결근

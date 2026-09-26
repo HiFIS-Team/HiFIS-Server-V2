@@ -120,3 +120,12 @@ def test_근무_요일을_안_정했으면_나오는_날로_본다():
     person = _person(birthday=date(1995, 9, 16))
     assert works_on(person, date(2026, 9, 19))  # 토요일도 근무일
     assert not works_on(person, date(2026, 9, 16))  # 생일만 쉰다
+
+
+def test_공휴일에는_나오는_날이_아니다():
+    """근무 요일이어도 공휴일은 쉰다 — 결근·업무 누락이 안 찍힌다 (backend-gap 88)."""
+    person = _person(work_days=[1, 2, 3, 4, 5])
+    assert not works_on(person, date(2026, 9, 24))  # 목 — 추석
+    assert not works_on(person, date(2026, 8, 17))  # 월 — 광복절 대체 휴일
+    assert works_on(person, date(2026, 9, 23))  # 수 — 평소
+    assert not works_on(_person(), date(2026, 9, 25))  # 요일 미설정이어도 쉰다
