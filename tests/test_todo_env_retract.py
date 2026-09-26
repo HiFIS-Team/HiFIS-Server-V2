@@ -64,7 +64,18 @@ def test_할일_자동적립은_확인이_걸린_항목을_뺀다():
     할 일에는 사진을 실을 자리도 결재를 걸 자리도 없다. 검사를 안 하면
     `클레임해결`(15점)이 대표 승인 없이, `현수막`(10점)이 사진 없이 붙는다.
     """
-    assert "auto_awardable" in _calls("_award_todo_env")
+    # 2026-09-21 부터 붙이는 규칙은 `award_env_for` 한 곳이 들고 있다 —
+    # 할 일이 그 길로 가고, 그 길이 검사를 거치는지 둘 다 본다
+    assert "award_env_for" in _calls("_award_todo_env")
+    from app.api.scoring import env
+
+    tree = ast.parse(inspect.getsource(env.award_env_for))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "auto_awardable" in called
 
 
 def test_auto_awardable_이_세_검사를_그대로_쓴다():
