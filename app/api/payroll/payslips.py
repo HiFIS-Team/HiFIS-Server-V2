@@ -33,6 +33,7 @@ from app.services.payroll import (
     can_adjust_incentive,
     build_payslip_data,
     compute_payday,
+    due_year_month,
     generate_branch_payslips,
     get_hourly_wage,
     get_payday_policy,
@@ -105,7 +106,11 @@ async def my_accrued(
     today = date.today()
     now = datetime.now(timezone.utc)
     payday = await get_payday_policy(db, current.branch_id, current.rank, now)
-    year_month = payroll_month_of(today, payday)
+    # **급여일 당일에는 오늘 지급되는 달을 준다** (2026-09-27). 익월 D형은 D일이
+    # 이미 다음 주기의 첫날이라 그대로 두면 앱이 다음 달을 맨 위에 세우고, 정작
+    # 오늘 신청할 달에는 신청 창이 안 붙어서 **급여일에 신청을 못 했다.**
+    # 말일형은 말일이 원래 그 달이라 바뀌는 것이 없다.
+    year_month = due_year_month(today, payday) or payroll_month_of(today, payday)
     start, end = payroll_window(year_month, payday)
     empty = AccruedOut(
         year_month=year_month,
