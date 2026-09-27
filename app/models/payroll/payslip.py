@@ -69,6 +69,9 @@ class Payslip(UUIDMixin, TimestampMixin, Base):
         default=PayslipStatus.DRAFT,
         server_default="DRAFT",
     )
+    #: 커미션을 고쳐 낸 이유 — 서버 계산값과 다를 때만 차 있다 (2026-09-27)
+    incentive_new_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    incentive_renewal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)  # 신청 특이사항(지각 사유·추가 근무 등) — 대표가 결재 시 참고
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

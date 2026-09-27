@@ -26,6 +26,10 @@ class PayslipSubmit(CamelModel):
     #: 결재하는 쪽이 얼마를 고쳤는지 본다.
     incentive_new: int | None = Field(default=None, ge=0)
     incentive_renewal: int | None = Field(default=None, ge=0)
+    #: 고친 이유 — **서버 계산값과 다르게 낼 때는 필수다** (2026-09-27 대표 요청).
+    #: 결재하는 쪽이 왜 바꿨는지 알아야 승인할 수 있다
+    incentive_new_reason: str | None = Field(default=None, max_length=500)
+    incentive_renewal_reason: str | None = Field(default=None, max_length=500)
 
 
 class PayslipReject(CamelModel):
@@ -60,6 +64,20 @@ class AccruedOut(CamelModel):
     #: 재등록 합이 문턱을 못 넘어 **워크인 요율로 내려갔나** (트레이너만, 2026-08-31).
     #: 화면이 왜 금액이 낮은지 한 줄로 알려 주는 자리다
     renewal_downgraded: bool = False
+    # ── 신청서 근거 (2026-09-27) — 왜 이 금액인지 보여주는 값 ──
+    #: 기본급 — 업무 누락 차감 뒤 값. 진행 중 주기에도 직급 정책대로 채운다
+    base_salary: int = 0
+    #: 차감 전 기본급과 누락 일수 — 줄었으면 신청서가 이유를 적는다
+    base_before: int = 0
+    task_miss_days: int = 0
+    #: 적용된 요율 (0.4 = 40%). 재등록이 내려갔으면 내려간 값이다
+    new_rate: float = 0
+    renewal_rate: float = 0
+    #: 재등록이 이 금액 이하면 워크인 요율로 내려간다 (트레이너만)
+    renewal_threshold: int = 0
+    #: 커미션이 붙은 수업 한 건씩 — 회원 · `N회차 · 유입` · 회당 금액
+    new_sales: list["SaleItem"] = []
+    renewal_sales: list["SaleItem"] = []
     #: 신청할 때 본인이 커미션을 고칠 수 있는 사람인가 (알바·FC 는 false).
     #: 앱이 이 값으로 입력칸을 열지 정한다 — 앱이 따로 판정하면 서버와 어긋나
     #: 못 고치는 사람에게 칸이 열리고 제출에서 400 이 난다.
@@ -95,6 +113,10 @@ class PayslipBasis(CamelModel):
     new_sales: list[SaleItem]
     renewal_sales: list[SaleItem]
     session_signs: int
+    #: 적용된 요율·재등록 하향 여부 — 계산은 늘 했는데 응답에서 빠져 있었다
+    new_rate: float | None = None
+    renewal_rate: float | None = None
+    renewal_downgraded: bool = False
     hourly: HourlyBasis | None = None
 
 
@@ -121,6 +143,9 @@ class PayslipOut(CamelModel):
     # 제출·결재
     status: PayslipStatus
     note: str | None = None
+    #: 커미션을 고쳐 낸 이유 (고쳤을 때만 차 있다)
+    incentive_new_reason: str | None = None
+    incentive_renewal_reason: str | None = None
     reject_reason: str | None = None
     submitted_at: datetime | None = None
     decided_at: datetime | None = None
@@ -144,3 +169,7 @@ class PayslipOut(CamelModel):
         from app.services.payroll import compute_payday
 
         return self.pay_date or compute_payday(self.year_month)
+
+
+# `AccruedOut` 이 뒤에 정의된 `SaleItem` 을 쓴다
+AccruedOut.model_rebuild()

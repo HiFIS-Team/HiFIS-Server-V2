@@ -576,6 +576,10 @@ async def build_payslip_data(
             # 왜 금액이 낮은지 알 수 있어야 한다
             "renewal_downgraded": downgraded,
             "renewal_base": renewal_base,
+            # **적용된 요율** — 신청서가 '회당 금액 합 × 요율' 로 근거를 보여준다
+            # (2026-09-27). 재등록이 내려갔으면 여기에는 내려간 값이 실린다
+            "new_rate": policy.new_rate,
+            "renewal_rate": renewal_rate,
             "session_signs": len(signs),
             # 왜 기본급이 줄었나 — **화면에 새로 그리지 않는다.** 근거를 남겨
             # 두는 것이 목적이다 (알바 `hourly` 와 같은 취급)

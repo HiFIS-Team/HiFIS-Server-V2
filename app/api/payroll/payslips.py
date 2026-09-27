@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user, require_role
 from app.core.periods import period_range
 from app.db.session import get_db
-from app.enums import EmploymentType, PayslipStatus, Role
+from app.enums import EmploymentType, PayslipStatus, Rank, Role
 from app.models.staff.employee import Employee
 from app.models.payroll.payslip import Payslip
 from app.schemas.payroll.payslip import (
@@ -27,6 +27,7 @@ from app.schemas.payroll.payslip import (
 from app.services import notification_texts as ntext
 from app.services.notifications import master_ids, notify
 from app.services.payroll import (
+    RENEWAL_RATE_THRESHOLD,
     NoScheduleError,
     apply_incentive_override,
     build_hourly_payslip_data,
@@ -136,7 +137,16 @@ async def my_accrued(
         return empty
     data = await build_payslip_data(db, current, year_month, policy, payday)
     can_adjust = can_adjust_incentive(current, policy)
+    basis = data["basis"]
     return AccruedOut(
+        base_salary=data["base_salary"],
+        base_before=basis["task_miss"]["base_before"],
+        task_miss_days=basis["task_miss"]["days"],
+        new_rate=basis["new_rate"],
+        renewal_rate=basis["renewal_rate"],
+        renewal_threshold=RENEWAL_RATE_THRESHOLD if current.rank == Rank.TRAINER else 0,
+        new_sales=basis["new_sales"],
+        renewal_sales=basis["renewal_sales"],
         year_month=year_month,
         period_start=start.date(),
         period_end=end.date(),
@@ -219,6 +229,21 @@ async def submit_my_payslip(
             setattr(payslip, field, value)
     if payslip.status in (PayslipStatus.SUBMITTED, PayslipStatus.APPROVED, PayslipStatus.PAID):
         raise HTTPException(400, detail={"code": "ALREADY_SUBMITTED", "message": "이미 제출된 명세서예요"})
+    # **서버 계산값과 다르게 내면 사유가 있어야 한다** (2026-09-27 대표 요청)
+    reasons = {}
+    for field, sent, auto, reason in (
+        ("신규", payload.incentive_new, payslip.incentive_new_auto, payload.incentive_new_reason),
+        ("재등록", payload.incentive_renewal, payslip.incentive_renewal_auto, payload.incentive_renewal_reason),
+    ):
+        changed = sent is not None and auto is not None and sent != auto
+        if changed and not (reason or "").strip():
+            raise HTTPException(
+                400,
+                detail={"code": "REASON_REQUIRED", "message": f"PT 커미션 {field} 금액을 바꾼 이유를 적어 주세요"},
+            )
+        reasons[field] = reason.strip() if changed else None
+    payslip.incentive_new_reason = reasons["신규"]
+    payslip.incentive_renewal_reason = reasons["재등록"]
     payslip.status = PayslipStatus.SUBMITTED
     payslip.note = payload.note  # 특이사항(재제출 시 갱신)
     payslip.submitted_at = datetime.now(timezone.utc)
