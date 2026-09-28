@@ -70,6 +70,21 @@ async def my_goal(
     )
 
 
+@router.get("/me/list", response_model=list[MonthlyGoalOut])
+async def my_goals(
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[MonthlyGoal]:
+    """내가 낸 목표 전부 — 최신 달이 먼저. 지난 달 것을 다시 볼 자리다."""
+    return list(
+        await db.scalars(
+            select(MonthlyGoal)
+            .where(MonthlyGoal.employee_id == current.id)
+            .order_by(MonthlyGoal.year_month.desc())
+        )
+    )
+
+
 @router.post("/me", response_model=MonthlyGoalOut, status_code=201)
 async def submit_goal(
     payload: GoalSubmit,
