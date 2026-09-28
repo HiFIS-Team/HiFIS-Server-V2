@@ -746,3 +746,13 @@ def birthday_cheer(sender: str, emoji: str) -> dict:
         "body": None,
         "link": None,
     }
+
+
+def goal_reminder(month: int) -> dict:
+    """이달의 목표를 아직 안 적었다 — 매달 첫 월요일 (2026-09-28 대표 요청)."""
+    return {
+        "type": "MONTHLY_GOAL",
+        "title": f"{month}월 목표를 적어 주세요",
+        "body": "이번 달에 이루고 싶은 것을 2개 이상 적어요",
+        "link": "/work/goals",
+    }
