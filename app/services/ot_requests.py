@@ -80,13 +80,13 @@ async def notify_new(db: AsyncSession, ot: OtRequest) -> None:
     """새 신청 — **그 지점 전원 + MASTER·ADMIN** (지점 상관없이)."""
     branch = await db.get(Branch, ot.branch_id)
     text = ntext.ot_requested(
-        ot.name, sms.branch_label(branch.name if branch else ""), _when(ot)
+        ot.name, sms.branch_label(branch.name if branch else ""), when_label(ot)
     )
     for eid in {*await branch_ids(db, ot.branch_id), *await boss_ids(db)}:
         await notify(db, employee_id=eid, **text)
 
 
-def _when(ot: OtRequest) -> str:
+def when_label(ot: OtRequest) -> str:
     """`10/3(금) 14:00~15:00`"""
     day = "월화수목금토일"[ot.visit_date.weekday()]
     return (
@@ -118,7 +118,7 @@ async def sms_confirmed(db: AsyncSession, ot: OtRequest, trainer: Employee) -> N
         logger.info("[ot-sms] 발신번호가 없어 건너뜀 branch=%s", branch.name if branch else "?")
         return
     text = _SMS_TEMPLATE.format(
-        branch=sms.branch_label(branch.name), name=ot.name, when=_when(ot), trainer=trainer.name
+        branch=sms.branch_label(branch.name), name=ot.name, when=when_label(ot), trainer=trainer.name
     )
     try:
         await asyncio.to_thread(

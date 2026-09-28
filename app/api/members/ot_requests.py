@@ -22,10 +22,20 @@ from app.models.staff.employee import Employee
 from app.schemas.base import CamelModel
 from app.services import notification_texts as ntext
 from app.services.monthly_goals import today_kst
-from app.services.notifications import notify
-from app.services.ot_requests import _when, can_assign, can_take, sms_confirmed, visible
+from app.services.notifications import boss_ids, notify
+from app.services.ot_requests import when_label, can_assign, can_take, sms_confirmed, visible
 
 router = APIRouter(prefix="/ot-requests", tags=["ot-requests"])
+
+
+async def _tell(db: AsyncSession, ids: set[str | None], exclude: str, **text) -> None:
+    """같은 알림을 여럿에게 — **한 사람에게 한 번**, 한 사람 본인은 뺀다.
+
+    MASTER·ADMIN 은 배정·거절·확정·문자 전달을 **다** 받는다 (2026-09-28 대표 요청).
+    배정한 사람이 대표면 두 번 받지 않게 한 벌로 합친다.
+    """
+    for eid in {i for i in ids if i and i != exclude}:
+        await notify(db, employee_id=eid, **text)
 
 #: 공통 일정의 종류·색 — 앱의 `수업` 과 같다 (종류는 글자로 주고받는다)
 _EVENT_CATEGORY = "수업"
@@ -130,7 +140,13 @@ async def assign_ot(
     ot.assigned_at = datetime.now(timezone.utc)
     ot.status = OtStatus.ASSIGNED
     if assignee.id != current.id:
-        await notify(db, employee_id=assignee.id, **ntext.ot_assigned(ot.name, _when(ot)))
+        await notify(db, employee_id=assignee.id, **ntext.ot_assigned(ot.name, when_label(ot)))
+    await _tell(
+        db,
+        set(await boss_ids(db)),
+        current.id,
+        **ntext.ot_assigned_boss(ot.name, assignee.name, when_label(ot)),
+    )
     await db.commit()
     await db.refresh(ot)
     return (await _out(db, [ot]))[0]
@@ -177,15 +193,17 @@ async def accept_ot(
     ot.event_id = event.id
     ot.status = OtStatus.ACCEPTED
     ot.accepted_at = datetime.now(timezone.utc)
-    if ot.assigned_by_id and ot.assigned_by_id != current.id:
-        await notify(
-            db,
-            employee_id=ot.assigned_by_id,
-            **ntext.ot_accepted(ot.name, current.name, _when(ot)),
-        )
+    await _tell(
+        db,
+        {ot.assigned_by_id, *await boss_ids(db)},
+        current.id,
+        **ntext.ot_accepted(ot.name, current.name, when_label(ot)),
+    )
     # **확정을 먼저 못 박는다** — 문자는 곁가지라 솔라피가 죽어도 확정은 남는다
     await db.commit()
     await sms_confirmed(db, ot, current)
+    if ot.sms_sent_at:
+        await _tell(db, set(await boss_ids(db)), current.id, **ntext.ot_sms_sent(ot.name))
     await db.commit()
     await db.refresh(ot)
     return (await _out(db, [ot]))[0]
@@ -206,8 +224,12 @@ async def reject_ot(
     ot.assigned_by_id = None
     ot.assigned_at = None
     ot.status = OtStatus.PENDING
-    if assigner and assigner != current.id:
-        await notify(db, employee_id=assigner, **ntext.ot_rejected(ot.name, current.name))
+    await _tell(
+        db,
+        {assigner, *await boss_ids(db)},
+        current.id,
+        **ntext.ot_rejected(ot.name, current.name),
+    )
     await db.commit()
     await db.refresh(ot)
     return (await _out(db, [ot]))[0]

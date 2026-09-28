@@ -796,3 +796,44 @@ def ot_rejected(name: str, trainer: str) -> dict:
         "body": "다시 배정해 주세요",
         "link": "/ot",
     }
+
+
+def ot_unassigned(count: int, branch: str | None) -> dict:
+    """미배정 OT 재촉 — 매시간 (푸시만). [branch] 가 없으면 전 지점 합계다."""
+    where = f"{branch} " if branch else ""
+    return {
+        "type": "OT",
+        "title": f"{where}배정 안 된 OT 가 {count}건 있어요",
+        "body": "상담할 사람을 배정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_accept_nudge(name: str, when: str) -> dict:
+    """맡은 OT 를 아직 수락 안 했다 — 매시간 (푸시만)."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT 수락을 기다리고 있어요",
+        "body": f"{when} · 시간을 조율해서 확정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_assigned_boss(name: str, trainer: str, when: str) -> dict:
+    """대표·관리자에게 — 누가 맡게 됐다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT · {trainer}님 배정",
+        "body": when,
+        "link": "/ot",
+    }
+
+
+def ot_sms_sent(name: str) -> dict:
+    """대표·관리자에게 — 신청자에게 확정 문자가 나갔다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님에게 OT 확정 문자를 보냈어요",
+        "body": None,
+        "link": "/ot",
+    }
