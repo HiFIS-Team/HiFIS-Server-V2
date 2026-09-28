@@ -25,7 +25,8 @@
 """
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -40,6 +41,9 @@ from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.members.pt_survey import PtSurveyOut, PtTopicAnswer
 from app.services import pt_topics
+
+#: 답을 안 낸 채로 재등록한 등록권 — 설문이 가리키는 등록권과 따로 조인한다
+Renewal = aliased(Registration)
 
 router = APIRouter(prefix="/pt-surveys", tags=["pt-surveys"])
 
@@ -71,7 +75,8 @@ async def list_pt_surveys(
             PtSurvey,
             Member.name,
             Employee.name,
-            Registration.price_paid,
+            # 재등록으로 닫힌 것은 **새로 결제한 금액**을 쓴다
+            func.coalesce(Renewal.price_paid, Registration.price_paid),
             Branch.name,
         )
         .join(Member, Member.id == PtSurvey.member_id)
@@ -81,6 +86,7 @@ async def list_pt_surveys(
         # 금액 칸이 비는 편이 낫다 (지금은 회원을 지울 때 설문도 같이 지우므로
         # 둘 다 늘 맞지만, 안 맞는 날 화면이 거짓말을 하면 안 된다)
         .join(Registration, Registration.id == PtSurvey.registration_id, isouter=True)
+        .join(Renewal, Renewal.id == PtSurvey.renewal_id, isouter=True)
         .join(Branch, Branch.id == Member.branch_id, isouter=True)
         .order_by(PtSurvey.created_at.desc())
     )
@@ -96,7 +102,14 @@ async def list_pt_surveys(
     if period:
         # 모양이 틀리면 `period_range` 가 400 을 낸다 — 여기서 또 안 본다
         start, end = period_range(period)
-        stmt = stmt.where(PtSurvey.created_at >= start, PtSurvey.created_at < end)
+        # **그 달에 답한 것도 넣는다** — 지난 달에 열린 설문을 이번 달에 답하거나
+        # 재등록으로 닫으면(`RENEWED`), 만든 달로만 끊을 때 이번 달 예상 매출에서 빠진다
+        stmt = stmt.where(
+            or_(
+                and_(PtSurvey.created_at >= start, PtSurvey.created_at < end),
+                and_(PtSurvey.answered_at >= start, PtSurvey.answered_at < end),
+            )
+        )
 
     def answers(rows: list | None, *, praise: bool) -> list[PtTopicAnswer]:
         """저장된 코드에 **문구를 붙여서** 내보낸다.

@@ -746,3 +746,94 @@ def birthday_cheer(sender: str, emoji: str) -> dict:
         "body": None,
         "link": None,
     }
+
+
+def goal_reminder(month: int) -> dict:
+    """이달의 목표를 아직 안 적었다 — 매달 첫 월요일 (2026-09-28 대표 요청)."""
+    return {
+        "type": "MONTHLY_GOAL",
+        "title": f"{month}월 목표를 적어 주세요",
+        "body": "이번 달에 이루고 싶은 것을 2개 이상 적어요",
+        "link": "/work/goals",
+    }
+
+
+def ot_requested(name: str, branch: str, when: str) -> dict:
+    """새 OT 신청 — 그 지점 전원과 MASTER·ADMIN (2026-09-28 대표 요청)."""
+    return {
+        "type": "OT",
+        "title": f"{branch} OT 신청 · {name}님",
+        "body": f"{when} · 상담할 사람을 배정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_assigned(name: str, when: str) -> dict:
+    """배정받은 사람에게 — 수락하거나 시간을 고쳐야 한다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT 를 맡았어요",
+        "body": f"{when} · 시간을 확인하고 수락해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_accepted(name: str, trainer: str, when: str) -> dict:
+    """배정한 사람에게 — 담당자가 수락해서 확정됐다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT 가 확정됐어요",
+        "body": f"{trainer} · {when}",
+        "link": "/ot",
+    }
+
+
+def ot_rejected(name: str, trainer: str) -> dict:
+    """배정한 사람에게 — 담당자가 거절해서 다시 미배정이 됐다."""
+    return {
+        "type": "OT",
+        "title": f"{trainer}님이 {name}님 OT 를 거절했어요",
+        "body": "다시 배정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_unassigned(count: int, branch: str | None) -> dict:
+    """미배정 OT 재촉 — 매시간 (푸시만). [branch] 가 없으면 전 지점 합계다."""
+    where = f"{branch} " if branch else ""
+    return {
+        "type": "OT",
+        "title": f"{where}배정 안 된 OT 가 {count}건 있어요",
+        "body": "상담할 사람을 배정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_accept_nudge(name: str, when: str) -> dict:
+    """맡은 OT 를 아직 수락 안 했다 — 매시간 (푸시만)."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT 수락을 기다리고 있어요",
+        "body": f"{when} · 시간을 조율해서 확정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_assigned_boss(name: str, trainer: str, when: str) -> dict:
+    """대표·관리자에게 — 누가 맡게 됐다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT · {trainer}님 배정",
+        "body": when,
+        "link": "/ot",
+    }
+
+
+def ot_sms_sent(name: str) -> dict:
+    """대표·관리자에게 — 신청자에게 확정 문자가 나갔다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님에게 OT 확정 문자를 보냈어요",
+        "body": None,
+        "link": "/ot",
+    }

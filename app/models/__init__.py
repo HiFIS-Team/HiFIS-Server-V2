@@ -11,6 +11,7 @@ from app.models.board.approval import Approval
 from app.models.chat.chat import ChatRoom, ChatRoomMember, Message
 from app.models.staff.attendance import Attendance, LeaveRequest
 from app.models.staff.birthday_cheer import BirthdayCheer
+from app.models.staff.monthly_goal import MonthlyGoal
 from app.models.staff.branch import Branch
 from app.models.scoring.contribution import ContributionGrant
 from app.models.platform.document import Document, Folder
@@ -22,6 +23,7 @@ from app.models.auth.invite import InviteKey
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.projects.meeting import Meeting
 from app.models.members.member import Member
+from app.models.members.ot_request import OtRequest
 from app.models.board.notice import Notice
 from app.models.chat.device_token import DeviceToken
 from app.models.chat.notification import Notification, PushSubscription

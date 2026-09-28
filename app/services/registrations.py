@@ -18,13 +18,16 @@
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import RegistrationType
+from app.enums import RegistrationType, RenewIntent
+from app.models.members.pt_survey import PtSurvey
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.models.staff.employee import Employee
@@ -150,3 +153,46 @@ async def notify_registered(
         await db.commit()
     except Exception:
         logger.warning("[member-register] 알림 실패 — 등록은 그대로 둔다", exc_info=True)
+
+
+async def close_unanswered_surveys(db: AsyncSession, registration: Registration) -> int:
+    """재등록하면 **답을 안 낸 PT 만족도 설문을 '연장됐어요' 로 닫는다** (2026-09-28).
+
+    물어보려던 것(연장할까요)이 이미 결제로 정해졌다. 미응답에 그대로 두면
+    챙길 사람 목록에 계속 남고, 예상 매출에는 안 잡힌다. 닫은 설문은 답변
+    쪽으로 옮겨 가고 **재등록 금액이 그달 매출로 잡힌다** (`renewal_id`).
+    다음 설문은 평소대로 누적 7회차마다 다시 나간다.
+
+    **같은 회원이면 이름·연락처로도 찾는다.** 재등록을 새 회원으로 다시
+    넣는 일이 있어서, 회원 id 만 보면 옛 회원의 미응답이 안 닫힌다.
+
+    커밋은 부르는 쪽이 한다 — 등록과 한 번에 들어가야 한다.
+    """
+    if registration.type is not RegistrationType.RENEWAL:
+        return 0
+    member = await db.get(Member, registration.member_id)
+    if member is None:
+        return 0
+    same = PtSurvey.member_id == member.id
+    digits = re.sub(r"\D", "", member.phone or "")
+    if digits:
+        same = or_(
+            same,
+            and_(
+                func.trim(Member.name) == member.name.strip(),
+                func.regexp_replace(Member.phone, r"\D", "", "g") == digits,
+            ),
+        )
+    surveys = (
+        await db.scalars(
+            select(PtSurvey)
+            .join(Member, Member.id == PtSurvey.member_id)
+            .where(PtSurvey.answered_at.is_(None), same)
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for survey in surveys:
+        survey.renew = RenewIntent.RENEWED
+        survey.renewal_id = registration.id
+        survey.answered_at = now
+    return len(surveys)

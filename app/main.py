@@ -16,6 +16,7 @@ from app.api.chat import chat, notifications
 from app.api.legal import consents
 from app.api.members import (
     members,
+    ot_requests,
     pt_surveys,
     registrations,
     session_signs,
@@ -40,13 +41,14 @@ from app.api.projects import meetings, projects, todos
 from app.api.public import (
     history as public_history,
     legal as public_legal,
+    ot as public_ot,
     pt_survey as public_pt_survey,
     survey as public_survey,
     training as public_training,
     tv as public_tv,
 )
 from app.api.scoring import contributions, env, kindness, my_tasks, peer_reviews, scores
-from app.api.staff import attendance, birthdays, branches, employees, home
+from app.api.staff import attendance, birthdays, branches, employees, goals, home
 from app.core.audit_middleware import AuditMiddleware
 from app.core.metrics_middleware import MetricsMiddleware
 from app.core.config import settings
@@ -74,7 +76,7 @@ _DOCS_OPEN = settings.environment != "production"
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.34.0",
+    version="0.35.0",
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_OPEN else None,
     redoc_url="/redoc" if _DOCS_OPEN else None,
@@ -120,6 +122,7 @@ app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(home.router)  # GET /me/home (개인 홈 요약)
 app.include_router(birthdays.router)  # 생일 축하 모달
+app.include_router(goals.router)  # 이달의 목표
 app.include_router(branches.router)
 app.include_router(invite_keys.router)
 app.include_router(attendance.router)
@@ -165,6 +168,8 @@ app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
 app.include_router(public_pt_survey.router)  # PT 만족도 폼 — **로그인 없음**(문자 링크)
+app.include_router(public_ot.router)  # OT 신청 — **로그인 없음**(네이버 플레이스·전단지 QR)
+app.include_router(ot_requests.router)  # OT 배정·수락
 app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
 app.include_router(public_history.router)  # 출석 이력 — **로그인 없음**(직원이 보는 주소)
 app.include_router(public_legal.router)   # 약관·개인정보처리방침 — **로그인 없음**(스토어 심사용 공개 URL)

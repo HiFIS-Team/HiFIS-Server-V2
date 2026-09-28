@@ -443,6 +443,25 @@ class RenewIntent(StrEnum):
     YES = "YES"      # 연장할게요
     MAYBE = "MAYBE"  # 조금 더 생각해볼게요
     NO = "NO"        # 이번엔 어려울 것 같아요
+    #: 연장됐어요 — **회원이 고르는 값이 아니다.** 답을 안 낸 채로 재등록하면
+    #: 서버가 찍는다 (2026-09-28). 웹폼은 이 값을 받지 않는다
+    RENEWED = "RENEWED"
+
+
+class OtStatus(StrEnum):
+    """OT 신청 단계 (2026-09-28 대표 요청).
+
+    거절하면 **다시 미배정**으로 돌아간다 — 거절 단계를 따로 두지 않는다.
+    """
+
+    PENDING = "PENDING"    # 미배정
+    ASSIGNED = "ASSIGNED"  # 배정됨 — 담당자 수락 대기
+    ACCEPTED = "ACCEPTED"  # 확정 — 공통 일정에 서고 신청자에게 문자가 간다
+
+
+class Gender(StrEnum):
+    MALE = "MALE"
+    FEMALE = "FEMALE"
 
 
 class WorkoutKind(StrEnum):
