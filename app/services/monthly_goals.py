@@ -30,6 +30,21 @@ def year_month(day: date) -> str:
     return f"{day:%Y-%m}"
 
 
+def previous_month(ym: str) -> str:
+    year, month = (int(p) for p in ym.split("-"))
+    return f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
+
+
+def can_check(ym: str, today: date) -> bool:
+    """달성 체크를 켰다 껐다 할 수 있나 — **그 달과 다음 달까지.**
+
+    말일에 이룬 것을 다음 달 초에 체크할 수 있어야 한다. 그보다 오래된 달을
+    뒤늦게 고치면 지난 달성률이 계속 바뀐다.
+    """
+    now = year_month(today)
+    return ym in (now, previous_month(now))
+
+
 def first_monday(day: date) -> date:
     """그 달의 첫 번째 월요일 — 목표를 적으라고 알리는 날이다."""
     first = day.replace(day=1)

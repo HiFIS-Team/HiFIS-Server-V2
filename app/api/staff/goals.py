@@ -21,6 +21,7 @@ from app.services.monthly_goals import (
     GOAL_MAX_ITEMS,
     GOAL_MAX_LEN,
     GOAL_MIN_ITEMS,
+    can_check,
     first_monday,
     goal_of,
     today_kst,
@@ -36,6 +37,8 @@ class MonthlyGoalOut(CamelModel):
     employee_id: str
     year_month: str
     items: list[str]
+    #: 이룬 목표의 번호 (0부터)
+    achieved: list[int]
     created_at: datetime
 
 
@@ -51,6 +54,14 @@ class MyGoalOut(CamelModel):
 
 class GoalSubmit(CamelModel):
     items: list[str] = Field(max_length=GOAL_MAX_ITEMS)
+
+
+class GoalCheck(CamelModel):
+    #: 어느 달 (`YYYY-MM`) — 주소에 안 싣는다 (활동 기록 라벨이 달마다 갈린다)
+    year_month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    #: 몇 번째 목표 (0부터)
+    index: int = Field(ge=0)
+    done: bool
 
 
 @router.get("/me", response_model=MyGoalOut)
@@ -105,7 +116,9 @@ async def submit_goal(
             400,
             detail={"code": "GOAL_TOO_LONG", "message": f"목표 한 줄은 {GOAL_MAX_LEN}자까지예요"},
         )
-    goal = MonthlyGoal(employee_id=current.id, year_month=year_month(today_kst()), items=items)
+    goal = MonthlyGoal(
+        employee_id=current.id, year_month=year_month(today_kst()), items=items, achieved=[]
+    )
     db.add(goal)
     try:
         await db.commit()
@@ -116,6 +129,52 @@ async def submit_goal(
         )
     await db.refresh(goal)
     return goal
+
+
+@router.post("/me/check", response_model=MonthlyGoalOut)
+async def check_goal(
+    payload: GoalCheck,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MonthlyGoal:
+    """목표 한 줄을 이뤘다·못 이뤘다로 표시 — **본인만, 그 달과 다음 달까지.**
+
+    목표 글은 잠겨 있고 이것만 바뀐다. 결재가 없다 (불이익이 없는 값이다).
+    """
+    ym = payload.year_month
+    goal = await goal_of(db, current.id, ym)
+    if goal is None or payload.index >= len(goal.items):
+        raise HTTPException(404, detail={"code": "GOAL_NOT_FOUND", "message": "목표가 없어요"})
+    if not can_check(ym, today_kst()):
+        raise HTTPException(
+            400, detail={"code": "GOAL_CLOSED", "message": "지난 달 목표는 더 못 바꿔요"}
+        )
+    done = set(goal.achieved or [])
+    if payload.done:
+        done.add(payload.index)
+    else:
+        done.discard(payload.index)
+    # JSON 칸은 새 리스트를 넣어야 바뀐 줄 안다 (제자리 수정은 안 잡힌다)
+    goal.achieved = sorted(done)
+    await db.commit()
+    await db.refresh(goal)
+    return goal
+
+
+@router.get("/employees/{employee_id}", response_model=list[MonthlyGoalOut])
+async def employee_goals(
+    employee_id: str,
+    _: Employee = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> list[MonthlyGoal]:
+    """한 직원이 낸 목표 전부 — MASTER·ADMIN 이 직원을 눌러 들어가는 페이지."""
+    return list(
+        await db.scalars(
+            select(MonthlyGoal)
+            .where(MonthlyGoal.employee_id == employee_id)
+            .order_by(MonthlyGoal.year_month.desc())
+        )
+    )
 
 
 @router.get("", response_model=list[MonthlyGoalOut])

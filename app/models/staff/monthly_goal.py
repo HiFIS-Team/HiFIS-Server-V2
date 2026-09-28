@@ -4,6 +4,7 @@
 점수·결재와 무관하다 — 못 이뤄도 불이익이 없어서 승인 절차를 안 둔다.
 
 **한 번 내면 그 달은 잠긴다.** 고칠 수 있으면 월말에 이룬 것만 남기게 된다.
+이뤘는지는 본인이 줄마다 체크한다 (`achieved`) — 달성률·그래프의 재료다.
 사람·달당 한 줄이다.
 """
 
@@ -24,3 +25,6 @@ class MonthlyGoal(UUIDMixin, TimestampMixin, Base):
     year_month: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     #: 목표 한 줄씩 — 최소 2개
     items: Mapped[list] = mapped_column(JSON, nullable=False)
+    #: 이룬 목표의 번호(`items` 의 0부터) — **본인이 체크한다** (2026-09-28).
+    #: 글은 잠겨도 이건 그 달과 다음 달까지 켰다 껐다 할 수 있다
+    achieved: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
