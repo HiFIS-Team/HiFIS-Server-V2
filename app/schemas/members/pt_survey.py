@@ -72,6 +72,14 @@ class PtSurveySubmit(CamelModel):
     request: str | None = None
     renew: RenewIntent
 
+    @field_validator("renew")
+    @classmethod
+    def _not_renewed(cls, v: RenewIntent) -> RenewIntent:
+        """'연장됐어요' 는 재등록할 때 서버가 찍는 값이다 — 회원이 못 고른다."""
+        if v is RenewIntent.RENEWED:
+            raise ValueError("고를 수 없는 값입니다")
+        return v
+
     @field_validator("praise", "improve")
     @classmethod
     def _clean(cls, v: list[PtTopicAnswer]) -> list[PtTopicAnswer]:
@@ -100,7 +108,8 @@ class PtSurveyOut(CamelModel):
     trainer_id: str
     trainer_name: str | None = None
     #: 그 등록권의 결제액(원) — '연장할래요' 로 답한 건을 다음달 예상 매출로
-    #: 합산할 때 쓴다. 모델에는 없는 값이라 라우터가 등록권을 조인해 채운다
+    #: 합산할 때 쓴다. 모델에는 없는 값이라 라우터가 등록권을 조인해 채운다.
+    #: **'연장됐어요' 면 재등록한 등록권의 금액**이다 (실제로 결제한 값)
     price_paid: int | None = None
     #: 회원 소속 지점 — 지점별 예상 매출을 가르는 자리라 라우터가 채운다
     branch_name: str | None = None

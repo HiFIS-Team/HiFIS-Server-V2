@@ -30,6 +30,7 @@ from app.schemas.members.member import MemberCreate, MemberCreateOut, MemberOut,
 from app.schemas.members.registration import RegistrationOut
 from app.services.registrations import (
     accrue_sales_score,
+    close_unanswered_surveys,
     counts_now,
     ensure_used_within,
     initial_status,
@@ -192,6 +193,7 @@ async def create_member(
         db.add(registration)
         await db.flush()
         await accrue_sales_score(db, registration, reg_trainer)
+        await close_unanswered_surveys(db, registration)
 
     await db.commit()
     await db.refresh(member)

@@ -443,6 +443,9 @@ class RenewIntent(StrEnum):
     YES = "YES"      # 연장할게요
     MAYBE = "MAYBE"  # 조금 더 생각해볼게요
     NO = "NO"        # 이번엔 어려울 것 같아요
+    #: 연장됐어요 — **회원이 고르는 값이 아니다.** 답을 안 낸 채로 재등록하면
+    #: 서버가 찍는다 (2026-09-28). 웹폼은 이 값을 받지 않는다
+    RENEWED = "RENEWED"
 
 
 class WorkoutKind(StrEnum):

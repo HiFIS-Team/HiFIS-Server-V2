@@ -73,3 +73,8 @@ class PtSurvey(UUIDMixin, TimestampMixin, Base):
     renew: Mapped[RenewIntent | None] = mapped_column(
         SAEnum(RenewIntent, native_enum=False, length=20), nullable=True
     )
+    #: 답을 안 낸 채로 재등록한 등록권 — `renew = RENEWED` 일 때만 있다.
+    #: 예상 매출은 옛 등록권 금액이 아니라 **실제로 결제한 이 금액**으로 센다
+    renewal_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("registrations.id", ondelete="SET NULL"), nullable=True
+    )
