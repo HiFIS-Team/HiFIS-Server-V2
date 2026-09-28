@@ -756,3 +756,43 @@ def goal_reminder(month: int) -> dict:
         "body": "이번 달에 이루고 싶은 것을 2개 이상 적어요",
         "link": "/work/goals",
     }
+
+
+def ot_requested(name: str, branch: str, when: str) -> dict:
+    """새 OT 신청 — 그 지점 전원과 MASTER·ADMIN (2026-09-28 대표 요청)."""
+    return {
+        "type": "OT",
+        "title": f"{branch} OT 신청 · {name}님",
+        "body": f"{when} · 상담할 사람을 배정해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_assigned(name: str, when: str) -> dict:
+    """배정받은 사람에게 — 수락하거나 시간을 고쳐야 한다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT 를 맡았어요",
+        "body": f"{when} · 시간을 확인하고 수락해 주세요",
+        "link": "/ot",
+    }
+
+
+def ot_accepted(name: str, trainer: str, when: str) -> dict:
+    """배정한 사람에게 — 담당자가 수락해서 확정됐다."""
+    return {
+        "type": "OT",
+        "title": f"{name}님 OT 가 확정됐어요",
+        "body": f"{trainer} · {when}",
+        "link": "/ot",
+    }
+
+
+def ot_rejected(name: str, trainer: str) -> dict:
+    """배정한 사람에게 — 담당자가 거절해서 다시 미배정이 됐다."""
+    return {
+        "type": "OT",
+        "title": f"{trainer}님이 {name}님 OT 를 거절했어요",
+        "body": "다시 배정해 주세요",
+        "link": "/ot",
+    }

@@ -448,6 +448,22 @@ class RenewIntent(StrEnum):
     RENEWED = "RENEWED"
 
 
+class OtStatus(StrEnum):
+    """OT 신청 단계 (2026-09-28 대표 요청).
+
+    거절하면 **다시 미배정**으로 돌아간다 — 거절 단계를 따로 두지 않는다.
+    """
+
+    PENDING = "PENDING"    # 미배정
+    ASSIGNED = "ASSIGNED"  # 배정됨 — 담당자 수락 대기
+    ACCEPTED = "ACCEPTED"  # 확정 — 공통 일정에 서고 신청자에게 문자가 간다
+
+
+class Gender(StrEnum):
+    MALE = "MALE"
+    FEMALE = "FEMALE"
+
+
 class WorkoutKind(StrEnum):
     """운동일지의 종류 — 회차를 깎느냐가 갈린다 (§3.4).
 

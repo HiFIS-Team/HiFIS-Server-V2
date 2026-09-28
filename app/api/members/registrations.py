@@ -14,6 +14,7 @@ from app.models.staff.employee import Employee
 from app.models.members.member import Member
 from app.models.members.registration import Registration
 from app.schemas.members.registration import RegistrationCreate, RegistrationOut
+from app.services.ot_requests import convert_on_registration
 from app.services.registrations import (
     accrue_sales_score,
     close_unanswered_surveys,
@@ -85,6 +86,7 @@ async def create_registration(
     await db.flush()  # 점수의 source_ref_id 에 쓸 등록권 id 를 먼저 얻는다
     await accrue_sales_score(db, registration, trainer)
     await close_unanswered_surveys(db, registration)
+    await convert_on_registration(db, registration)
     await db.commit()
     await db.refresh(registration)
     # 등록했다고 알린다 (2026-09-16 대표 요청) — 대표·관리자와 그 트레이너 본인.

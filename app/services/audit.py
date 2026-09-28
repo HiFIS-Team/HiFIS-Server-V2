@@ -24,7 +24,7 @@ def normalize(path: str) -> str:
     그러면 **손님의 이름·연락처가 본문째 로그에 쌓인다.**
     """
     parts = [("{id}" if _UUID.match(seg) else seg) for seg in path.split("/")]
-    if len(parts) > 2 and parts[1] in ("survey", "tv"):
+    if len(parts) > 2 and parts[1] in ("survey", "tv", "ot"):
         parts[2] = "{id}"
     return "/".join(parts)
 
@@ -66,6 +66,7 @@ NO_PAYLOAD: frozenset[tuple[str, str]] = frozenset(
         # 회원 설문 — 손님의 이름·연락처가 본문에 있다. 설문 표에 이미 들어가 있고
         # 여기까지 담으면 **직원이 아닌 사람의 개인정보가 두 벌**로 쌓인다
         ("POST", "/survey/{id}"),
+        ("POST", "/ot/{id}"),
     }
 )
 
@@ -73,6 +74,7 @@ NO_PAYLOAD: frozenset[tuple[str, str]] = frozenset(
 NO_PAYLOAD_NOTE: dict[str, str] = {
     "/chat/rooms/{id}/messages": "대화 내용은 사내톡 열람에서 봐요",
     "/survey/{id}": "회원 개인정보라 본문은 설문 목록에서만 봐요",
+    "/ot/{id}": "신청자 개인정보라 본문은 OT 목록에서만 봐요",
 }
 
 
@@ -206,6 +208,10 @@ LABELS: dict[tuple[str, str], str] = {
     ("DELETE", "/kindness-surveys/{id}/complaint"): "컴플레인 삭제",
     ("POST", "/webhooks/kindness-survey"): "회원 설문 접수",
     ("POST", "/survey/{id}"): "회원 설문 접수(매장 QR)",
+    ("POST", "/ot/{id}"): "OT 신청 접수",
+    ("POST", "/ot-requests/{id}/assign"): "OT 배정",
+    ("POST", "/ot-requests/{id}/accept"): "OT 수락",
+    ("POST", "/ot-requests/{id}/reject"): "OT 거절",
     # 내 업무 — 라벨이 통째로 빠져 있어 주소가 그대로 보이던 자리다 (2026-08-21)
     ("POST", "/my-tasks"): "내 업무 추가",
     ("PATCH", "/my-tasks/{id}"): "내 업무 수정",

@@ -16,6 +16,7 @@ from app.api.chat import chat, notifications
 from app.api.legal import consents
 from app.api.members import (
     members,
+    ot_requests,
     pt_surveys,
     registrations,
     session_signs,
@@ -40,6 +41,7 @@ from app.api.projects import meetings, projects, todos
 from app.api.public import (
     history as public_history,
     legal as public_legal,
+    ot as public_ot,
     pt_survey as public_pt_survey,
     survey as public_survey,
     training as public_training,
@@ -166,6 +168,8 @@ app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(public_survey.router)  # 회원 설문 — **로그인 없음**(매장 QR)
 app.include_router(public_pt_survey.router)  # PT 만족도 폼 — **로그인 없음**(문자 링크)
+app.include_router(public_ot.router)  # OT 신청 — **로그인 없음**(네이버 플레이스·전단지 QR)
+app.include_router(ot_requests.router)  # OT 배정·수락
 app.include_router(public_tv.router)      # 매장 TV — **로그인 없음**(해결된 컴플레인)
 app.include_router(public_history.router)  # 출석 이력 — **로그인 없음**(직원이 보는 주소)
 app.include_router(public_legal.router)   # 약관·개인정보처리방침 — **로그인 없음**(스토어 심사용 공개 URL)
