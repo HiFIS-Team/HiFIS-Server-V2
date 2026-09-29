@@ -16,6 +16,8 @@ QR 이 담는 값은 `branches.survey_token` 이다 (지점 id 가 아니다 —
 그리고, 이 라우터는 값만 준다. 예전 주소로 들어오면 그쪽으로 넘긴다.
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import Field, field_validator
@@ -31,10 +33,12 @@ from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.base import CamelModel, normalize_phone
 from app.services.scoring import accrue_score
+from app.api.scoring.kindness import notify_survey
 
 from fastapi import Depends
 
 router = APIRouter(tags=["survey"])
+logger = logging.getLogger(__name__)
 
 #: 칭찬 한 건에 붙는 점수 — `app/api/scoring/kindness.py` 와 같은 값이어야 한다
 KINDNESS_POINTS = 10
@@ -185,5 +189,13 @@ async def submit_survey(
         reason="회원 친절도 칭찬",
     )
     await db.commit()
+    # 칭찬받은 본인·대표·(컴플레인이면) 그 지점에 알린다 — 웹훅 경로와 같은 함수다.
+    # **설문을 먼저 못 박는다** — 알림이 흔들려도 회원이 적은 것은 남아야 한다
+    try:
+        await notify_survey(db, survey, employee)
+        await db.commit()
+    except Exception:
+        logger.warning("[survey] 알림 실패 — 설문은 접수됐다", exc_info=True)
+        await db.rollback()
     # 접수됐다는 것만 알려준다 — 설문 내용을 돌려주면 남이 남긴 것도 읽힌다
     return {"praisedName": employee.name}
