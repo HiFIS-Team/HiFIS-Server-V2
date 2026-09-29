@@ -40,9 +40,18 @@ CLASS_POINTS = 2  # 싸인 1건 = CLASS +2 (§4.6)
 #: 10회 등록이 흔해서 **한참 남았을 때** 물어야 연장 이야기를 꺼낼 여지가 있다.
 #: 마지막 회차에 물으면 이미 마음을 정한 뒤다.
 #:
-#: **회원 누적 회차로 센다** (7·14·21…). 등록권마다 1 로 돌아가는 싸인 번호가
+#: **회원 누적 회차로 센다.** 등록권마다 1 로 돌아가는 싸인 번호가
 #: 아니라 운동일지 번호와 같은 수다 — 재등록 회원도 이어서 받는다.
-PT_SURVEY_EVERY = 7
+#:
+#: **첫 번째만 7회차, 그 뒤로는 10회마다** — 7·17·27·37… (2026-09-29 대표 요청.
+#: 그 전에는 7·14·21… 이었다)
+PT_SURVEY_FIRST = 7
+PT_SURVEY_EVERY = 10
+
+
+def is_pt_survey_round(lifetime_no: int) -> bool:
+    """이 누적 회차에 PT 만족도 폼을 여나 — 7·17·27·37…"""
+    return lifetime_no >= PT_SURVEY_FIRST and (lifetime_no - PT_SURVEY_FIRST) % PT_SURVEY_EVERY == 0
 
 logger = logging.getLogger("app.pt_survey")
 
@@ -102,9 +111,10 @@ router = APIRouter(prefix="/session-signs", tags=["session-signs"])
 async def _open_pt_survey(
     db: AsyncSession, registration: Registration, lifetime_no: int, trainer_id: str
 ) -> PtSurvey | None:
-    """회원 누적 **7회차마다** 만족도 폼을 하나 연다 (2026-08-20 · 09-27 요청).
+    """회원 누적 **7·17·27…회차**에 만족도 폼을 하나 연다 (2026-08-20 · 09-27 · 09-29).
 
-    예전에는 신규 등록권의 7회차 한 번뿐이었다. 이제 7·14·21…회차마다 열고,
+    예전에는 신규 등록권의 7회차 한 번뿐이었다. 이제 7회차에 한 번, 그 뒤로
+    10회마다 열고 (`is_pt_survey_round`),
     재등록 회원도 누적 회차가 이어지므로 같이 받는다. 두 번째부터는 문자
     말이 다르다 ([_SMS_TEMPLATE_AGAIN]).
 
@@ -114,7 +124,7 @@ async def _open_pt_survey(
     받는 트레이너는 **그날 실제로 수업한 사람**이다. 등록권의 담당으로 하면
     대타로 들어간 날 물어본 것이 엉뚱한 사람에게 붙는다.
     """
-    if lifetime_no % PT_SURVEY_EVERY != 0:
+    if not is_pt_survey_round(lifetime_no):
         return None
     # 되돌렸다 다시 찍는 일이 있어도 두 줄이 안 생긴다 (회원·회차당 하나다)
     exists = await db.scalar(
@@ -137,7 +147,7 @@ async def _open_pt_survey(
 
 
 async def _sms_pt_survey(db: AsyncSession, survey: PtSurvey) -> None:
-    """7회차마다 설문 주소를 **회원에게** 문자로 보낸다 (2026-09-09 대표 요청).
+    """설문 차례(7·17·27…회차)마다 설문 주소를 **회원에게** 문자로 보낸다 (2026-09-09 대표 요청).
 
     예전에는 줄만 만들고 트레이너가 `GET /pt-surveys` 의 주소를 복사해 직접
     보냈다. 발신번호가 지점마다 정해지면서(`branches.sms_sender`) 자동으로
@@ -171,7 +181,7 @@ async def _sms_pt_survey(db: AsyncSession, survey: PtSurvey) -> None:
         return
 
     base = settings.public_base_url.rstrip("/")
-    first = survey.session_no <= PT_SURVEY_EVERY
+    first = survey.session_no <= PT_SURVEY_FIRST
     text = (_SMS_TEMPLATE if first else _SMS_TEMPLATE_AGAIN).format(
         branch=sms.branch_label(branch.name),
         member=_member_label(member.name),
@@ -315,7 +325,7 @@ async def create_session_sign(
         raise HTTPException(404, detail={"code": "REGISTRATION_NOT_FOUND", "message": "등록을 찾을 수 없습니다"})
     if registration.status == RegistrationStatus.EXPIRED or registration.used_sessions >= registration.total_sessions:
         raise HTTPException(400, detail={"code": "NO_SESSIONS_LEFT", "message": "남은 세션이 없습니다"})
-    # 이번 싸인의 **회원 누적** 회차 — PT 설문이 7회차마다 이걸 본다
+    # 이번 싸인의 **회원 누적** 회차 — PT 설문 차례(7·17·27…)가 이걸 본다
     lifetime_no = await _require_workout(db, registration)
 
     # 싸인을 생략하려면 **그렇다고 말해야 한다** (2026-09-05 요청).
