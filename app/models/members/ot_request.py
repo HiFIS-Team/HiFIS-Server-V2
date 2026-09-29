@@ -32,8 +32,9 @@ class OtRequest(UUIDMixin, TimestampMixin, Base):
     age: Mapped[int] = mapped_column(Integer, nullable=False)
     #: 숫자만 (`normalize_phone`) — 신규 등록과 짝지을 때 이 값으로 맞춘다
     phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    #: 운동 목적 — 회원 설문과 같은 보기에서 고른 글자 그대로
-    purpose: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: 운동 목적 — 고른 보기 글자 그대로. `기타` 를 고르면 **적은 내용까지**
+    #: `기타 · 적은 내용` 으로 담는다 (2026-09-29 — 그래서 200자다)
+    purpose: Mapped[str] = mapped_column(String(200), nullable=False)
 
     #: 방문 날짜와 시간 (KST) — 담당자가 수락하면서 고칠 수 있다
     visit_date: Mapped[date] = mapped_column(Date, nullable=False)
