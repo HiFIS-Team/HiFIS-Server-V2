@@ -8,16 +8,23 @@
 | 게임 | 달마다 하나씩 (`DrawGame`) |
 """
 
+import asyncio
+import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.periods import period_range
 from app.enums import DrawGame
+from app.models.platform.draw import Draw
+from app.models.staff.branch import Branch
 from app.models.scoring.kindness import KindnessSurvey
 from app.models.staff.employee import Employee
+from app.services import sms
+
+logger = logging.getLogger(__name__)
 
 #: 매월 이 날 뽑는다 (KST). **한 줄만 고치면 날이 바뀐다.**
 #:
@@ -163,3 +170,77 @@ def draw_period(now_kst: datetime) -> str:
     if now_kst.day < DRAW_DAY:
         year, month = (year - 1, 12) if month == 1 else (year, month - 1)
     return f"{year:04d}-{month:02d}"
+
+
+#: 지점별 상품 — 1·2·3등이 받는 **회원권 개월 수** (2026-09-30 대표 결정)
+#:
+#: 여기 없는 지점은 문자를 안 보낸다 — 상품을 모르는 채로 "당첨됐어요" 만
+#: 보내면 회원이 센터에 와서 무엇을 받는지 묻게 된다.
+PRIZES: dict[str, tuple[int, ...]] = {
+    "첨단": (3, 2, 1),
+    "화순": (1, 1, 1),
+}
+
+_SMS_SUBJECT = "설문 이벤트 당첨 안내"
+
+
+def winner_text(branch_name: str, period: str, rank: int, name: str) -> str | None:
+    """당첨 문자 한 통 — [rank] 는 1부터. 상품이 없으면 None.
+
+    **이모지를 안 쓴다** — 문자에서는 안 보이고 그 자리가 빈칸으로 남는다
+    (2026-09-30 테스트 발송에서 확인).
+
+    **등수는 상품이 갈릴 때만 적는다.** 화순처럼 셋 다 같으면 `1등` ·
+    `3등` 을 굳이 알릴 이유가 없다 (3등이라고 받으면 덜 반갑다).
+    """
+    prizes = PRIZES.get(branch_name.strip())
+    if not prizes or rank > len(prizes):
+        return None
+    months = prizes[rank - 1]
+    label = sms.branch_label(branch_name)
+    place = f" {rank}등" if len(set(prizes)) > 1 else ""
+    return (
+        f"[피트니스스타 {label}]\n"
+        f"안녕하세요, {name}님! 피트니스스타 {label}입니다.\n"
+        "\n"
+        "고객만족 설문조사에 참여해 주셔서 감사합니다.\n"
+        f"{int(period[5:7])}월 설문 이벤트{place}에 당첨되셨습니다!\n"
+        "\n"
+        f"상품: 회원권 {months}개월\n"
+        f"센터에 방문해 주시면 회원권 {months}개월을 추가해 드릴게요.\n"
+        "\n"
+        "소중한 의견 늘 귀 기울이겠습니다. 감사합니다!"
+    )
+
+
+async def notify_winners(db: AsyncSession, draw: Draw) -> None:
+    """당첨자에게 문자 — **지점 번호**로, 한 추첨에 한 번만.
+
+    OT 확정·컴플레인 해결 문자와 같은 규칙이다 — 지점 발신번호가 없으면
+    안 보낸다 (회원이 되걸면 그 매장에 닿아야 한다). 한 통이 실패해도
+    나머지는 보낸다.
+
+    ponytail: 실패한 통을 다시 보내지 않는다 — 로그를 보고 손으로 보낸다.
+    달에 여섯 통이라 재시도 칸을 두는 것보다 싸다.
+    """
+    if draw.sms_sent_at:
+        return
+    branch = await db.get(Branch, draw.branch_id)
+    sender = (branch.sms_sender or "").strip() if branch else ""
+    if not branch or not sender or not sms.ready(sender):
+        logger.info("[draw-sms] 발신번호가 없어 건너뜀 branch=%s", branch.name if branch else "?")
+        return
+    for rank, index in enumerate(draw.winner_indexes or [], start=1):
+        entry = draw.entries[index]
+        text = winner_text(branch.name, draw.period, rank, entry["name"])
+        if text is None:
+            logger.info("[draw-sms] 상품이 정해지지 않아 건너뜀 branch=%s", branch.name)
+            return
+        try:
+            await asyncio.to_thread(
+                sms.send_sync, entry["phone"], text,
+                sender=sender, subject=_SMS_SUBJECT, tag="draw-sms",
+            )
+        except Exception:
+            logger.warning("[draw-sms] %d등 발송 실패", rank, exc_info=True)
+    draw.sms_sent_at = datetime.now(timezone.utc)

@@ -84,3 +84,6 @@ class Draw(UUIDMixin, TimestampMixin, Base):
     #: 폭죽이 다 걷힌 시상대라 한 장으로 그달을 말해 준다. 앱에 재생기를
     #: 안 넣으려고 두는 것이라, 영상은 눌렀을 때 시스템 재생기로 튼다.
     poster_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    #: 당첨 문자를 보낸 때 — 있으면 다시 안 보낸다 (`services/draws.notify_winners`)
+    sms_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

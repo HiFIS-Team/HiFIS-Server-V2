@@ -15,7 +15,7 @@ from app.core.periods import now_kst
 from app.db.session import SessionLocal
 from app.models.platform.draw import Draw
 from app.models.staff.branch import Branch
-from app.services.draws import draw_period, game_of, new_seed, pick, pool
+from app.services.draws import draw_period, game_of, new_seed, notify_winners, pick, pool
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,13 @@ async def monthly_draw() -> None:
                     len(draw.winner_indexes or []),
                     draw.winner_indexes,
                 )
+        await db.commit()
+
+        # **뽑은 것을 먼저 굳히고** 문자를 보낸다 — 문자가 나갔는데 추첨이
+        # 안 남으면 당첨자가 TV 에 없다
+        draws = (await db.scalars(select(Draw).where(Draw.period == period))).all()
+        for draw in draws:
+            await notify_winners(db, draw)
         await db.commit()
 
 

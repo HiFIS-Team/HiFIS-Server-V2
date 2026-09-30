@@ -33,7 +33,7 @@ from app.models.scoring.kindness import KindnessSurvey
 from app.models.staff.branch import Branch
 from app.models.staff.employee import Employee
 from app.schemas.base import CamelModel
-from app.services.draws import draw_period, mask_name, mask_phone
+from app.services.draws import PRIZES, draw_period, mask_name, mask_phone
 
 router = APIRouter(tags=["tv"])
 
@@ -100,6 +100,9 @@ class DrawOut(CamelModel):
     #: 참가자가 없으면 빈 배열 — 그 달 설문이 한 건도 없던 지점이다.
     #: 셋보다 적게 냈으면 그만큼만 들어 있다.
     winner_indexes: list[int] = []
+    #: 1·2·3등 상품이 다 같은가 — 화면의 `N분 모두 같은 상품이에요` 를 여기로 가른다.
+    #: 첨단은 등수마다 개월 수가 달라서 그 줄을 띄우면 틀린 말이 된다 (2026-09-30)
+    same_prize: bool = True
 
 
 async def _branch_of(token: str, db: AsyncSession) -> Branch:
@@ -150,6 +153,7 @@ async def tv_draw(token: str, db: AsyncSession = Depends(get_db)) -> DrawOut:
             for e in draw.entries
         ],
         winner_indexes=list(draw.winner_indexes or []),
+        same_prize=len(set(PRIZES.get(branch.name.strip(), ()))) <= 1,
     )
 
 
