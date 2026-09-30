@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 DRAW_DAY = 1
 
 #: 첫 이벤트가 열린 달 — [GAME_ROTATION] 을 여기서부터 센다
-FIRST_PERIOD = "2026-09"
+#:
+#: 9월은 다른 사이트로 했다 — **10월이 우리 추첨의 첫 달이다** (2026-09-30 대표 확인).
+FIRST_PERIOD = "2026-10"
 
 #: 그 달에 트는 게임 — **달마다 돌아가며 바뀐다** (2026-09-01 대표 요청).
 #:
@@ -43,16 +45,17 @@ FIRST_PERIOD = "2026-09"
 #: 재미가 없어서** 빠져 있다 — 공이 하나뿐이라 참가자끼리 겨루는 것이 없고
 #: 1등이 한 번도 안 바뀐다 (나머지는 네다섯 번 바뀐다).
 #:
-#: **차례를 바꾸면 이미 뽑은 달의 게임도 바뀐다.** 뒤에 붙이는 것은 안전하고,
-#: 가운데에 끼우면 그달 TV 에 다른 게임이 뜬다 (당첨자는 안 바뀐다 — 시드와
-#: 명단이 `draws` 행에 그대로 있어서 어느 게임으로 굴려도 1등이 당첨자다).
+#: **차례를 바꿔도 이미 뽑은 달은 안 바뀐다** — 게임이 `draws.game` 에 박혀
+#: 있고 TV 는 그 값을 튼다. 차례는 **앞으로 뽑을 달**에만 먹는다.
+#:
+#: 차례는 2026-09-30 대표가 정했다.
 GAME_ROTATION = (
-    DrawGame.RACE,     # 2026-09
-    DrawGame.HOOPS,    # 2026-10
+    DrawGame.SUMO,     # 2026-10
     DrawGame.SOCCER,   # 2026-11
-    DrawGame.CURLING,  # 2026-12
-    DrawGame.CLAW,     # 2027-01
-    DrawGame.SUMO,     # 2027-02
+    DrawGame.HOOPS,    # 2026-12
+    DrawGame.RACE,     # 2027-01
+    DrawGame.CLAW,     # 2027-02
+    DrawGame.CURLING,  # 2027-03
 )
 
 

@@ -66,19 +66,16 @@ class Test이름가리기:
 
 
 class Test게임차례:
-    def test_첫_달은_구슬_레이스다(self):
-        # 2026-09 가 첫 이벤트다 (2026-09-01 대표 결정)
-        assert game_of("2026-09") is DrawGame.RACE
-
-    def test_달마다_바뀐다(self):
-        assert game_of("2026-10") is not game_of("2026-09")
+    def test_대표가_정한_차례대로_돈다(self):
+        # 10월이 우리 추첨의 첫 달이다 — 9월은 다른 사이트로 했다 (2026-09-30 대표 결정)
+        assert [game_of(p) for p in ("2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03")] == [
+            DrawGame.SUMO, DrawGame.SOCCER, DrawGame.HOOPS,
+            DrawGame.RACE, DrawGame.CLAW, DrawGame.CURLING,
+        ]
 
     def test_한_바퀴_돌면_되돌아온다(self):
         n = len(GAME_ROTATION)
-        assert game_of("2026-09") is game_of(f"2026-{9 + n:02d}")
-
-    def test_해를_넘겨도_차례가_안_끊긴다(self):
-        assert game_of("2027-01") is GAME_ROTATION[4 % len(GAME_ROTATION)]
+        assert game_of("2026-10") is game_of(f"2027-{10 + n - 12:02d}")
 
     def test_화면이_있는_게임만_돈다(self):
         """안 만든 게임을 넣어 두면 그 달에 TV 가 빈 화면이 된다."""
