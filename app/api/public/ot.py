@@ -38,7 +38,8 @@ class OtApply(CamelModel):
     gender: Gender
     age: int = Field(ge=1, le=120)
     phone: str = Field(min_length=1, max_length=30)
-    purpose: str = Field(min_length=1, max_length=40)
+    #: `기타` 는 적은 내용이 붙어 온다 (`기타 · …`)
+    purpose: str = Field(min_length=1, max_length=200)
     visit_date: date
     start_time: time
     end_time: time

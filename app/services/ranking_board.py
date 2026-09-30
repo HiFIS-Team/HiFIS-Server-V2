@@ -81,6 +81,22 @@ def _month_closed(period: str) -> bool:
     return today >= last_day
 
 
+def counted_sales(start: datetime, end: datetime) -> tuple:
+    """랭킹 매출에 드는 등록권 — `Member` 가 조인돼 있어야 한다.
+
+    판(`build_board`)과 매출 내역(`/scores/ranking/sales`)이 **같이 쓴다.**
+    따로 적으면 내역 합이 랭킹 금액과 어긋난다 (워크인 신규를 빼는 규칙은 아래 매출 절).
+    """
+    return (
+        Registration.purchased_at >= start,
+        Registration.purchased_at < end,
+        or_(
+            Registration.type == RegistrationType.RENEWAL,
+            Member.visit_path.is_distinct_from(VisitPath.WALK_IN),
+        ),
+    )
+
+
 def _blank(employee: Employee) -> dict:
     return {
         "employeeId": employee.id,
@@ -192,14 +208,7 @@ async def build_board(
                 func.count(),
             )
             .join(Member, Member.id == Registration.member_id)
-            .where(
-                Registration.purchased_at >= start,
-                Registration.purchased_at < end,
-                or_(
-                    Registration.type == RegistrationType.RENEWAL,
-                    Member.visit_path.is_distinct_from(VisitPath.WALK_IN),
-                ),
-            )
+            .where(*counted_sales(start, end))
             .group_by(Registration.trainer_id, Registration.type)
         )
     ).all()

@@ -73,7 +73,7 @@ async def pt_survey_page(token: str, db: AsyncSession = Depends(get_db)) -> PtSu
     survey = await _survey_of(token, db)
     member = await db.get(Member, survey.member_id)
     trainer = await db.get(Employee, survey.trainer_id)
-    # 회차가 **회원 누적**이라(7·14·21…) 총 회차도 등록권 전부를 더한다 —
+    # 회차가 **회원 누적**이라(7·17·27…) 총 회차도 등록권 전부를 더한다 —
     # 화면이 `총 − 회차` 로 남은 회차를 그린다 (2026-09-27)
     purchased = await db.scalar(
         select(func.coalesce(func.sum(Registration.total_sessions), 0)).where(

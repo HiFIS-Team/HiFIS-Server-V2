@@ -1,11 +1,11 @@
-"""PT 만족도 폼 — 회원이 **7회차마다** 문자로 받는 설문 (2026-08-20 · 09-27).
+"""PT 만족도 폼 — 회원이 **7·17·27…회차**에 문자로 받는 설문 (2026-08-20 · 09-27 · 09-29).
 
 매장 QR 설문(`KindnessSurvey`)과 **다른 것이다.**
 
 | | 누구에게 | 언제 | 무엇을 |
 |---|---|---|---|
 | 매장 QR 설문 | 아무 회원이나 | 아무 때나 | 직원 칭찬 · 개선 의견 |
-| **PT 만족도 폼** | **그 회원 한 명** | **누적 7·14·21…회차** | 만족도 · 바라는 점 · 연장 여부 |
+| **PT 만족도 폼** | **그 회원 한 명** | **누적 7·17·27…회차** | 만족도 · 바라는 점 · 연장 여부 |
 
 **회원 누적 회차로 센다** — 운동일지 번호와 같은 수라 재등록해도 이어진다.
 회원·회차당 한 줄이다. 첫 번째(7회차)와 그 뒤는 문자 말이 다르다
@@ -28,7 +28,7 @@ from app.enums import RenewIntent
 class PtSurvey(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "pt_surveys"
 
-    #: 그 회차를 찍은 등록권 — 7회차마다 열어서 **한 등록권에 여럿일 수 있다**
+    #: 그 회차를 찍은 등록권 — 설문 차례마다 열어서 **한 등록권에 여럿일 수 있다**
     #: (2026-09-27 전에는 등록권당 하나라 유니크였다)
     registration_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("registrations.id"), nullable=False, index=True
@@ -43,7 +43,7 @@ class PtSurvey(UUIDMixin, TimestampMixin, Base):
     )
     #: 문자로 보내는 주소의 마지막 칸 — `/pt/{token}`
     token: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
-    #: 몇 회차에 보냈나 — **회원 누적 회차**(7·14·21…). 회원·회차당 하나다
+    #: 몇 회차에 보냈나 — **회원 누적 회차**(7·17·27…). 회원·회차당 하나다
     session_no: Mapped[int] = mapped_column(Integer, nullable=False)
 
     #: 문자를 **실제로** 보낸 시각 — 발신번호가 정해지기 전에는 비어 있다

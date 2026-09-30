@@ -82,7 +82,7 @@ async def receive_kindness_survey(
         source_ref_id=survey.id,
         reason="회원 친절도 칭찬",
     )
-    await _notify_survey(db, survey, employee)
+    await notify_survey(db, survey, employee)
     await db.commit()
     await db.refresh(survey)
     return survey
@@ -95,10 +95,14 @@ async def _branch_name(db: AsyncSession, branch_id: str | None) -> str | None:
     return branch.name if branch else None
 
 
-async def _notify_survey(
+async def notify_survey(
     db: AsyncSession, survey: KindnessSurvey, praised: Employee
 ) -> None:
     """설문이 들어왔다고 알린다 (2026-08-31 대표 요청).
+
+    **매장 QR 경로(`api/public/survey.py`)도 이걸 부른다** (2026-09-29).
+    예전에는 웹훅 경로에만 걸려 있어서, 실제로 설문이 다 들어오는 QR 로
+    낸 것은 칭찬·컴플레인 알림이 한 건도 안 갔다 (9월 45건 → 알림 0).
 
     | | 칭찬 | 컴플레인 |
     |---|---|---|
