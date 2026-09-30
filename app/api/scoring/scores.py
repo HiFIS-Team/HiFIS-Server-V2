@@ -10,9 +10,11 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import branch_scope, get_current_user, require_role
-from app.core.periods import current_period
+from app.core.periods import current_period, period_range
 from app.db.session import get_db
 from app.enums import RankingKind, Role, ScoreCategory
+from app.models.members.member import Member
+from app.models.members.registration import Registration
 from app.models.staff.employee import Employee
 from app.models.scoring.contribution import ContributionGrant
 from app.models.scoring.env import EnvTaskLog
@@ -23,6 +25,7 @@ from app.schemas.scoring.score import (
     RankingBoardItem,
     RankOvertakeOut,
     RankingItem,
+    SalesLineOut,
     ScoreCreate,
     ScoreEventOut,
     ScoreSummary,
@@ -30,7 +33,7 @@ from app.schemas.scoring.score import (
 from app.services import notification_texts as ntext
 from app.services.notifications import notify
 from app.services.ranking import compute_ranking
-from app.services.ranking_board import METRICS, build_board, rank_board
+from app.services.ranking_board import METRICS, build_board, counted_sales, rank_board
 from app.services.scoring import CLAIM_ITEM_NAME, accrue_score, scores_apply_to
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
@@ -229,6 +232,39 @@ async def ranking_board(
         row["lastRank"] = ranks.get(row["employeeId"], [0] * len(METRICS))
 
     return [RankingBoardItem.model_validate(row) for row in board]
+
+
+@router.get("/ranking/sales", response_model=list[SalesLineOut])
+async def ranking_sales(
+    db: AsyncSession = Depends(get_db),
+    employee_id: str = Query(..., alias="employeeId"),
+    period: str | None = Query(None, description="YYYY-MM (없으면 이번 달)"),
+) -> list[SalesLineOut]:
+    """랭킹 매출에서 사람을 누르면 — 그 매출이 **어느 회원에게 얼마**였나 (2026-09-30 대표 요청)
+
+    랭킹판과 **같은 규칙**(`counted_sales`)이라 합이 랭킹 금액과 맞는다 —
+    워크인 신규는 여기서도 빠진다. 랭킹처럼 지점을 안 가린다.
+    """
+    start, end = period_range(period or current_period())
+    rows = (
+        await db.execute(
+            select(Registration, Member.name)
+            .join(Member, Member.id == Registration.member_id)
+            .where(Registration.trainer_id == employee_id, *counted_sales(start, end))
+            .order_by(Registration.purchased_at.desc())
+        )
+    ).all()
+    return [
+        SalesLineOut(
+            registration_id=r.id,
+            member_name=name,
+            type=r.type,
+            total_sessions=r.total_sessions,
+            price_paid=r.price_paid,
+            purchased_at=r.purchased_at,
+        )
+        for r, name in rows
+    ]
 
 
 @router.get("/summary", response_model=ScoreSummary)

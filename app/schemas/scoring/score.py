@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.enums import ScoreCategory
+from app.enums import RegistrationType, ScoreCategory
 from app.schemas.base import CamelModel
 
 
@@ -124,3 +124,14 @@ class RankOvertakeOut(CamelModel):
     gap: float
     rank: int
     created_at: datetime
+
+
+class SalesLineOut(CamelModel):
+    """랭킹 매출 한 줄 — 어느 회원에게 얼마를 받았나"""
+
+    registration_id: str
+    member_name: str
+    type: RegistrationType
+    total_sessions: int
+    price_paid: int
+    purchased_at: datetime
