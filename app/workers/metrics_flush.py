@@ -44,7 +44,10 @@ async def flush_metrics() -> None:
         return
 
     async with SessionLocal() as db:
-        for (minute, method, route), cell in taken.items():
+        # **정렬해서 쓴다.** 워커마다 버퍼가 따로라 같은 칸을 동시에 올리는데,
+        # 칸을 잡는 차례가 워커마다 다르면 서로 기다리다 교착이 난다
+        # (운영 2026-09-30 — 그 분의 지표가 통째로 날아갔다)
+        for (minute, method, route), cell in sorted(taken.items()):
             stmt = insert(ApiMetric).values(
                 minute=minute, method=method, route=route, **cell
             )
