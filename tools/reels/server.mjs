@@ -17,7 +17,7 @@ import { createServer } from 'node:http';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { render, MAX_SEC } from './render.mjs';
+import { render } from './render.mjs';
 
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT = (process.env.CLIENT_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
@@ -81,7 +81,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// 한 판이 아무리 길어도 [MAX_SEC] 에 굽는 시간을 더한 만큼은 기다려야 한다
-server.requestTimeout = (MAX_SEC + 180) * 1000;
+// 한 판을 **한 장씩** 찍어서 실시간보다 오래 걸린다 (`render.mjs` 의 `capture`).
+// 운영 일꾼(CPU 2개)에서 몇 분이라 넉넉히 30분 — api 쪽(`draw_videos.TIMEOUT`)은 이보다 짧다
+server.requestTimeout = 30 * 60 * 1000;
 server.headersTimeout = server.requestTimeout + 5000;
 server.listen(PORT, () => console.log(`영상 일꾼 ${PORT} · 클라이언트 ${CLIENT}`));
