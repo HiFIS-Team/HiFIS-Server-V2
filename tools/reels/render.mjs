@@ -22,7 +22,6 @@
  */
 import { spawn } from 'node:child_process';
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 
 import { chromium } from 'playwright';
@@ -52,12 +51,29 @@ function args(argv) {
 }
 
 /**
- * 게임 한 판을 찍어 프레임으로 남긴다.
+ * 게임 한 판을 찍어 프레임으로 남긴다 — **시계를 멈춰 두고 한 장씩 넘긴다.**
  *
- * 프레임은 **크롬이 그리는 대로** 온다(가변 간격). 몇 시에 온 프레임인지를
- * 같이 남겨 두었다가 ffmpeg 이 고정 30fps 로 다시 깐다 — 안 그러면 크롬이
- * 잠깐 버벅인 자리가 영상에서 빨라진다.
+ * 예전에는 크롬이 실시간으로 그리는 화면을 받아 적었는데(screencast), 운영
+ * 일꾼은 CPU 가 2개라 1080×1920 을 **평균 18.6fps** 밖에 못 그렸다 — 30fps 로
+ * 다시 깔아도 같은 장면이 겹쳐서 **영상이 뚝뚝 끊겼다** (2026-10-01 대표 지적).
+ *
+ * 이제는 페이지 시계(`page.clock`)를 멈춰 두고 1/30초씩 넘기며 한 장씩 찍는다.
+ * 게임은 `requestAnimationFrame` 시각으로 굴러가서, 찍는 데 얼마가 걸리든
+ * **프레임 사이가 정확히 1/30초**다. 대신 굽는 데 몇 분이 걸린다 (달에 한 번이다).
+ *
+ * **CSS 애니메이션은 시계를 안 따른다** — 시상대 카드가 올라오는 것 같은 것.
+ * 그대로 두면 찍는 동안 실시간으로 끝나 버려서, 프레임마다 손으로 감는다 ([STEP_CSS]).
  */
+const STEP_CSS = `(now) => {
+  for (const a of document.getAnimations()) {
+    if (a.__v0 === undefined) {
+      a.__v0 = now - (Number(a.currentTime) || 0);
+      a.pause();
+    }
+    a.currentTime = now - a.__v0;
+  }
+}`;
+
 export async function capture({ url, dir, onLog = () => {} }) {
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
@@ -70,49 +86,41 @@ export async function capture({ url, dir, onLog = () => {} }) {
       viewport: { width: WIDTH, height: HEIGHT },
       deviceScaleFactor: 1,
     });
+    // **페이지가 뜨기 전에** 시계를 갈아 끼운다 — 뜬 뒤에 걸면 이미 돌기 시작한
+    // 타이머·rAF 는 진짜 시계를 탄다
+    await page.clock.install();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: READY_MS });
+    // **멈춰 둔다** — `install` 만 하면 진짜 시간도 같이 흘러서, 찍는 동안
+    // 흐른 시간만큼 영상이 빨라진다 (처음에 1.8배 빨랐다)
+    await page.clock.pauseAt(Date.now() + 1000);
 
-    // 추첨을 받아오고 게임 채비가 끝날 때까지
-    await page.waitForFunction(() => window.__reels?.ready === true, null, { timeout: READY_MS });
+    // 추첨을 받아오고 게임 채비가 끝날 때까지 — 시계가 멈춰 있으니 조금씩 밀어 준다
+    const readyBy = Date.now() + READY_MS;
+    while (!(await page.evaluate(() => window.__reels?.ready === true))) {
+      if (Date.now() > readyBy) throw new Error('화면이 준비되지 않았다 (추첨을 못 받아왔다)');
+      await page.clock.runFor(100);
+      await page.waitForTimeout(100);
+    }
     onLog('준비됨');
 
-    const cdp = await page.context().newCDPSession(page);
-    /** 프레임이 온 시각(초) — 길이를 여기서 잰다 */
-    const stamps = [];
-    let writing = Promise.resolve();
-    let n = 0;
-
-    cdp.on('Page.screencastFrame', ({ data, sessionId, metadata }) => {
-      const i = n++;
-      stamps.push(metadata.timestamp);
-      // **받는 순서대로 디스크에 쓴다** — 다 들고 있으면 50초짜리가 수백 MB 다
-      writing = writing.then(() =>
-        writeFile(path.join(dir, `f${String(i).padStart(6, '0')}.jpg`), Buffer.from(data, 'base64')),
-      );
-      cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-    });
-
-    await cdp.send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: 92,
-      maxWidth: WIDTH,
-      maxHeight: HEIGHT,
-      everyNthFrame: 1,
-    });
-
-    // 여기서부터 게임이 굴러간다
     await page.evaluate(() => window.__reelsStart?.());
+    const step = 1000 / FPS;
+    const stamps = [];
     const t0 = Date.now();
-
-    while (Date.now() - t0 < MAX_SEC * 1000) {
-      if (await page.evaluate(() => window.__reels?.done === true)) break;
-      await page.waitForTimeout(200);
+    let n = 0;
+    for (; n < MAX_SEC * FPS; n++) {
+      await page.clock.runFor(step);
+      await page.evaluate(`(${STEP_CSS})(${(n + 1) * step})`);
+      const buf = await page.screenshot({ type: 'jpeg', quality: 92 });
+      await writeFile(path.join(dir, `f${String(n).padStart(6, '0')}.jpg`), buf);
+      stamps.push(n / FPS);
+      if (await page.evaluate(() => window.__reels?.done === true)) {
+        n++;
+        break;
+      }
     }
-    const secs = (Date.now() - t0) / 1000;
-
-    await cdp.send('Page.stopScreencast').catch(() => {});
-    await writing;
-    onLog(`프레임 ${n}장 · ${secs.toFixed(1)}초 · 평균 ${(n / secs).toFixed(1)}fps`);
+    const secs = n / FPS;
+    onLog(`프레임 ${n}장 · 영상 ${secs.toFixed(1)}초 · 찍는 데 ${((Date.now() - t0) / 1000).toFixed(0)}초`);
     return { dir, count: n, stamps, seconds: secs };
   } finally {
     await browser.close();
