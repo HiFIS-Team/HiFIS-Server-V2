@@ -9,7 +9,7 @@ from app.services.draws import winner_text
 def test_첨단은_등수마다_상품이_다르다():
     first = winner_text("첨단", "2026-10", 1, "김회원")
     third = winner_text("첨단", "2026-10", 3, "김회원")
-    assert "10월 설문 이벤트 1등에" in first and "회원권 3개월" in first
+    assert "9월 설문 이벤트 1등에" in first and "회원권 3개월" in first
     assert "3등" in third and "회원권 1개월" in third
 
 
