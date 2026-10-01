@@ -837,3 +837,14 @@ def ot_sms_sent(name: str) -> dict:
         "body": None,
         "link": "/ot",
     }
+
+
+def ranking_cheer(sender: str, period: str, labels: list[str]) -> dict:
+    """지난달 1위에게 — 누가 축하 페이지에서 이모지를 눌렀다 (2026-09-30)."""
+    month = int(period[5:7])
+    return {
+        "type": "RANKING",
+        "title": f"{sender}님이 축하를 보냈어요! 🎉",
+        "body": f"{month}월 {'·'.join(labels)} 1위 축하해요",
+        "link": "/ranking",
+    }

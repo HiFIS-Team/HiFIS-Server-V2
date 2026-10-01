@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,11 +21,14 @@ from app.models.scoring.contribution import ContributionGrant
 from app.models.scoring.env import EnvTaskLog
 from app.models.scoring.my_task import MyTaskMiss
 from app.models.scoring.rank_overtake import RankOvertake
+from app.models.scoring.ranking_cheer import RankingCheer
 from app.models.scoring.score_event import ScoreEvent
 from app.schemas.scoring.score import (
     RankingBoardItem,
     RankOvertakeOut,
     RankingItem,
+    RankingCheerIn,
+    RankingCheersOut,
     SalesLineOut,
     ScoreCreate,
     ScoreEventOut,
@@ -265,6 +269,67 @@ async def ranking_sales(
         )
         for r, name in rows
     ]
+
+
+#: 축하 푸시에 쓰는 분야 이름 — 서버 `METRICS` 차례 그대로
+_METRIC_LABEL = {
+    "revenue": "매출",
+    "kindness": "친절",
+    "project": "프로젝트",
+    "care": "환경정비",
+    "lesson": "수업",
+    "overall": "종합",
+}
+
+
+@router.get("/ranking/cheers", response_model=RankingCheersOut)
+async def ranking_cheers(
+    period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RankingCheersOut:
+    """내가 그달 1위들에게 이미 축하를 보냈나 — 보냈으면 축하 페이지가 이모지를 잠근다"""
+    sent = await db.scalars(
+        select(RankingCheer.to_id).where(
+            RankingCheer.from_id == current.id, RankingCheer.period == period
+        )
+    )
+    return RankingCheersOut(cheered=sorted(set(sent)))
+
+
+@router.post("/ranking/cheer", status_code=204)
+async def ranking_cheer(
+    payload: RankingCheerIn,
+    current: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """지난달 1위에게 축하 이모지 (2026-09-30 대표 요청) — **한 1위에게 그달 한 번**.
+
+    굳은 판(`build_board` 가 지난달은 찍어 둔 것을 준다)에서 **1위인 사람만** 받는다.
+    여러 분야 1위면 푸시 한 통에 분야를 다 적는다. 두 번째부터는 조용히 204.
+    """
+    period = payload.period
+    if period >= current_period():
+        raise HTTPException(
+            400, detail={"code": "NOT_CLOSED", "message": "아직 굳지 않은 달이에요"}
+        )
+    board = await build_board(db, period=period)
+    places = rank_board(board).get(payload.employee_id, [])
+    labels = [_METRIC_LABEL[m] for m, place in zip(METRICS, places) if place == 1]
+    if payload.employee_id == current.id or not labels:
+        raise HTTPException(
+            400, detail={"code": "NOT_WINNER", "message": "그달 1위인 사람이 아니에요"}
+        )
+    db.add(RankingCheer(from_id=current.id, to_id=payload.employee_id, period=period))
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        return
+    await notify(
+        db, employee_id=payload.employee_id, **ntext.ranking_cheer(current.name, period, labels)
+    )
+    await db.commit()
 
 
 @router.get("/summary", response_model=ScoreSummary)
