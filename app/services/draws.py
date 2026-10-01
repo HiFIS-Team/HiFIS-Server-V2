@@ -207,7 +207,7 @@ def winner_text(branch_name: str, period: str, rank: int, name: str) -> str | No
         f"안녕하세요, {name}님! 피트니스스타 {label}입니다.\n"
         "\n"
         "고객만족 설문조사에 참여해 주셔서 감사합니다.\n"
-        f"{int(period[5:7])}월 설문 이벤트{place}에 당첨되셨습니다!\n"
+        f"{int(source_period(period)[5:7])}월 설문 이벤트{place}에 당첨되셨습니다!\n"
         "\n"
         f"상품: 회원권 {months}개월\n"
         f"센터에 방문해 주시면 회원권 {months}개월을 추가해 드릴게요.\n"
