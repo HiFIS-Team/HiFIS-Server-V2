@@ -135,3 +135,13 @@ class SalesLineOut(CamelModel):
     total_sessions: int
     price_paid: int
     purchased_at: datetime
+
+
+class RankingCheerIn(CamelModel):
+    employee_id: str
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+
+
+class RankingCheersOut(CamelModel):
+    #: 내가 그달 축하를 보낸 1위들
+    cheered: list[str]
