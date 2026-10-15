@@ -618,7 +618,11 @@ async def list_env_logs(
         | (EnvTaskLog.approval_status != ProjectRequestStatus.REJECTED)
     )
     if scope:
-        stmt = stmt.where(EnvTaskLog.branch_id == scope)
+        # **본사 기록도 같이 준다** (2026-10-15 대표 결정) — 대표·관리자가
+        # `업무 올리기` 로 남긴 것(`/env-logs/boss`)은 본사 `기타` 라서, 지점으로
+        # 거르면 직원들 눈에 안 띈다. 클레임처럼 다 같이 봐야 하는 기록이다.
+        hq = select(Branch.id).where(Branch.type == "HQ")
+        stmt = stmt.where((EnvTaskLog.branch_id == scope) | EnvTaskLog.branch_id.in_(hq))
     if employee_id:
         stmt = stmt.where(EnvTaskLog.employee_id == employee_id)
     if date:
