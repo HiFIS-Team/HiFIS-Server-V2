@@ -44,6 +44,12 @@ class EnvLogCreate(CamelModel):
     link: str | None = Field(default=None, max_length=500)
 
 
+class EnvBossLogCreate(CamelModel):
+    """대표·관리자 `업무 올리기` — 무슨 일이었는지만 받는다 (늘 `기타`)."""
+
+    note: str = Field(min_length=1, max_length=80)
+
+
 class EnvLogPhotoOut(CamelModel):
     """올린 사진의 저장 주소 — 이걸 [EnvLogCreate.photo_url] 에 실어 보낸다.
 

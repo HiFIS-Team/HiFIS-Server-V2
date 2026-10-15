@@ -38,6 +38,7 @@ from app.workers.peer_review_reminders import peer_review_reminders
 from app.workers.birthday_alerts import birthday_alerts
 from app.workers.goal_reminders import goal_reminders
 from app.workers.ot_reminders import ot_reminders
+from app.workers.session_sign_reminders import session_sign_reminders
 from app.workers.retention import purge_old_access_logs
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,10 @@ def _register_jobs() -> None:
     # KST 09~23 매시 정각 — 미배정·수락 대기 OT 재촉 (푸시만)
     scheduler.add_job(ot_reminders, CronTrigger(hour="0-14", minute=0),
                       id="ot_reminder", replace_existing=True)
+    # 5분마다 — 운동일지 쓰고 30분 지나도 싸인이 없으면 트레이너에게 (그 뒤 1시간마다).
+    # **잡 안에서 30·90·150…분 칸인지 본다** — 5분 간격이 바뀌면 TICK_MIN 도 같이
+    scheduler.add_job(session_sign_reminders, CronTrigger(minute="*/5"),
+                      id="session_sign_reminder", replace_existing=True)
     # 매월 1일 01:00 UTC(=10:00 KST) — 전월 랭킹 1등 발표(급여마감 00:30 이후라 SALES 반영됨)
     scheduler.add_job(announce_monthly_winners, CronTrigger(day=1, hour=1, minute=0),
                       id="ranking_monthly", replace_existing=True)

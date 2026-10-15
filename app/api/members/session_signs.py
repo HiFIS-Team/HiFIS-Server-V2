@@ -282,6 +282,7 @@ async def _notify_signed(
         member.name if member else "",
         sign.session_no,
         registration.total_sessions,
+        performer.id,
     )
     targets = [*await boss_ids(db), performer.id]
     try:

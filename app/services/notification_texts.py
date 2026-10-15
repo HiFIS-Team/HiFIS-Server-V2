@@ -678,18 +678,23 @@ def kindness_resolved(resolver: str, improvement: str, branch: str | None) -> di
 # 볼 자리를 다시 찾아야 한다 — 컴플레인·PT 만족도가 겪은 것과 같다.
 
 
-def session_signed(trainer: str, member: str, session_no: int, total: int | None) -> dict:
+def session_signed(
+    trainer: str, member: str, session_no: int, total: int | None, trainer_id: str
+) -> dict:
     """세션 싸인을 받았다 — 대표·관리자와 **그 트레이너 본인**에게.
 
     **회차를 싣는다.** `12/20회차` 가 곧 얼마나 남았는지라, 재등록을 언제
     권해야 하는지가 이 한 줄에서 보인다.
+
+    **링크에 트레이너를 싣는다** (2026-10-15) — 대표가 누르면 섞인 전체 기록이
+    아니라 그 사람 기록이 걸러져 열린다. 옛 앱은 업무 탭까지만 간다.
     """
     rounds = f"{session_no}/{total}회차" if total else f"{session_no}회차"
     return {
         "type": "SESSION_SIGN",
         "title": "세션 싸인을 받았어요",
         "body": f"{trainer} · {member}님 {rounds}",
-        "link": "/work/session-signs",
+        "link": f"/work/session-signs/{trainer_id}",
     }
 
 
@@ -806,6 +811,16 @@ def ot_unassigned(count: int, branch: str | None) -> dict:
         "title": f"{where}배정 안 된 OT 가 {count}건 있어요",
         "body": "상담할 사람을 배정해 주세요",
         "link": "/ot",
+    }
+
+
+def session_sign_missing(member: str) -> dict:
+    """트레이너에게 — 운동일지를 썼는데 싸인을 안 받았다. 매시간 (푸시만)."""
+    return {
+        "type": "SESSION_SIGN",
+        "title": f"{member}님 세션 싸인을 아직 안 받았어요",
+        "body": "운동일지는 썼는데 싸인이 없어요. 회원님이 가시기 전에 받아 주세요",
+        "link": "/work/lessons",
     }
 
 
