@@ -394,7 +394,9 @@ async def create_boss_env_log(
     item = await _write_in_item(db, current.branch_id)
     if item is None:
         raise HTTPException(400, detail={"code": "ENV_ITEM_NOT_FOUND", "message": "기타 항목이 없습니다"})
-    return await _record(db, current, item, EnvLogCreate(env_item_id=item.id, note=payload.note))
+    # **0점으로 남긴다** — 대표·관리자는 점수를 안 받는다(`accrue_score` 가 원래
+    # 건너뛴다). 배점을 그대로 적으면 내역에 `+1` 이 떠서 받은 것처럼 보인다
+    return await _record(db, current, item, EnvLogCreate(env_item_id=item.id, note=payload.note), points=0)
 
 
 async def _write_in_item(db: AsyncSession, branch_id: str) -> EnvItem | None:
@@ -410,7 +412,13 @@ async def _write_in_item(db: AsyncSession, branch_id: str) -> EnvItem | None:
     return item
 
 
-async def _record(db: AsyncSession, current: Employee, item: EnvItem, payload: EnvLogCreate) -> EnvTaskLog:
+async def _record(
+    db: AsyncSession,
+    current: Employee,
+    item: EnvItem,
+    payload: EnvLogCreate,
+    points: int | None = None,
+) -> EnvTaskLog:
     """수행 기록 한 줄 — 칩(`/env-logs`)과 대표 올리기(`/env-logs/boss`)가 같이 쓴다."""
     # 남의 지점 항목은 수행으로 안 받는다. MANAGER 가 헤더 고르개로 다른 지점을
     # 볼 수 있게 되면서(`branch_pick`) 생긴 자리다 — 그 지점 칩을 누르면
@@ -460,7 +468,7 @@ async def _record(db: AsyncSession, current: Employee, item: EnvItem, payload: E
         branch_id=item.branch_id,
         env_item_id=item.id,
         item_name=label,
-        points=item.points,
+        points=item.points if points is None else points,
         note=note,
         photo_url=payload.photo_url,
         place=place or None,
