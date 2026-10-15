@@ -25,6 +25,7 @@ from app.schemas.scoring.env import (
     EnvItemOut,
     EnvItemUpdate,
     EnvLogAward,
+    EnvBossLogCreate,
     EnvLogCreate,
     EnvLogPhotoOut,
     EnvTaskLogOut,
@@ -365,12 +366,52 @@ async def upload_env_photo(
 async def create_env_log(
     payload: EnvLogCreate,
     # 점장(MANAGER)도 정비를 수행함 → 허용. ADMIN·MASTER 는 운영 전담이라 제외(세션 싸인과 동일).
+    # 대표·관리자는 칩 대신 `기타` 한 줄만 올린다 → `POST /env-logs/boss`
     current: Employee = Depends(require_role(Role.MEMBER, Role.MANAGER)),
     db: AsyncSession = Depends(get_db),
 ) -> EnvTaskLog:
     item = await db.get(EnvItem, payload.env_item_id)
     if item is None:
         raise HTTPException(400, detail={"code": "ENV_ITEM_NOT_FOUND", "message": "환경정비 항목이 존재하지 않습니다"})
+    return await _record(db, current, item, payload)
+
+
+@router.post("/env-logs/boss", response_model=EnvTaskLogOut, status_code=201)
+async def create_boss_env_log(
+    payload: EnvBossLogCreate,
+    # ADMIN 게이트는 MASTER 를 같이 받는다 (`require_role`)
+    current: Employee = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> EnvTaskLog:
+    """대표·관리자가 **본인이 한 일**을 올린다 (2026-10-15 요청).
+
+    칩은 없고 `업무 올리기` 버튼 하나다 — 늘 **본인 지점(본사)의 `기타`** 로
+    남는다. 지점 기록에 안 섞이고 '전 지점' 을 볼 때만 보인다 (대표 결정).
+    랭킹은 MASTER·ADMIN 을 빼고 세므로 붙는 1점이 순위를 흔들지 않는다.
+    """
+    if current.branch_id is None:
+        raise HTTPException(400, detail={"code": "NO_BRANCH", "message": "소속 지점이 없어 올릴 수 없습니다"})
+    item = await _write_in_item(db, current.branch_id)
+    if item is None:
+        raise HTTPException(400, detail={"code": "ENV_ITEM_NOT_FOUND", "message": "기타 항목이 없습니다"})
+    return await _record(db, current, item, EnvLogCreate(env_item_id=item.id, note=payload.note))
+
+
+async def _write_in_item(db: AsyncSession, branch_id: str) -> EnvItem | None:
+    """그 지점의 `기타` — 없으면 기본 항목을 심고 다시 본다."""
+    async def find() -> EnvItem | None:
+        rows = await db.scalars(select(EnvItem).where(EnvItem.branch_id == branch_id))
+        return next((i for i in rows if i.name.replace(" ", "") == "기타"), None)
+
+    item = await find()
+    if item is None:
+        await _ensure_base_items(db, branch_id)
+        item = await find()
+    return item
+
+
+async def _record(db: AsyncSession, current: Employee, item: EnvItem, payload: EnvLogCreate) -> EnvTaskLog:
+    """수행 기록 한 줄 — 칩(`/env-logs`)과 대표 올리기(`/env-logs/boss`)가 같이 쓴다."""
     # 남의 지점 항목은 수행으로 안 받는다. MANAGER 가 헤더 고르개로 다른 지점을
     # 볼 수 있게 되면서(`branch_pick`) 생긴 자리다 — 그 지점 칩을 누르면
     # `branch_id=item.branch_id` 라 **남의 지점에 내 점수가 쌓인다.**
