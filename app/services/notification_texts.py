@@ -809,6 +809,16 @@ def ot_unassigned(count: int, branch: str | None) -> dict:
     }
 
 
+def session_sign_missing(member: str) -> dict:
+    """트레이너에게 — 운동일지를 썼는데 싸인을 안 받았다. 매시간 (푸시만)."""
+    return {
+        "type": "SESSION_SIGN",
+        "title": f"{member}님 세션 싸인을 아직 안 받았어요",
+        "body": "운동일지는 썼는데 싸인이 없어요. 회원님이 가시기 전에 받아 주세요",
+        "link": "/work/lessons",
+    }
+
+
 def ot_accept_nudge(name: str, when: str) -> dict:
     """맡은 OT 를 아직 수락 안 했다 — 매시간 (푸시만)."""
     return {
